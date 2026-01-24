@@ -3,7 +3,10 @@ import logging
 from functools import lru_cache
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-PROMPT_PATH = BASE_DIR / "resources" / "system_prompt.txt"
+_CWD_BASE_DIR = Path.cwd() / "app" / "backend"
+_DEFAULT_PROMPT_PATH = BASE_DIR / "resources" / "system_prompt.txt"
+_CWD_PROMPT_PATH = _CWD_BASE_DIR / "resources" / "system_prompt.txt"
+PROMPT_PATH = _DEFAULT_PROMPT_PATH if _DEFAULT_PROMPT_PATH.exists() else _CWD_PROMPT_PATH
 
 FALLBACK_PROMPT = (
     "너는 감정 기반 챗봇이야. 사용자의 감정을 존중하고, 공감적 질문을 통해 "
@@ -23,7 +26,9 @@ def _load(path: Path) -> str:
 def get_system_prompt() -> str:
     return _load(PROMPT_PATH)
 
-TASK_PROMPT_PATH = BASE_DIR / "resources" / "task_prompt.txt"
+_DEFAULT_TASK_PROMPT_PATH = BASE_DIR / "resources" / "task_prompt.txt"
+_CWD_TASK_PROMPT_PATH = _CWD_BASE_DIR / "resources" / "task_prompt.txt"
+TASK_PROMPT_PATH = _DEFAULT_TASK_PROMPT_PATH if _DEFAULT_TASK_PROMPT_PATH.exists() else _CWD_TASK_PROMPT_PATH
 
 def get_task_prompt() -> str:
     try:
