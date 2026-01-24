@@ -9,19 +9,7 @@ from sqlmodel import SQLModel, Field
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import JSONB
 
-
-class EmotionSession(SQLModel, table=True):
-    __tablename__ = "emotionsession"
-
-    session_id: UUID = Field(
-        default_factory=uuid4,
-        primary_key=True,
-        index=True,
-    )
-    user_id: UUID = Field(index=True)
-    started_at: datetime = Field(default_factory=datetime.utcnow)
-    ended_at: Optional[datetime] = None
-
+from app.backend.models.emotion import EmotionSession
 
 class EmotionCard(SQLModel, table=True):
     __tablename__ = "emotioncard"
