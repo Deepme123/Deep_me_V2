@@ -7,7 +7,7 @@ from fastapi.responses import Response
 from sqlmodel import text
 
 from app.backend.core.logging_config import setup_logging
-from app.backend.db.session import engine, create_all_tables
+from app.backend.db.session import engine
 
 # 모델 모듈 임포트(테이블 등록 보장용)
 from app.backend.models import emotion as _m_emotion  # noqa: F401
@@ -71,11 +71,7 @@ app.include_router(task.router)
 app.include_router(prompts.router)
 
 
-@app.on_event("startup")
-def _startup() -> None:
-    if os.getenv("ENV", "dev") == "dev":
-        create_all_tables()
-        logger.info("Tables ensured in dev environment")
+
 
 
 @app.get("/health")
