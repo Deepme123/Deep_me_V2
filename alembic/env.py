@@ -7,6 +7,7 @@ from sqlalchemy import engine_from_config, pool
 from sqlmodel import SQLModel
 
 from app.db.session import DATABASE_URL
+from app.db import base as _db_base  # noqa: F401
 
 # Ensure project root is on sys.path for imports.
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,10 +20,6 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 config.set_main_option("sqlalchemy.url", DATABASE_URL)
-
-# Import all models so SQLModel.metadata is populated.
-from app.backend.models import user, task, refresh_token, emotion  # noqa: F401,E402
-from app.analyze import models as analyze_models  # noqa: F401,E402
 
 target_metadata = SQLModel.metadata
 
