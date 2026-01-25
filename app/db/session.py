@@ -2,12 +2,21 @@
 import logging
 import os
 from contextlib import contextmanager
-from urllib.parse import quote_plus
 
 from sqlalchemy.engine import url as sa_url
 from sqlmodel import SQLModel, create_engine
 
 log = logging.getLogger(__name__)
+
+_ALLOWED_ENVS = {"dev", "prod", "test"}
+
+
+def _get_env() -> str:
+    env = os.getenv("ENV", "dev").strip().lower()
+    if env not in _ALLOWED_ENVS:
+        allowed = "|".join(sorted(_ALLOWED_ENVS))
+        raise RuntimeError(f"ENV must be one of {allowed}")
+    return env
 
 
 def _mask(url: str) -> str:
@@ -36,27 +45,21 @@ def _build_db_url() -> str:
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql+psycopg2://", 1)
 
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL is required (Postgres only). "
+            "Example: postgresql+psycopg2://user:pass@host:5432/dbname"
+        )
+
+    if not url.startswith("postgresql+psycopg2://"):
+        raise RuntimeError(
+            "Only Postgres DSNs are supported. "
+            "Use postgresql+psycopg2://user:pass@host:5432/dbname"
+        )
+
     if any(dom in url for dom in ("render.com", "neon.tech")) and "sslmode=" not in url and url:
         sep = "&" if "?" in url else "?"
         url = f"{url}{sep}sslmode=require"
-
-    if not url:
-        host = os.getenv("POSTGRES_HOST", "").strip()
-        port = os.getenv("POSTGRES_PORT", "5432").strip()
-        db = os.getenv("POSTGRES_DB", "").strip()
-        user = os.getenv("POSTGRES_USER", "").strip()
-        pwd = os.getenv("POSTGRES_PASSWORD", "").strip()
-
-        if not (host and db and user):
-            raise RuntimeError("DATABASE_URL is empty and POSTGRES_* is incomplete")
-
-        if any(ch in pwd for ch in "@:/?#"):
-            pwd = quote_plus(pwd)
-
-        url = f"postgresql+psycopg2://{user}:{pwd}@{host}:{port}/{db}"
-
-        if any(dom in host for dom in ("render.com", "neon.tech")):
-            url += "?sslmode=require"
 
     try:
         sa_url.make_url(url)
@@ -67,6 +70,7 @@ def _build_db_url() -> str:
     return url
 
 
+_get_env()
 DATABASE_URL = _build_db_url()
 engine = create_engine(
     DATABASE_URL,
