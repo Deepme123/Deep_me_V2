@@ -51,10 +51,11 @@ def _build_db_url() -> str:
             "Example: postgresql+psycopg2://user:pass@host:5432/dbname"
         )
 
-    if not url.startswith("postgresql+psycopg2://"):
+    if not (url.startswith("postgresql+psycopg2://") or url.startswith("postgresql+psycopg://")):
         raise RuntimeError(
             "Only Postgres DSNs are supported. "
-            "Use postgresql+psycopg2://user:pass@host:5432/dbname"
+            "Use postgresql+psycopg2://user:pass@host:5432/dbname "
+            "or postgresql+psycopg://user:pass@host:5432/dbname"
         )
 
     if any(dom in url for dom in ("render.com", "neon.tech")) and "sslmode=" not in url and url:

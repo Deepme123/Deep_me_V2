@@ -1,4 +1,0 @@
-fastapi
-uvicorn[standard]
-openai>=1.30.0
-pydantic>=2.0.0
