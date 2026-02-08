@@ -17,7 +17,7 @@ from app.backend.models import refresh_token as _m_refresh  # noqa: F401
 # 라우터
 from app.backend.routers import emotion, auth, user, task, prompts
 from app.backend.routers.emotion_ws import ws_router as emotion_ws_router
-from app.backend.routers import health_llm 
+from app.backend.routers import health_llm
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -70,10 +70,6 @@ app.include_router(user.user_router)
 app.include_router(task.router)
 app.include_router(prompts.router)
 
-
-
-
-
 @app.get("/health")
 def health_app():
     return {"ok": True}
@@ -81,6 +77,7 @@ def health_app():
 
 @app.get("/health/db")
 def health_db():
+    # Migration is a deployment concern. Runtime only verifies DB connectivity.
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
