@@ -44,6 +44,8 @@ def _build_db_url() -> str:
 
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql+psycopg2://", 1)
+    elif url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
     if not url:
         raise RuntimeError(
