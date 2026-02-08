@@ -2,6 +2,7 @@
 import logging
 import os
 from contextlib import contextmanager
+from typing import Optional
 
 from sqlalchemy.engine import url as sa_url
 from sqlmodel import SQLModel, create_engine
@@ -10,6 +11,14 @@ log = logging.getLogger(__name__)
 
 _ALLOWED_ENVS = {"dev", "prod", "test"}
 _ALLOWED_PG_DRIVERS = {"psycopg2", "psycopg"}
+_ALLOWED_SSLMODES = {
+    "disable",
+    "allow",
+    "prefer",
+    "require",
+    "verify-ca",
+    "verify-full",
+}
 
 
 def _get_env() -> str:
@@ -49,6 +58,18 @@ def _get_policy_pg_driver() -> str:
     return raw
 
 
+def _get_policy_sslmode() -> Optional[str]:
+    raw = _strip_outer_quotes(os.getenv("DB_SSLMODE", "").strip())
+    if raw == "":
+        return None
+
+    policy_sslmode = raw.lower()
+    if policy_sslmode not in _ALLOWED_SSLMODES:
+        allowed = "|".join(sorted(_ALLOWED_SSLMODES))
+        raise RuntimeError(f"DB_SSLMODE must be one of {allowed}")
+    return policy_sslmode
+
+
 def _normalize_legacy_pg_scheme(url: str, driver: str) -> str:
     normalized_prefix = f"postgresql+{driver}://"
     if url.startswith("postgres://"):
@@ -60,6 +81,7 @@ def _normalize_legacy_pg_scheme(url: str, driver: str) -> str:
 
 def _build_db_url() -> str:
     policy_driver = _get_policy_pg_driver()
+    policy_sslmode = _get_policy_sslmode()
     url = os.getenv("DATABASE_URL", "").strip()
     url = _strip_outer_quotes(url)
     url = _normalize_legacy_pg_scheme(url, policy_driver)
@@ -77,14 +99,16 @@ def _build_db_url() -> str:
             "or postgresql+psycopg://user:pass@host:5432/dbname"
         )
 
-    if any(dom in url for dom in ("render.com", "neon.tech")) and "sslmode=" not in url and url:
-        sep = "&" if "?" in url else "?"
-        url = f"{url}{sep}sslmode=require"
-
     try:
-        sa_url.make_url(url)
+        parsed_url = sa_url.make_url(url)
     except Exception as exc:
         raise RuntimeError(f"Invalid DATABASE_URL: {repr(url)} ({exc})")
+
+    if policy_sslmode is not None:
+        query = dict(parsed_url.query)
+        query["sslmode"] = policy_sslmode
+        parsed_url = parsed_url.set(query=query)
+        url = parsed_url.render_as_string(hide_password=False)
 
     log.info("DB URL: %s", _mask(url))
     return url
