@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime
 from typing import Optional
@@ -32,6 +33,7 @@ except Exception:
     get_current_user = None  # 미존재 시 /logout에서 대체 처리
 
 auth_router = APIRouter()
+log = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 환경변수 & 상수
@@ -54,8 +56,9 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
-if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
-    raise RuntimeError("❌ GOOGLE_CLIENT_ID 또는 GOOGLE_CLIENT_SECRET 미설정 (.env 확인 필요)")
+GOOGLE_OAUTH_ENABLED = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+if not GOOGLE_OAUTH_ENABLED:
+    log.warning("Google OAuth disabled: set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable /auth/google endpoints.")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Pydantic 모델
@@ -95,6 +98,16 @@ def _set_access_cookie_if_enabled(response: Response, jwt_token: str) -> None:
             max_age=COOKIE_MAX_AGE,
             path="/",
         )
+
+
+def _ensure_google_oauth_enabled() -> None:
+    if GOOGLE_OAUTH_ENABLED:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Google OAuth is disabled. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.",
+    )
+
 
 def _build_auth_response(user: User, access_token: str) -> AuthTokenModel:
     return AuthTokenModel(
@@ -183,6 +196,7 @@ def issue_tokens_for_user(
 # ──────────────────────────────────────────────────────────────────────────────
 @auth_router.get("/auth/login/google", tags=["auth"])
 def login_via_google():
+    _ensure_google_oauth_enabled()
     params = {
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": REDIRECT_URI,
@@ -198,6 +212,7 @@ async def google_auth_callback(
     response: Response,
     db: Session = Depends(get_session),
 ):
+    _ensure_google_oauth_enabled()
     # code → access_token 교환
     async with httpx.AsyncClient() as http:
         token_res = await http.post(
@@ -248,6 +263,7 @@ async def auth_with_google(
     response: Response,
     db: Session = Depends(get_session),
 ):
+    _ensure_google_oauth_enabled()
     async with httpx.AsyncClient() as http:
         email, name = await _verify_id_token_and_extract(http, body.id_token)
     user = _get_or_create_user(db, email=email, name=name)
@@ -270,6 +286,7 @@ async def auth_with_google_access(
     response: Response,
     db: Session = Depends(get_session),
 ):
+    _ensure_google_oauth_enabled()
     async with httpx.AsyncClient() as http:
         email, name = await _fetch_userinfo_with_access_token(http, body.access_token)
     user = _get_or_create_user(db, email=email, name=name)
