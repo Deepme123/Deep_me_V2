@@ -9,6 +9,7 @@ from sqlmodel import SQLModel, create_engine
 log = logging.getLogger(__name__)
 
 _ALLOWED_ENVS = {"dev", "prod", "test"}
+_ALLOWED_PG_DRIVERS = {"psycopg2", "psycopg"}
 
 
 def _get_env() -> str:
@@ -38,22 +39,38 @@ def _strip_outer_quotes(s: str) -> str:
     return s
 
 
+def _get_policy_pg_driver() -> str:
+    raw = os.getenv("DATABASE_DRIVER", "psycopg2").strip().lower()
+    if raw == "":
+        return "psycopg2"
+    if raw not in _ALLOWED_PG_DRIVERS:
+        allowed = "|".join(sorted(_ALLOWED_PG_DRIVERS))
+        raise RuntimeError(f"DATABASE_DRIVER must be one of {allowed}")
+    return raw
+
+
+def _normalize_legacy_pg_scheme(url: str, driver: str) -> str:
+    normalized_prefix = f"postgresql+{driver}://"
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", normalized_prefix, 1)
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", normalized_prefix, 1)
+    return url
+
+
 def _build_db_url() -> str:
+    policy_driver = _get_policy_pg_driver()
     url = os.getenv("DATABASE_URL", "").strip()
     url = _strip_outer_quotes(url)
-
-    if url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql+psycopg2://", 1)
-    elif url.startswith("postgresql://"):
-        url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    url = _normalize_legacy_pg_scheme(url, policy_driver)
 
     if not url:
         raise RuntimeError(
             "DATABASE_URL is required (Postgres only). "
-            "Example: postgresql+psycopg2://user:pass@host:5432/dbname"
+            f"Example: postgresql+{policy_driver}://user:pass@host:5432/dbname"
         )
 
-    if not (url.startswith("postgresql+psycopg2://") or url.startswith("postgresql+psycopg://")):
+    if not any(url.startswith(f"postgresql+{drv}://") for drv in _ALLOWED_PG_DRIVERS):
         raise RuntimeError(
             "Only Postgres DSNs are supported. "
             "Use postgresql+psycopg2://user:pass@host:5432/dbname "

@@ -38,6 +38,13 @@ def test_build_db_url_accepts_and_normalizes_supported_schemes(
     assert session_module._build_db_url() == expected_url
 
 
+def test_build_db_url_uses_policy_driver_for_legacy_scheme(session_module, monkeypatch):
+    monkeypatch.setenv("DATABASE_DRIVER", "psycopg")
+    monkeypatch.setenv("DATABASE_URL", f"postgresql://{BASE_DSN}")
+
+    assert session_module._build_db_url() == f"postgresql+psycopg://{BASE_DSN}"
+
+
 def test_build_db_url_adds_sslmode_for_managed_hosts_when_missing(session_module, monkeypatch):
     raw_url = "postgresql://user:pass@my-project.neon.tech:5432/deepme"
     monkeypatch.setenv("DATABASE_URL", raw_url)
