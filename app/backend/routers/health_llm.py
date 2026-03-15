@@ -1,17 +1,27 @@
+# app/routers/health_llm.py
+from __future__ import annotations
+
+from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
 from app.backend.services.llm_service import generate_noa_response, stream_noa_response
+from app.backend.services.stream_bridge import iter_chunks_async
 
 router = APIRouter(prefix="/health", tags=["health"])
 
 
 @router.get("/llm")
-def health_llm(
-    q: Optional[str] = Query(None, description="Healthcheck prompt (defaults to pong check)"),
-):
-    prompt = q or "Respond with only one word: pong"
+def health_llm(q: Optional[str] = Query(None, description="테스트용 프롬프트(없으면 기본 pong 검사)")):
+    """
+    비-스트리밍 단발 호출 점검.
+    기본 프롬프트: 'pong'을 한 단어로만 답하도록 유도.
+    - OK: {"ok": true, "text": "..."}
+    - 비정상(내용없음/예상외 응답): 503
+    """
+    prompt = q or "너는 간단히 한 단어로만 대답해: pong"
+
     text = generate_noa_response(
         system_prompt="(healthcheck)",
         task_prompt=None,
@@ -36,10 +46,12 @@ def health_llm_stream(
 
     tokens: list[str] = []
     try:
-        for piece in stream_noa_response(
-            system_prompt="(healthcheck-stream)",
-            task_prompt=None,
-            conversation=[("user", prompt)],
+        async for piece in iter_chunks_async(
+            stream_noa_response(
+                system_prompt="(healthcheck-stream)",
+                task_prompt=None,
+                conversation=[("user", prompt)],
+            )
         ):
             if piece:
                 tokens.append(piece)
