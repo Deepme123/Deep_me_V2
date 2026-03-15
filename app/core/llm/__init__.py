@@ -1,3 +1,4 @@
+from .anthropic_provider import AnthropicProvider
 from .base import LLMProvider
 from .openai_provider import OpenAIProvider
 from .types import JSONValue, LLMJsonSchema, LLMMessage, LLMRequestOptions
@@ -29,6 +30,7 @@ def create_llm_provider_from_settings(settings) -> LLMProvider:
 
 __all__ = [
     "JSONValue",
+    "AnthropicProvider",
     "LLMJsonSchema",
     "LLMMessage",
     "LLMProvider",

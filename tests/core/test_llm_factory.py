@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.core.llm import OpenAIProvider
+from app.core.llm import AnthropicProvider, OpenAIProvider
 from app.core.llm import factory
 
 
@@ -26,9 +26,15 @@ def test_create_llm_provider_from_settings_selects_openai_provider():
     assert isinstance(provider, OpenAIProvider)
 
 
+def test_create_llm_provider_from_settings_selects_anthropic_provider():
+    provider = factory.create_llm_provider_from_settings(_build_settings(provider="anthropic"))
+
+    assert isinstance(provider, AnthropicProvider)
+
+
 def test_create_llm_provider_from_settings_rejects_unsupported_provider():
-    with pytest.raises(ValueError, match="Unsupported LLM provider: anthropic"):
-        factory.create_llm_provider_from_settings(_build_settings(provider="anthropic"))
+    with pytest.raises(ValueError, match="Unsupported LLM provider: bedrock"):
+        factory.create_llm_provider_from_settings(_build_settings(provider="bedrock"))
 
 
 def test_create_llm_provider_resolves_settings_before_selecting(monkeypatch):

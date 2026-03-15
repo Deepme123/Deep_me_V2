@@ -4,6 +4,7 @@ from typing import Sequence
 
 from app.core.llm_settings import LLMSettings, get_llm_settings
 
+from .anthropic_provider import AnthropicProvider
 from .base import LLMProvider
 from .openai_provider import OpenAIProvider
 
@@ -30,4 +31,6 @@ def create_llm_provider_from_settings(settings: LLMSettings) -> LLMProvider:
     provider = settings.provider.strip().lower()
     if provider == "openai":
         return OpenAIProvider(settings=settings)
+    if provider == "anthropic":
+        return AnthropicProvider(settings=settings)
     raise ValueError(f"Unsupported LLM provider: {settings.provider}")
