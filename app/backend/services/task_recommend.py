@@ -2,12 +2,12 @@
 from typing import List
 from uuid import UUID
 from sqlmodel import select
-from app.backend.db.session import get_session, session_scope
+from app.backend.db.session import session_scope
 from app.backend.models.task import Task
 from app.backend.models.emotion import EmotionSession, EmotionStep
 from app.backend.core.prompt_loader import get_task_prompt
+from app.core.llm_settings import build_openai_client_kwargs, get_llm_settings
 from openai import OpenAI
-import os
 import json
 import re
 
@@ -81,31 +81,17 @@ def recommend_tasks_from_session_core(
         ]
 
         # ---- 환경변수 로딩 (모델/샘플링/토큰 한도) ----
-        model = os.getenv("LLM_MODEL", "gpt-3.5-turbo")
-
-        try:
-            temperature = float(os.getenv("LLM_TEMPERATURE", "0.7"))
-        except ValueError:
-            temperature = 0.7
-
-        try:
-            max_completion_tokens = int(os.getenv("LLM_MAX_TOKENS", "800"))
-        except ValueError:
-            max_completion_tokens = 800
+        llm = get_llm_settings(
+            model_default="gpt-3.5-turbo",
+            temperature_default=0.7,
+            max_tokens_default=800,
+        )
+        model = llm.model
+        temperature = llm.temperature
+        max_completion_tokens = llm.max_tokens
 
         # ---- OpenAI 클라이언트 구성 (선택적 커스텀 엔드포인트/조직/프로젝트) ----
-        client_kwargs = {}
-        base_url = os.getenv("OPENAI_BASE_URL")
-        if base_url:
-            client_kwargs["base_url"] = base_url
-        org_id = os.getenv("OPENAI_ORG_ID")
-        if org_id:
-            client_kwargs["organization"] = org_id
-        project_id = os.getenv("OPENAI_PROJECT")
-        if project_id:
-            client_kwargs["project"] = project_id
-
-        client = OpenAI(**client_kwargs)
+        client = OpenAI(**build_openai_client_kwargs())
 
         # ---- LLM 호출 ----
         resp = client.chat.completions.create(

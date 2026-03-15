@@ -7,13 +7,13 @@ from openai import OpenAIError
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from app.desire.core.needs_definitions import NeedCode, NEEDS_METADATA
+from app.desire.core.config import settings
 from app.desire.schemas.need_card import NeedCardResponse, NeedScore
 from app.desire.services.llm_client import client, get_model_name
 
 logger = logging.getLogger(__name__)
 
 # LLM invocation settings
-LLM_TIMEOUT_SECONDS = 15
 DEFAULT_NEED_SCORE = 50
 NEED_CODES = [code.value for code in NeedCode]
 
@@ -173,7 +173,7 @@ def _call_llm(conversation_text: str) -> List[NeedScore]:
             response_format=RESPONSE_JSON_SCHEMA,
             temperature=0.1,
             max_output_tokens=800,
-            timeout=LLM_TIMEOUT_SECONDS,
+            timeout=settings.llm_timeout_sec,
         )
 
         raw_text = _extract_response_text(response)

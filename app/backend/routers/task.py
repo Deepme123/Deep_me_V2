@@ -5,10 +5,10 @@ from uuid import UUID
 from datetime import datetime
 import json
 import re
-import os
 
 from openai import OpenAI
 
+from app.core.llm_settings import build_openai_client_kwargs, get_llm_settings
 from app.backend.models.task import Task
 from app.backend.models.user import User
 from app.backend.models.emotion import EmotionSession, EmotionStep
@@ -28,29 +28,13 @@ def _get_openai_client_and_params():
     - LLM_MAX_TOKENS (기본: 800)
     - OPENAI_BASE_URL / OPENAI_ORG_ID / OPENAI_PROJECT (선택)
     """
-    model = os.getenv("LLM_MODEL", "gpt-3.5-turbo")
-    try:
-        temperature = float(os.getenv("LLM_TEMPERATURE", "0.7"))
-    except ValueError:
-        temperature = 0.7
-    try:
-        max_completion_tokens = int(os.getenv("LLM_MAX_TOKENS", "800"))
-    except ValueError:
-        max_completion_tokens = 800
-
-    client_kwargs = {}
-    base_url = os.getenv("OPENAI_BASE_URL")
-    if base_url:
-        client_kwargs["base_url"] = base_url
-    org_id = os.getenv("OPENAI_ORG_ID")
-    if org_id:
-        client_kwargs["organization"] = org_id
-    project_id = os.getenv("OPENAI_PROJECT")
-    if project_id:
-        client_kwargs["project"] = project_id
-
-    client = OpenAI(**client_kwargs)
-    return client, model, temperature, max_completion_tokens
+    llm = get_llm_settings(
+        model_default="gpt-3.5-turbo",
+        temperature_default=0.7,
+        max_tokens_default=800,
+    )
+    client = OpenAI(**build_openai_client_kwargs())
+    return client, llm.model, llm.temperature, llm.max_tokens
 
 
 @router.post("/", response_model=Task)

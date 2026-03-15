@@ -7,12 +7,13 @@ from typing import Iterable, List, Tuple, Optional, Generator
 
 from openai import OpenAI, BadRequestError
 
+from app.core.llm_settings import build_openai_client_kwargs, get_llm_settings
+
 logger = logging.getLogger(__name__)
 
 # ========= Config =========
-MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
-TIMEOUT = float(os.getenv("LLM_TIMEOUT_SEC", "60"))
-DEFAULT_BACKUPS = (os.getenv("LLM_BACKUP_MODELS") or "gpt-4o-mini,gpt-4o").split(",")
+def _get_default_backups() -> list[str]:
+    return (os.getenv("LLM_BACKUP_MODELS") or "gpt-4o-mini,gpt-4o").split(",")
 
 # ========= Utils =========
 def _is_reasoning(model: str) -> bool:
@@ -77,8 +78,12 @@ def stream_noa_response(
     - 기본: Responses API (gpt-5*, o4*, o3* 계열)
     - 폴백: Chat Completions (백업 모델들)
     """
-    mdl = (model or MODEL).strip()
-    client = OpenAI(timeout=TIMEOUT)
+    runtime = get_llm_settings(
+        model_default="gpt-4o-mini",
+        timeout_default=60.0,
+    )
+    mdl = (model or runtime.model).strip()
+    client = OpenAI(**build_openai_client_kwargs(timeout=runtime.timeout_sec))
 
     # 1) Responses API 경로 (권장: gpt-5-mini 등)
     if _is_reasoning(mdl):
@@ -126,7 +131,7 @@ def stream_noa_response(
     last_err: Optional[Exception] = None
     msgs = _to_chat_messages(system_prompt, task_prompt, conversation)
 
-    for bk in [b.strip() for b in DEFAULT_BACKUPS if b.strip()]:
+    for bk in [b.strip() for b in _get_default_backups() if b.strip()]:
         try:
             logger.info("LLM: fallback via Chat Completions (%s)", bk)
 
