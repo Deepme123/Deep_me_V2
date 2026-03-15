@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+import os
+import unittest
+from unittest.mock import patch
+
+os.environ.setdefault("DATABASE_URL", "sqlite:///test.db")
+
+from app.analyze import schemas as sc
+from app.analyze.services import llm_card
+
+
+class _FakeProvider:
+    def __init__(self, *, payload=None, error: Exception | None = None) -> None:
+        self.payload = payload
+        self.error = error
+        self.calls = []
+
+    def generate_json(self, *, messages, schema, options=None):
+        self.calls.append((messages, schema, options))
+        if self.error is not None:
+            raise self.error
+        return self.payload
+
+
+def _build_turns() -> list[sc.ConversationTurn]:
+    return [
+        sc.ConversationTurn(role="user", speaker="USER", text="I am overwhelmed at work."),
+        sc.ConversationTurn(role="assistant", speaker="NOA", text="What feels heaviest right now?"),
+    ]
+
+
+class LLMCardTests(unittest.TestCase):
+    def test_analyze_dialogue_to_card_uses_common_generate_json_contract(self) -> None:
+        provider = _FakeProvider(
+            payload={
+                "summary": "The user feels overwhelmed by work pressure.",
+                "core_emotions": ["anxiety", "fatigue"],
+                "situation": "Heavy workload and pressure.",
+                "emotion": "The user feels tense and exhausted.",
+                "thoughts": "They feel they might fall behind.",
+                "physical_reactions": "Tight chest and shallow breathing.",
+                "behaviors": "They avoid resting and keep pushing.",
+                "coping_actions": ["took a short walk"],
+                "tags": ["work", "stress"],
+                "insight": "Rest and clearer boundaries may help.",
+            }
+        )
+
+        with patch.object(llm_card, "_get_card_llm_provider", return_value=provider):
+            card = llm_card.analyze_dialogue_to_card(_build_turns(), title_hint="work stress")
+
+        self.assertEqual(card.summary, "The user feels overwhelmed by work pressure.")
+        self.assertEqual(card.core_emotions, ["anxiety", "fatigue"])
+        messages, schema, _options = provider.calls[0]
+        self.assertEqual(messages[0].role, "system")
+        self.assertIn("work stress", messages[1].content)
+        self.assertEqual(schema.name, "emotion_card")
+
+    def test_analyze_dialogue_to_card_falls_back_on_json_generation_failure(self) -> None:
+        provider = _FakeProvider(error=RuntimeError("LLM response was not valid JSON."))
+
+        with patch.object(llm_card, "_get_card_llm_provider", return_value=provider):
+            card = llm_card.analyze_dialogue_to_card(_build_turns())
+
+        self.assertEqual(card.model_dump(), sc.CardCreate().model_dump())
+
+    def test_analyze_dialogue_to_card_falls_back_on_schema_validation_failure(self) -> None:
+        provider = _FakeProvider(
+            payload={
+                "summary": "The user is stressed.",
+                "core_emotions": "anxiety",
+            }
+        )
+
+        with patch.object(llm_card, "_get_card_llm_provider", return_value=provider):
+            card = llm_card.analyze_dialogue_to_card(_build_turns())
+
+        self.assertEqual(card.model_dump(), sc.CardCreate().model_dump())
+
+
+if __name__ == "__main__":
+    unittest.main()
