@@ -1,8 +1,11 @@
 # app/routers/health_llm.py
+from __future__ import annotations
+
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 
 from app.backend.services.llm_service import generate_noa_response, stream_noa_response
+from app.backend.services.stream_bridge import iter_chunks_async
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -16,8 +19,12 @@ def health_llm(q: Optional[str] = Query(None, description="테스트용 프롬�
     - 비정상(내용없음/예상외 응답): 503
     """
     prompt = q or "너는 간단히 한 단어로만 대답해: pong"
-    # recent_steps는 헬스체크라 빈 리스트로
-    text = generate_noa_response(user_input=prompt, recent_steps=[], system_prompt="(healthcheck)")
+
+    text = generate_noa_response(
+        system_prompt="(healthcheck)",
+        task_prompt=None,
+        conversation=[("user", prompt)],
+    )
     text = (text or "").strip()
 
     if not text:
@@ -43,11 +50,12 @@ async def health_llm_stream(q: Optional[str] = Query(None, description="테스�
 
     tokens: list[str] = []
     try:
-        async for piece in stream_noa_response(
-            user_input=prompt,
-            session=None,           # 헬스체크라 실제 세션 필요 없음
-            recent_steps=[],        # 빈 히스토리
-            system_prompt="(healthcheck-stream)",
+        async for piece in iter_chunks_async(
+            stream_noa_response(
+                system_prompt="(healthcheck-stream)",
+                task_prompt=None,
+                conversation=[("user", prompt)],
+            )
         ):
             if piece:
                 tokens.append(piece)

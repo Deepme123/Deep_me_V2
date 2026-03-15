@@ -1,0 +1,105 @@
+from __future__ import annotations
+
+import asyncio
+import importlib
+import sys
+import types
+import unittest
+
+
+def _install_fastapi_stub():
+    fastapi = types.ModuleType("fastapi")
+
+    class HTTPException(Exception):
+        def __init__(self, *, status_code: int, detail):
+            super().__init__(detail)
+            self.status_code = status_code
+            self.detail = detail
+
+    class APIRouter:
+        def __init__(self, *args, **kwargs) -> None:
+            self.args = args
+            self.kwargs = kwargs
+
+        def get(self, *args, **kwargs):
+            def _decorator(fn):
+                return fn
+
+            return _decorator
+
+    def Query(default=None, **kwargs):
+        return default
+
+    fastapi.APIRouter = APIRouter
+    fastapi.HTTPException = HTTPException
+    fastapi.Query = Query
+    sys.modules["fastapi"] = fastapi
+    return HTTPException
+
+
+def _load_health_module():
+    http_exception = _install_fastapi_stub()
+    sys.modules.pop("app.backend.routers.health_llm", None)
+    module = importlib.import_module("app.backend.routers.health_llm")
+    return module, http_exception
+
+
+class HealthLLMTests(unittest.TestCase):
+    def test_health_llm_passes_backend_signature(self) -> None:
+        module, _ = _load_health_module()
+        captured = {}
+
+        def _fake_generate_noa_response(**kwargs):
+            captured.update(kwargs)
+            return "pong"
+
+        module.generate_noa_response = _fake_generate_noa_response
+
+        result = module.health_llm()
+
+        self.assertEqual(result, {"ok": True, "text": "pong"})
+        self.assertEqual(
+            captured,
+            {
+                "system_prompt": "(healthcheck)",
+                "task_prompt": None,
+                "conversation": [("user", "너는 간단히 한 단어로만 대답해: pong")],
+            },
+        )
+
+    def test_health_llm_raises_on_empty_text(self) -> None:
+        module, http_exception = _load_health_module()
+        module.generate_noa_response = lambda **kwargs: ""
+
+        with self.assertRaises(http_exception) as ctx:
+            module.health_llm()
+
+        self.assertEqual(ctx.exception.status_code, 503)
+        self.assertEqual(ctx.exception.detail, "llm_empty_response")
+
+    def test_health_llm_stream_collects_chunks_via_bridge(self) -> None:
+        module, _ = _load_health_module()
+        captured = {}
+
+        def _fake_stream_noa_response(**kwargs):
+            captured.update(kwargs)
+            yield "po"
+            yield "ng"
+
+        module.stream_noa_response = _fake_stream_noa_response
+
+        result = asyncio.run(module.health_llm_stream())
+
+        self.assertEqual(
+            captured,
+            {
+                "system_prompt": "(healthcheck-stream)",
+                "task_prompt": None,
+                "conversation": [("user", "너는 간단히 한 단어로만 대답해: pong")],
+            },
+        )
+        self.assertEqual(result, {"ok": True, "tokens": 2, "text": "pong"})
+
+
+if __name__ == "__main__":
+    unittest.main()
