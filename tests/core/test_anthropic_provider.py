@@ -124,6 +124,29 @@ def test_stream_text_yields_text_stream_chunks():
     assert call["messages"] == [{"role": "user", "content": "User"}]
 
 
+def test_stream_text_falls_back_to_final_message_when_text_stream_is_empty():
+    client = FakeClient(
+        messages=FakeMessagesAPI(
+            stream_result=FakeMessagesStream(
+                [],
+                final_message=SimpleNamespace(content=[_text_block("fallback text")]),
+            )
+        )
+    )
+    provider = AnthropicProvider(settings=_build_settings("claude-sonnet-4-5"), client=client)
+
+    output = "".join(
+        provider.stream_text(
+            messages=[
+                LLMMessage(role="system", content="System"),
+                LLMMessage(role="user", content="User"),
+            ]
+        )
+    )
+
+    assert output == "fallback text"
+
+
 def test_generate_json_returns_tool_input_payload():
     client = FakeClient(
         messages=FakeMessagesAPI(
