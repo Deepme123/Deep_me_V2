@@ -29,7 +29,7 @@ from app.backend.schemas.emotion import (
     TaskRecommendRequest,
     TaskRecommendResponse,
 )
-from app.backend.services.llm_service import stream_noa_response
+from app.backend.services.llm_service import get_backend_llm_info, stream_noa_response
 from app.backend.services.stream_bridge import iter_chunks_async
 from app.backend.services.task_recommend import recommend_tasks_from_session_core
 from app.backend.services.web_test_user import resolve_emotion_user_id
@@ -562,6 +562,14 @@ async def ws_emotion(websocket: WebSocket):
             sys_fp = leak_guard.fingerprint(system_prompt)
             await guard_send(
                 EmotionOpenResponse(type="open_ok", session_id=session_id, turns=0).model_dump(),
+            )
+            llm_info = get_backend_llm_info()
+            logger.info(
+                "WS connected | session_id=%s user_id=%s provider=%s model=%s",
+                session_id,
+                uid,
+                llm_info.provider,
+                llm_info.model,
             )
             logger.info("WS bootstrap open_ok sent | session_id=%s", session_id)
         except Exception:

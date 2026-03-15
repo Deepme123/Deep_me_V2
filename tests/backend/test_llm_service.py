@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from app.backend.services import llm_service
+from app.core.llm_settings import LLMSettings
 
 
 class _FakeProvider:
@@ -25,17 +26,66 @@ class _FakeProvider:
 
 
 class LLMServiceTests(unittest.TestCase):
-    def test_get_backend_llm_provider_uses_common_factory_defaults(self) -> None:
-        sentinel = object()
+    def test_get_backend_llm_settings_uses_common_defaults(self) -> None:
+        settings = LLMSettings(
+            provider="openai",
+            model="gpt-test",
+            temperature=0.1,
+            max_tokens=222,
+            timeout_sec=45.0,
+            openai_api_key="",
+            anthropic_api_key="",
+        )
 
-        with patch.object(llm_service, "create_llm_provider", return_value=sentinel) as mocked:
-            result = llm_service._get_backend_llm_provider()
+        with patch.object(llm_service, "get_llm_settings", return_value=settings) as mocked:
+            result = llm_service._get_backend_llm_settings()
 
-        self.assertIs(result, sentinel)
+        self.assertIs(result, settings)
         mocked.assert_called_once_with(
             model_default="gpt-4o-mini",
             timeout_default=60.0,
         )
+
+    def test_get_backend_llm_provider_uses_resolved_settings(self) -> None:
+        sentinel = object()
+        settings = LLMSettings(
+            provider="openai",
+            model="gpt-test",
+            temperature=0.1,
+            max_tokens=222,
+            timeout_sec=45.0,
+            openai_api_key="",
+            anthropic_api_key="",
+        )
+
+        with (
+            patch.object(llm_service, "_get_backend_llm_settings", return_value=settings),
+            patch.object(llm_service, "create_llm_provider_from_settings", return_value=sentinel) as mocked,
+        ):
+            result = llm_service._get_backend_llm_provider()
+
+        self.assertIs(result, sentinel)
+        mocked.assert_called_once_with(settings)
+
+    def test_get_backend_llm_info_returns_resolved_provider_and_model(self) -> None:
+        settings = LLMSettings(
+            provider="anthropic",
+            model="claude-test",
+            temperature=0.1,
+            max_tokens=222,
+            timeout_sec=45.0,
+            openai_api_key="",
+            anthropic_api_key="",
+        )
+
+        with patch.object(llm_service, "_get_backend_llm_settings", return_value=settings):
+            info = llm_service.get_backend_llm_info()
+            overridden = llm_service.get_backend_llm_info(model=" claude-override ")
+
+        self.assertEqual(info.provider, "anthropic")
+        self.assertEqual(info.model, "claude-test")
+        self.assertEqual(overridden.provider, "anthropic")
+        self.assertEqual(overridden.model, "claude-override")
 
     def test_generate_noa_response_uses_common_provider_messages(self) -> None:
         provider = _FakeProvider()
