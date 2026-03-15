@@ -4,8 +4,6 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
-
 from app.backend.services.llm_service import generate_noa_response, stream_noa_response
 from app.backend.services.stream_bridge import iter_chunks_async
 
@@ -39,7 +37,7 @@ def health_llm(q: Optional[str] = Query(None, description="테스트용 프롬�
 
 
 @router.get("/llm/stream")
-def health_llm_stream(
+async def health_llm_stream(
     q: Optional[str] = Query(None, description="Healthcheck prompt (defaults to pong check)"),
 ):
     prompt = q or "Respond with only one word: pong"
