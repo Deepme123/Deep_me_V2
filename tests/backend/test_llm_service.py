@@ -25,6 +25,18 @@ class _FakeProvider:
 
 
 class LLMServiceTests(unittest.TestCase):
+    def test_get_backend_llm_provider_uses_common_factory_defaults(self) -> None:
+        sentinel = object()
+
+        with patch.object(llm_service, "create_llm_provider", return_value=sentinel) as mocked:
+            result = llm_service._get_backend_llm_provider()
+
+        self.assertIs(result, sentinel)
+        mocked.assert_called_once_with(
+            model_default="gpt-4o-mini",
+            timeout_default=60.0,
+        )
+
     def test_generate_noa_response_uses_common_provider_messages(self) -> None:
         provider = _FakeProvider()
 

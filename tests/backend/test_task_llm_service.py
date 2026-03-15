@@ -26,6 +26,19 @@ class _FakeProvider:
 
 
 class TaskLLMServiceTests(unittest.TestCase):
+    def test_get_task_llm_provider_uses_common_factory_defaults(self) -> None:
+        sentinel = object()
+
+        with patch.object(task_llm_service, "create_llm_provider", return_value=sentinel) as mocked:
+            result = task_llm_service._get_task_llm_provider()
+
+        self.assertIs(result, sentinel)
+        mocked.assert_called_once_with(
+            model_default="gpt-3.5-turbo",
+            temperature_default=0.7,
+            max_tokens_default=800,
+        )
+
     def test_recommend_task_drafts_from_prompt_parses_legacy_text(self) -> None:
         provider = _FakeProvider(
             text="1. 제목: 산책하기\n설명: 10분만 밖으로 나가자.\n2. 제목: 물 마시기\n설명: 천천히 한 컵 마신다."
