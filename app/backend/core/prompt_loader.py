@@ -12,31 +12,40 @@ FALLBACK_PROMPT = (
     "너는 감정 기반 챗봇이야. 사용자의 감정을 존중하고, 공감적 질문을 통해 "
     "사용자가 스스로 감정을 탐색하도록 돕는다."
 )
+FALLBACK_TASK_PROMPT = (
+    "You recommend 1-5 small, concrete tasks that fit the user's current emotional context. "
+    "Keep each task gentle, specific, realistic, and safe to start immediately. "
+    "Avoid anything medical, dangerous, shaming, or overly demanding."
+)
 
-def _load(path: Path) -> str:
+
+def _load_system_prompt(path: Path) -> str:
     try:
         txt = path.read_text(encoding="utf-8")
-        # 운영 환경이라면, 굳이 경로 출력할 필요 없음
         return txt.strip()
     except FileNotFoundError:
         logging.warning("[PromptLoader] system_prompt.txt not found. Using fallback.")
         return FALLBACK_PROMPT
 
+
 @lru_cache(maxsize=1)
 def get_system_prompt() -> str:
-    return _load(PROMPT_PATH)
+    return _load_system_prompt(PROMPT_PATH)
+
 
 _DEFAULT_TASK_PROMPT_PATH = BASE_DIR / "resources" / "task_prompt.txt"
 _CWD_TASK_PROMPT_PATH = _CWD_BASE_DIR / "resources" / "task_prompt.txt"
 TASK_PROMPT_PATH = _DEFAULT_TASK_PROMPT_PATH if _DEFAULT_TASK_PROMPT_PATH.exists() else _CWD_TASK_PROMPT_PATH
 
+
+@lru_cache(maxsize=1)
 def get_task_prompt() -> str:
     try:
         txt = TASK_PROMPT_PATH.read_text(encoding="utf-8")
         return txt.strip()
     except FileNotFoundError:
-        raise RuntimeError("[PromptLoader] task_prompt.txt not found.")
+        logging.warning("[PromptLoader] task_prompt.txt not found. Using fallback.")
+        return FALLBACK_TASK_PROMPT
 
 
 SYSTEM_PROMPT = get_system_prompt()
-
