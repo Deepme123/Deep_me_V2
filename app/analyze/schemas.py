@@ -1,11 +1,10 @@
-# app/schemas.py
 from __future__ import annotations
 
+from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
-from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ===== Session =====
@@ -82,12 +81,39 @@ class ConversationTurn(BaseModel):
     )
 
 
-class AutoCardCreate(BaseModel):
-    conversation_log: List[ConversationTurn] = Field(
-        default_factory=list,
-        description="노아-사용자 대화 로그",
-    )
+class AutoCardRequestBase(BaseModel):
     title_hint: Optional[str] = Field(
         default=None,
         description="요약/제목 힌트(선택)",
     )
+
+
+class AutoCardCreate(AutoCardRequestBase):
+    conversation_log: List[ConversationTurn] = Field(
+        default_factory=list,
+        description="기존 방식: 호출자가 대화 로그를 직접 전달",
+    )
+
+
+class SessionAutoCardCreate(AutoCardRequestBase):
+    session_id: UUID = Field(
+        ...,
+        description="세션 기반 방식: 서버가 session_id로 대화 로그를 조회",
+    )
+
+
+class AutoCardGenerateRequest(AutoCardRequestBase):
+    session_id: Optional[UUID] = Field(
+        default=None,
+        description="권장 방식: 기존 세션을 참조해 서버가 대화 로그를 재구성",
+    )
+    conversation_log: Optional[List[ConversationTurn]] = Field(
+        default=None,
+        description="호환 방식: 기존 호출자는 대화 로그를 직접 전달 가능",
+    )
+
+    @model_validator(mode="after")
+    def validate_input_source(self) -> "AutoCardGenerateRequest":
+        if self.session_id is None and not self.conversation_log:
+            raise ValueError("Either session_id or conversation_log must be provided.")
+        return self
