@@ -38,16 +38,21 @@ from app.backend.core.jwt import decode_access_token
 from app.backend.core.prompt_loader import get_system_prompt, get_task_prompt
 from app.backend.services.convo_policy import (
     is_activity_turn,
-    mark_activity_injected,
     ACTIVITY_STEP_TYPE,
 )
 from app.backend.services.step_manager import (
+    CANCEL_CLOSE_MESSAGE_TYPE,
+    CANCEL_CLOSE_STEP_TYPE,
     build_end_session_context,
+    build_cancel_close_ok_message,
+    build_close_suggestion_message,
     build_fixed_farewell,
     build_soft_timeout_hint,
     build_step_context,
     extract_end_session_marker,
     get_step_name,
+    is_soft_close_trigger,
+    should_suggest_close,
     step_after_turn,
     step_for_prompt,
 )
@@ -76,6 +81,7 @@ CFG = WSConfig()
 MSG_OPEN = "open"
 MSG_MESSAGE = "message"
 MSG_CLOSE = "close"
+MSG_CANCEL_CLOSE = CANCEL_CLOSE_MESSAGE_TYPE
 MSG_TASK_RECOMMEND = "task_recommend"
 MSG_PING = "ping"
 MSG_PONG = "pong"
@@ -169,7 +175,7 @@ async def _ws_recv_safe(
     """
     클라이언트 프레임 관용 처리:
     - JSON: dict
-    - 단어: ping/open/close
+    - 단어: ping/open/close/cancel_close
     - 쿼리스트링: type=message&text=...
     - 그 외 문자열: {"type":"message","text": "..."}
     timeout 시 {"type":"ping"} 반환
@@ -233,6 +239,8 @@ async def _ws_recv_safe(
             return {"type": "open"}
         if tl == "close":
             return {"type": "close"}
+        if tl == MSG_CANCEL_CLOSE:
+            return {"type": MSG_CANCEL_CLOSE}
 
         # 3) 쿼리스트링
         if "=" in t and "&" in t:
@@ -415,6 +423,25 @@ def _close_session_record(db: Session, session_id: UUID, payload: EmotionCloseRe
             s.insight_summary = payload.insight_summary
         db.add(s)
         db.commit()
+
+def _append_step_marker(db: Session, session_id: UUID, step_type: str) -> None:
+    last_order = db.exec(
+        select(EmotionStep.step_order)
+        .where(EmotionStep.session_id == session_id)
+        .order_by(EmotionStep.step_order.desc())
+        .limit(1)
+    ).first()
+    marker = EmotionStep(
+        session_id=session_id,
+        step_order=int(last_order or 0) + 1,
+        step_type=step_type,
+        user_input="",
+        gpt_response="",
+        created_at=datetime.utcnow(),
+        insight_tag=None,
+    )
+    db.add(marker)
+    db.commit()
 
 def _mark_session_ended(db: Session, session_id: UUID) -> None:
     s = db.get(EmotionSession, session_id)
@@ -790,7 +817,8 @@ async def ws_emotion(websocket: WebSocket):
                     await guard_send({"type": "error", "message": "empty_assistant_response", "turn_dropped": True})
                     continue
                 assistant_text, end_by_token = extract_end_session_marker(assistant_text)
-                if current_step >= 11 or end_by_token:
+                soft_close_triggered = is_soft_close_trigger(current_step, end_by_token)
+                if soft_close_triggered:
                     assistant_text = build_fixed_farewell()
                     end_by_token = True
                 new_step = step_after_turn(steps, user_text, assistant_text)
@@ -828,12 +856,13 @@ async def ws_emotion(websocket: WebSocket):
                     }
                 )
 
-                if current_step >= 11 or end_by_token:
+                if soft_close_triggered:
                     try:
                         await _with_db(_mark_session_ended, session_id)
                     except Exception:
                         logger.exception("WS session end update failed")
-                    await guard_send({"type": "suggest_close"})
+                if should_suggest_close(steps, current_step, end_by_token):
+                    await guard_send(build_close_suggestion_message())
                 
                 if want_activity:
                     if recommend_fuse_tripped:
@@ -878,6 +907,20 @@ async def ws_emotion(websocket: WebSocket):
 
                 await guard_send(EmotionCloseResponse(type="close_ok").model_dump())
                 break
+
+            elif typ == MSG_CANCEL_CLOSE:
+                if not session_id:
+                    await guard_send({"type": "error", "message": "no session"})
+                    continue
+
+                try:
+                    await _with_db(_append_step_marker, session_id, CANCEL_CLOSE_STEP_TYPE)
+                except Exception as e:
+                    logger.warning("WS cancel_close marker failed | %s", _safe_str(e))
+                    await guard_send({"type": "error", "message": "cancel_close_failed"})
+                    continue
+
+                await guard_send(build_cancel_close_ok_message())
 
             # ── 태스크 추천
             elif typ == MSG_TASK_RECOMMEND:
