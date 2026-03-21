@@ -1,4 +1,3 @@
-# app/routers/cards.py
 from __future__ import annotations
 
 from uuid import UUID
@@ -6,108 +5,150 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from app.analyze.db import get_db
 from app.analyze import models as m
 from app.analyze import schemas as sc
+from app.analyze.db import get_db
 from app.analyze.services import risk as risk_service
 from app.analyze.services.llm_card import analyze_dialogue_to_card
+from app.backend.models.emotion import EmotionStep
 
 router = APIRouter(prefix="/api", tags=["cards"])
 
 
-# ===== 세션 생성 =====
+def _get_session_or_404(db: Session, session_id: UUID) -> m.EmotionSession:
+    session = db.get(m.EmotionSession, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="session not found")
+    return session
+
+
+def _store_card(db: Session, session_id: UUID, payload: sc.CardCreate) -> sc.CardOut:
+    risk_flag, risk_level = risk_service.risk_from_payload(payload.model_dump())
+
+    card = m.EmotionCard(
+        session_id=session_id,
+        summary=payload.summary,
+        core_emotions=payload.core_emotions,
+        situation=payload.situation,
+        emotion=payload.emotion,
+        thoughts=payload.thoughts,
+        physical_reactions=payload.physical_reactions,
+        behaviors=payload.behaviors,
+        coping_actions=payload.coping_actions,
+        tags=payload.tags,
+        insight=payload.insight,
+        exportable=True,
+        risk_flag=risk_flag,
+        risk_level=risk_level,
+    )
+    db.add(card)
+    db.commit()
+    db.refresh(card)
+    return sc.CardOut.model_validate(card, from_attributes=True)
+
+
+def _analyze_and_store_card(
+    db: Session,
+    session_id: UUID,
+    turns: list[sc.ConversationTurn],
+    title_hint: str | None = None,
+) -> sc.CardOut:
+    if not turns:
+        raise HTTPException(status_code=400, detail="conversation history is empty")
+
+    payload = analyze_dialogue_to_card(turns=turns, title_hint=title_hint)
+    return _store_card(db=db, session_id=session_id, payload=payload)
+
+
+def _steps_to_conversation_turns(
+    steps: list[EmotionStep],
+) -> list[sc.ConversationTurn]:
+    turns: list[sc.ConversationTurn] = []
+    for step in steps:
+        if step.user_input:
+            turns.append(
+                sc.ConversationTurn(
+                    role="user",
+                    speaker="USER",
+                    text=step.user_input,
+                    timestamp=step.created_at,
+                )
+            )
+        if step.gpt_response:
+            turns.append(
+                sc.ConversationTurn(
+                    role="assistant",
+                    speaker="NOA",
+                    text=step.gpt_response,
+                    timestamp=step.created_at,
+                )
+            )
+    return turns
+
+
+def _load_session_conversation_turns(
+    db: Session,
+    session_id: UUID,
+) -> list[sc.ConversationTurn]:
+    steps = db.exec(
+        select(EmotionStep)
+        .where(EmotionStep.session_id == session_id)
+        .order_by(EmotionStep.step_order)
+    ).all()
+    return _steps_to_conversation_turns(steps)
+
+
 @router.post("/sessions", response_model=sc.SessionOut)
 def create_session(body: sc.SessionCreate, db: Session = Depends(get_db)):
-    ses = m.EmotionSession(user_id=body.user_id)
-    db.add(ses)
+    session = m.EmotionSession(user_id=body.user_id)
+    db.add(session)
     db.commit()
-    db.refresh(ses)
-    return sc.SessionOut.model_validate(ses, from_attributes=True)
+    db.refresh(session)
+    return sc.SessionOut.model_validate(session, from_attributes=True)
 
 
-# ===== 카드 수동 생성 =====
 @router.post("/sessions/{session_id}/cards", response_model=sc.CardOut)
 def create_card(
     session_id: UUID,
     body: sc.CardCreate,
     db: Session = Depends(get_db),
 ):
-    ses = db.get(m.EmotionSession, session_id)
-    if not ses:
-        raise HTTPException(status_code=404, detail="session not found")
-
-    # 위험도 계산 (텍스트 기반 단순 스코어링)
-    risk_flag, risk_level = risk_service.risk_from_payload(body.model_dump())
-
-    card = m.EmotionCard(
-        session_id=session_id,
-        summary=body.summary,
-        core_emotions=body.core_emotions,
-        situation=body.situation,
-        emotion=body.emotion,
-        thoughts=body.thoughts,
-        physical_reactions=body.physical_reactions,
-        behaviors=body.behaviors,
-        coping_actions=body.coping_actions,
-        tags=body.tags,
-        insight=body.insight,
-        exportable=True,
-        risk_flag=risk_flag,
-        risk_level=risk_level,
-    )
-    db.add(card)
-    db.commit()
-    db.refresh(card)
-
-    return sc.CardOut.model_validate(card, from_attributes=True)
+    _get_session_or_404(db, session_id)
+    return _store_card(db=db, session_id=session_id, payload=body)
 
 
-# ===== 카드 자동 생성 (GPT 분석) =====
 @router.post("/sessions/{session_id}/cards/auto", response_model=sc.CardOut)
 def create_card_auto(
     session_id: UUID,
     body: sc.AutoCardCreate,
     db: Session = Depends(get_db),
 ):
-    ses = db.get(m.EmotionSession, session_id)
-    if not ses:
-        raise HTTPException(status_code=404, detail="session not found")
-
-    # LLM을 사용해 대화 → CardCreate 스키마로 변환
-    card_payload = analyze_dialogue_to_card(
+    _get_session_or_404(db, session_id)
+    return _analyze_and_store_card(
+        db=db,
+        session_id=session_id,
         turns=body.conversation_log,
         title_hint=body.title_hint,
     )
 
-    # 위험도 스코어링
-    risk_flag, risk_level = risk_service.risk_from_payload(
-        card_payload.model_dump()
-    )
 
-    card = m.EmotionCard(
+@router.post("/sessions/{session_id}/cards/auto-from-session", response_model=sc.CardOut)
+def create_card_auto_from_session(
+    session_id: UUID,
+    body: sc.AutoCardRequestBase | None = None,
+    db: Session = Depends(get_db),
+):
+    _get_session_or_404(db, session_id)
+    turns = _load_session_conversation_turns(db, session_id)
+    title_hint = body.title_hint if body else None
+    return _analyze_and_store_card(
+        db=db,
         session_id=session_id,
-        summary=card_payload.summary,
-        core_emotions=card_payload.core_emotions,
-        situation=card_payload.situation,
-        emotion=card_payload.emotion,
-        thoughts=card_payload.thoughts,
-        physical_reactions=card_payload.physical_reactions,
-        behaviors=card_payload.behaviors,
-        coping_actions=card_payload.coping_actions,
-        tags=card_payload.tags,
-        insight=card_payload.insight,
-        exportable=True,
-        risk_flag=risk_flag,
-        risk_level=risk_level,
+        turns=turns,
+        title_hint=title_hint,
     )
-    db.add(card)
-    db.commit()
-    db.refresh(card)
-
-    return sc.CardOut.model_validate(card, from_attributes=True)
 
 
-# ===== 세션별 카드 목록 조회 =====
 @router.get("/sessions/{session_id}/cards", response_model=list[sc.CardOut])
 def list_cards(session_id: UUID, db: Session = Depends(get_db)):
     stmt = (
@@ -116,10 +157,9 @@ def list_cards(session_id: UUID, db: Session = Depends(get_db)):
         .order_by(m.EmotionCard.created_at.desc())
     )
     rows = db.exec(stmt).all()
-    return [sc.CardOut.model_validate(r, from_attributes=True) for r in rows]
+    return [sc.CardOut.model_validate(row, from_attributes=True) for row in rows]
 
 
-# ===== 단건 조회 =====
 @router.get("/cards/{card_id}", response_model=sc.CardOut)
 def get_card(card_id: UUID, db: Session = Depends(get_db)):
     card = db.get(m.EmotionCard, card_id)
