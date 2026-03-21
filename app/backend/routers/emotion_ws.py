@@ -599,7 +599,7 @@ async def ws_emotion(websocket: WebSocket):
             return False
 
         awaiting_close_confirmation = False
-        await guard_send(EmotionCloseResponse(type="close_ok").model_dump())
+        await _ws_send_safe(websocket, EmotionCloseResponse(type="close_ok").model_dump())
         return True
 
     async def enter_close_cooldown(*, send_ack: bool) -> bool:
