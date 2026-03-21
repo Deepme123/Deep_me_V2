@@ -73,6 +73,7 @@ class WSConfig:
     WS_HEARTBEAT_SEC: float = float(os.getenv("WS_HEARTBEAT_SEC", "15"))
     LLM_STREAM_TIMEOUT: float = float(os.getenv("LLM_STREAM_TIMEOUT", "75"))
     RECOMMEND_TIMEOUT: float = float(os.getenv("RECOMMEND_TIMEOUT", "15"))
+    ANALYSIS_CARD_TIMEOUT: float = float(os.getenv("ANALYSIS_CARD_TIMEOUT", "45"))
     WS_HISTORY_TURNS: int = max(5, min(10, int(os.getenv("WS_HISTORY_TURNS", "8"))))
     WS_MAX_USER_TEXT_LEN: int = int(os.getenv("WS_MAX_USER_TEXT_LEN", str(8 * 1024)))  # bytes/ASCII-ish
 
@@ -464,6 +465,20 @@ async def _recommend_tasks_async(session_id: UUID, max_items: int) -> List[dict]
 
     return await asyncio.to_thread(_work)
 
+async def _generate_analysis_card_async(session_id: UUID) -> dict:
+    def _work() -> dict:
+        from app.analyze.routers.cards import create_card_auto_from_session
+
+        with session_scope() as db:
+            card = create_card_auto_from_session(
+                session_id=session_id,
+                body=None,
+                db=db,
+            )
+        return jsonable_encoder(card, exclude_none=True)
+
+    return await asyncio.to_thread(_work)
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Leak guard
 
@@ -589,7 +604,11 @@ async def ws_emotion(websocket: WebSocket):
                 await close_ws(code=1013, reason="send_backpressure")
             raise SendBackpressure("send_queue_backpressure")
 
-    async def finalize_close(payload: EmotionCloseRequest) -> bool:
+    async def finalize_close(
+        payload: EmotionCloseRequest,
+        *,
+        trigger_analysis_card: bool = False,
+    ) -> bool:
         nonlocal awaiting_close_confirmation
         try:
             await _with_db(_close_session_record, session_id, payload)
@@ -600,6 +619,36 @@ async def ws_emotion(websocket: WebSocket):
 
         awaiting_close_confirmation = False
         await _ws_send_safe(websocket, EmotionCloseResponse(type="close_ok").model_dump())
+
+        if trigger_analysis_card and session_id is not None:
+            try:
+                card = await asyncio.wait_for(
+                    _generate_analysis_card_async(session_id),
+                    timeout=CFG.ANALYSIS_CARD_TIMEOUT,
+                )
+            except Exception as e:
+                logger.exception(
+                    "analysis card generation failed after confirm_close | session_id=%s | %s",
+                    session_id,
+                    _safe_str(e),
+                )
+                await _ws_send_safe(
+                    websocket,
+                    {
+                        "type": "analysis_card_failed",
+                        "session_id": session_id,
+                        "message": "analysis_card_generation_failed",
+                    },
+                )
+            else:
+                await _ws_send_safe(
+                    websocket,
+                    {
+                        "type": "analysis_card_ready",
+                        "session_id": session_id,
+                        "card": card,
+                    },
+                )
         return True
 
     async def enter_close_cooldown(*, send_ack: bool) -> bool:
@@ -951,7 +1000,7 @@ async def ws_emotion(websocket: WebSocket):
                     await guard_send({"type": "error", "message": f"bad confirm close payload: {e}"})
                     continue
 
-                if await finalize_close(payload):
+                if await finalize_close(payload, trigger_analysis_card=True):
                     break
 
             elif typ == MSG_CANCEL_CLOSE:
