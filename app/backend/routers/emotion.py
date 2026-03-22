@@ -15,6 +15,7 @@ from app.backend.services.step_manager import (
     build_soft_timeout_hint,
     build_step_context,
     extract_end_session_marker,
+    is_soft_close_trigger,
     step_for_prompt,
 )
 from app.backend.schemas.emotion import (
@@ -184,7 +185,8 @@ def generate_emotion_step(
         max_tokens=input_data.max_completion_tokens,
     )
     response, end_by_token = extract_end_session_marker(response)
-    if current_step >= 11 or end_by_token:
+    soft_close_triggered = is_soft_close_trigger(current_step, end_by_token)
+    if soft_close_triggered:
         response = build_fixed_farewell()
         end_by_token = True
 
@@ -225,7 +227,7 @@ def generate_emotion_step(
         db.add(marker)
 
     # ì¢…ë£Œ ?´ì´ë©??¸ì…˜ ì¢…ë£Œ ?€?„ìŠ¤?¬í”„ ?¤ì •
-    if (current_step >= 11 or end_by_token) and not sess.ended_at:
+    if soft_close_triggered and not sess.ended_at:
         sess.ended_at = datetime.utcnow()
         db.add(sess)
 

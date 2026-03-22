@@ -37,16 +37,22 @@ from app.backend.core.jwt import decode_access_token
 from app.backend.core.prompt_loader import get_system_prompt, get_task_prompt
 from app.backend.services.convo_policy import (
     is_activity_turn,
-    mark_activity_injected,
     ACTIVITY_STEP_TYPE,
 )
 from app.backend.services.step_manager import (
+    CANCEL_CLOSE_MESSAGE_TYPE,
+    CANCEL_CLOSE_STEP_TYPE,
     build_end_session_context,
+    build_cancel_close_ok_message,
+    build_close_suggestion_message,
     build_fixed_farewell,
     build_soft_timeout_hint,
     build_step_context,
     extract_end_session_marker,
     get_step_name,
+    is_close_suggestion_cooldown,
+    is_soft_close_trigger,
+    should_suggest_close,
     step_after_turn,
     step_for_prompt,
 )
@@ -66,6 +72,7 @@ class WSConfig:
     WS_HEARTBEAT_SEC: float = float(os.getenv("WS_HEARTBEAT_SEC", "15"))
     LLM_STREAM_TIMEOUT: float = float(os.getenv("LLM_STREAM_TIMEOUT", "75"))
     RECOMMEND_TIMEOUT: float = float(os.getenv("RECOMMEND_TIMEOUT", "15"))
+    ANALYSIS_CARD_TIMEOUT: float = float(os.getenv("ANALYSIS_CARD_TIMEOUT", "45"))
     WS_HISTORY_TURNS: int = max(5, min(10, int(os.getenv("WS_HISTORY_TURNS", "8"))))
     WS_MAX_USER_TEXT_LEN: int = int(os.getenv("WS_MAX_USER_TEXT_LEN", str(8 * 1024)))  # bytes/ASCII-ish
 
@@ -75,6 +82,8 @@ CFG = WSConfig()
 MSG_OPEN = "open"
 MSG_MESSAGE = "message"
 MSG_CLOSE = "close"
+MSG_CONFIRM_CLOSE = "confirm_close"
+MSG_CANCEL_CLOSE = CANCEL_CLOSE_MESSAGE_TYPE
 MSG_TASK_RECOMMEND = "task_recommend"
 MSG_PING = "ping"
 MSG_PONG = "pong"
@@ -168,7 +177,7 @@ async def _ws_recv_safe(
     """
     클라이언트 프레임 관용 처리:
     - JSON: dict
-    - 단어: ping/open/close
+    - 단어: ping/open/close/confirm_close/cancel_close
     - 쿼리스트링: type=message&text=...
     - 그 외 문자열: {"type":"message","text": "..."}
     timeout 시 {"type":"ping"} 반환
@@ -232,6 +241,10 @@ async def _ws_recv_safe(
             return {"type": "open"}
         if tl == "close":
             return {"type": "close"}
+        if tl == MSG_CONFIRM_CLOSE:
+            return {"type": MSG_CONFIRM_CLOSE}
+        if tl == MSG_CANCEL_CLOSE:
+            return {"type": MSG_CANCEL_CLOSE}
 
         # 3) 쿼리스트링
         if "=" in t and "&" in t:
@@ -380,12 +393,24 @@ def _close_session_record(db: Session, session_id: UUID, payload: EmotionCloseRe
         db.add(s)
         db.commit()
 
-def _mark_session_ended(db: Session, session_id: UUID) -> None:
-    s = db.get(EmotionSession, session_id)
-    if s and not s.ended_at:
-        s.ended_at = datetime.utcnow()
-        db.add(s)
-        db.commit()
+def _append_step_marker(db: Session, session_id: UUID, step_type: str) -> None:
+    last_order = db.exec(
+        select(EmotionStep.step_order)
+        .where(EmotionStep.session_id == session_id)
+        .order_by(EmotionStep.step_order.desc())
+        .limit(1)
+    ).first()
+    marker = EmotionStep(
+        session_id=session_id,
+        step_order=int(last_order or 0) + 1,
+        step_type=step_type,
+        user_input="",
+        gpt_response="",
+        created_at=datetime.utcnow(),
+        insight_tag=None,
+    )
+    db.add(marker)
+    db.commit()
 
 async def _recommend_tasks_async(session_id: UUID, max_items: int) -> List[dict]:
     def _work() -> List[dict]:
@@ -401,6 +426,20 @@ async def _recommend_tasks_async(session_id: UUID, max_items: int) -> List[dict]
             n=max(1, max_items),
         )
         return jsonable_encoder(tasks, exclude_none=True) if tasks else []
+
+    return await asyncio.to_thread(_work)
+
+async def _generate_analysis_card_async(session_id: UUID) -> dict:
+    def _work() -> dict:
+        from app.analyze.routers.cards import create_card_auto_from_session
+
+        with session_scope() as db:
+            card = create_card_auto_from_session(
+                session_id=session_id,
+                body=None,
+                db=db,
+            )
+        return jsonable_encoder(card, exclude_none=True)
 
     return await asyncio.to_thread(_work)
 
@@ -484,6 +523,8 @@ async def ws_emotion(websocket: WebSocket):
     last_active = loop.time()
     shutdown = asyncio.Event()
     recommend_fuse_tripped = False
+    # Soft close is advisory. The session ends only on confirm_close/close.
+    awaiting_close_confirmation = False
 
     async def close_ws(code: int = 1000, reason: str = "") -> None:
         if shutdown.is_set():
@@ -526,6 +567,69 @@ async def ws_emotion(websocket: WebSocket):
             with suppress(Exception):
                 await close_ws(code=1013, reason="send_backpressure")
             raise SendBackpressure("send_queue_backpressure")
+
+    async def finalize_close(
+        payload: EmotionCloseRequest,
+        *,
+        trigger_analysis_card: bool = False,
+    ) -> bool:
+        nonlocal awaiting_close_confirmation
+        try:
+            await _with_db(_close_session_record, session_id, payload)
+        except Exception as e:
+            logger.warning("WS close update failed | %s", _safe_str(e))
+            await guard_send({"type": "error", "message": "close_failed"})
+            return False
+
+        awaiting_close_confirmation = False
+        await _ws_send_safe(websocket, EmotionCloseResponse(type="close_ok").model_dump())
+
+        if trigger_analysis_card and session_id is not None:
+            try:
+                card = await asyncio.wait_for(
+                    _generate_analysis_card_async(session_id),
+                    timeout=CFG.ANALYSIS_CARD_TIMEOUT,
+                )
+            except Exception as e:
+                logger.exception(
+                    "analysis card generation failed after confirm_close | session_id=%s | %s",
+                    session_id,
+                    _safe_str(e),
+                )
+                await _ws_send_safe(
+                    websocket,
+                    {
+                        "type": "analysis_card_failed",
+                        "session_id": session_id,
+                        "message": "analysis_card_generation_failed",
+                    },
+                )
+            else:
+                await _ws_send_safe(
+                    websocket,
+                    {
+                        "type": "analysis_card_ready",
+                        "session_id": session_id,
+                        "card": card,
+                    },
+                )
+        return True
+
+    async def enter_close_cooldown(*, send_ack: bool) -> bool:
+        nonlocal awaiting_close_confirmation
+        awaiting_close_confirmation = False
+
+        try:
+            await _with_db(_append_step_marker, session_id, CANCEL_CLOSE_STEP_TYPE)
+        except Exception as e:
+            logger.warning("WS cancel_close marker failed | %s", _safe_str(e))
+            if send_ack:
+                await guard_send({"type": "error", "message": "cancel_close_failed"})
+            return False
+
+        if send_ack:
+            await guard_send(build_cancel_close_ok_message())
+        return True
 
     send_task = asyncio.create_task(sender())
 
@@ -667,6 +771,10 @@ async def ws_emotion(websocket: WebSocket):
                     await guard_send({"type": "error", "message": "no session"})
                     continue
 
+                implicit_cancel_close = awaiting_close_confirmation
+                if awaiting_close_confirmation:
+                    await enter_close_cooldown(send_ack=False)
+
                 try:
                     payload = EmotionMessageRequest(**msg)
                 except Exception as e:
@@ -693,6 +801,10 @@ async def ws_emotion(websocket: WebSocket):
                     end_session_context = prep.get("end_session_context") or ""
                     soft_timeout_hint = prep.get("soft_timeout_hint") or ""
                     current_step = int(prep.get("current_step") or 0)
+                    # While cooldown is active, keep the conversation open and skip re-suggesting close.
+                    close_suggestion_cooldown = (
+                        implicit_cancel_close or is_close_suggestion_cooldown(steps)
+                    )
                 except TurnLimitReached:
                     await guard_send({"type": "limit", "message": "max turns reached"})
                     continue
@@ -709,7 +821,7 @@ async def ws_emotion(websocket: WebSocket):
                     system_prompt = get_system_prompt()
                     if step_context:
                         system_prompt = f"{system_prompt}\n\n{step_context}"
-                    if end_session_context:
+                    if end_session_context and not close_suggestion_cooldown:
                         system_prompt = f"{system_prompt}\n\n{end_session_context}"
                     if soft_timeout_hint:
                         system_prompt = f"{system_prompt}\n\n{soft_timeout_hint}"
@@ -762,7 +874,11 @@ async def ws_emotion(websocket: WebSocket):
                     await guard_send({"type": "error", "message": "empty_assistant_response", "turn_dropped": True})
                     continue
                 assistant_text, end_by_token = extract_end_session_marker(assistant_text)
-                if current_step >= 11 or end_by_token:
+                soft_close_triggered = (
+                    is_soft_close_trigger(current_step, end_by_token)
+                    and not close_suggestion_cooldown
+                )
+                if soft_close_triggered:
                     assistant_text = build_fixed_farewell()
                     end_by_token = True
                 new_step = step_after_turn(steps, user_text, assistant_text)
@@ -800,14 +916,15 @@ async def ws_emotion(websocket: WebSocket):
                     }
                 )
 
-                if current_step >= 11 or end_by_token:
-                    try:
-                        await _with_db(_mark_session_ended, session_id)
-                    except Exception:
-                        logger.exception("WS session end update failed")
-                    await guard_send({"type": "suggest_close"})
+                if soft_close_triggered:
+                    awaiting_close_confirmation = True
+                if should_suggest_close(steps, current_step, end_by_token) and not awaiting_close_confirmation:
+                    awaiting_close_confirmation = True
+                    await guard_send(build_close_suggestion_message())
+                elif soft_close_triggered:
+                    await guard_send(build_close_suggestion_message())
                 
-                if want_activity:
+                if want_activity and not soft_close_triggered:
                     if recommend_fuse_tripped:
                         await guard_send({"type": "error", "message": "recommend_unavailable"})
                     else:
@@ -841,15 +958,29 @@ async def ws_emotion(websocket: WebSocket):
                     await guard_send({"type": "error", "message": f"bad close payload: {e}"})
                     continue
 
-                try:
-                    await _with_db(_close_session_record, session_id, payload)
-                except Exception as e:
-                    logger.warning("WS close update failed | %s", _safe_str(e))
-                    await guard_send({"type": "error", "message": "close_failed"})
+                if await finalize_close(payload):
+                    break
+
+            elif typ == MSG_CONFIRM_CLOSE:
+                if not session_id:
+                    await guard_send({"type": "error", "message": "no session"})
                     continue
 
-                await guard_send(EmotionCloseResponse(type="close_ok").model_dump())
-                break
+                try:
+                    payload = EmotionCloseRequest(**msg)
+                except Exception as e:
+                    await guard_send({"type": "error", "message": f"bad confirm close payload: {e}"})
+                    continue
+
+                if await finalize_close(payload, trigger_analysis_card=True):
+                    break
+
+            elif typ == MSG_CANCEL_CLOSE:
+                if not session_id:
+                    await guard_send({"type": "error", "message": "no session"})
+                    continue
+
+                await enter_close_cooldown(send_ack=True)
 
             # ── 태스크 추천
             elif typ == MSG_TASK_RECOMMEND:

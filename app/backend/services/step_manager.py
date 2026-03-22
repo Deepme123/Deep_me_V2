@@ -9,9 +9,14 @@ from app.backend.models.emotion import EmotionStep
 
 SOFT_TIMEOUT_TURNS = int(os.getenv("SOFT_TIMEOUT_TURNS", "3"))
 END_SESSION_TOKEN = "__END_SESSION__"
-END_SESSION_FAREWELL_WORDS = [
-    "고마워", "오늘", "함께", "해줘서", "잘", "지냈어", "또", "보자"
-]
+FIXED_FAREWELL = "그래, 조심히 들어가. 🌿"
+CLOSE_SUGGESTION_MESSAGE_TYPE = "suggest_close"
+CANCEL_CLOSE_MESSAGE_TYPE = "cancel_close"
+CANCEL_CLOSE_OK_MESSAGE_TYPE = "cancel_close_ok"
+CANCEL_CLOSE_STEP_TYPE = os.getenv("CANCEL_CLOSE_STEP_TYPE", "cancel_close")
+CLOSE_SUGGESTION_COOLDOWN_TURNS = int(
+    os.getenv("CLOSE_SUGGESTION_COOLDOWN_TURNS", "2")
+)
 
 
 @dataclass(frozen=True)
@@ -270,4 +275,51 @@ def extract_end_session_marker(text: str) -> tuple[str, bool]:
 
 
 def build_fixed_farewell() -> str:
-    return " ".join(END_SESSION_FAREWELL_WORDS)
+    return FIXED_FAREWELL
+
+
+def is_soft_close_trigger(current_step: int, end_by_token: bool) -> bool:
+    return _clamp_step(current_step) >= MAX_STEP or end_by_token
+
+
+def is_close_suggestion_cooldown(
+    steps: List[EmotionStep],
+    cooldown_turns: int | None = None,
+) -> bool:
+    cooldown = CLOSE_SUGGESTION_COOLDOWN_TURNS if cooldown_turns is None else cooldown_turns
+    cooldown = max(0, cooldown)
+    if cooldown == 0:
+        return False
+
+    last_cancel_index: int | None = None
+    for index, step in enumerate(steps):
+        if step.step_type == CANCEL_CLOSE_STEP_TYPE:
+            last_cancel_index = index
+
+    if last_cancel_index is None:
+        return False
+
+    user_turns_since_cancel = sum(
+        1
+        for step in steps[last_cancel_index + 1 :]
+        if step.step_type == "user"
+    )
+    return user_turns_since_cancel < cooldown
+
+
+def should_suggest_close(
+    steps: List[EmotionStep],
+    current_step: int,
+    end_by_token: bool,
+) -> bool:
+    if not is_soft_close_trigger(current_step, end_by_token):
+        return False
+    return not is_close_suggestion_cooldown(steps)
+
+
+def build_close_suggestion_message() -> dict[str, str]:
+    return {"type": CLOSE_SUGGESTION_MESSAGE_TYPE}
+
+
+def build_cancel_close_ok_message() -> dict[str, str]:
+    return {"type": CANCEL_CLOSE_OK_MESSAGE_TYPE}
