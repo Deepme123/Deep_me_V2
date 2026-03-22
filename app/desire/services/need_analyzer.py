@@ -1,19 +1,18 @@
-import json
+from __future__ import annotations
+
 import logging
-from typing import Any, Dict, List
+from typing import Dict, List
 
 from fastapi.concurrency import run_in_threadpool
-from openai import OpenAIError
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from app.desire.core.needs_definitions import NeedCode, NEEDS_METADATA
+from app.core.llm import LLMJsonSchema, LLMMessage
+from app.desire.core.needs_definitions import NEEDS_METADATA, NeedCode
 from app.desire.schemas.need_card import NeedCardResponse, NeedScore
-from app.desire.services.llm_client import client, get_model_name
+from app.desire.services.llm_client import get_llm_provider
 
 logger = logging.getLogger(__name__)
 
-# LLM invocation settings
-LLM_TIMEOUT_SECONDS = 15
 DEFAULT_NEED_SCORE = 50
 NEED_CODES = [code.value for code in NeedCode]
 
@@ -42,39 +41,37 @@ Rules:
 - Rank 1 means the most dominant need in this conversation context, 8 the least.
 - Provide a short rationale citing signals from the text."""
 
-RESPONSE_JSON_SCHEMA: Dict[str, Any] = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "need_analysis",
-        "schema": {
-            "type": "object",
-            "properties": {
-                "needs": {
-                    "type": "array",
-                    "minItems": 8,
-                    "maxItems": 8,
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["code", "score", "rank", "rationale"],
-                        "properties": {
-                            "code": {"type": "string", "enum": NEED_CODES},
-                            "score": {"type": "integer", "minimum": 0, "maximum": 100},
-                            "rank": {"type": "integer", "minimum": 1, "maximum": 8},
-                            "rationale": {"type": "string"},
-                        },
+RESPONSE_JSON_SCHEMA = LLMJsonSchema(
+    name="need_analysis",
+    schema={
+        "type": "object",
+        "properties": {
+            "needs": {
+                "type": "array",
+                "minItems": 8,
+                "maxItems": 8,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["code", "score", "rank", "rationale"],
+                    "properties": {
+                        "code": {"type": "string", "enum": NEED_CODES},
+                        "score": {"type": "integer", "minimum": 0, "maximum": 100},
+                        "rank": {"type": "integer", "minimum": 1, "maximum": 8},
+                        "rationale": {"type": "string"},
                     },
-                }
-            },
-            "required": ["needs"],
-            "additionalProperties": False,
+                },
+            }
         },
-        "strict": True,
+        "required": ["needs"],
+        "additionalProperties": False,
     },
-}
+)
 
 
 class LLMNeedItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     code: NeedCode
     score: int = Field(ge=0, le=100)
     rank: int = Field(ge=1, le=8)
@@ -82,13 +79,14 @@ class LLMNeedItem(BaseModel):
 
     @model_validator(mode="after")
     def clamp_values(self) -> "LLMNeedItem":
-        # Defensive clamping in case the model returns edges.
         clamped_score = max(0, min(100, int(self.score)))
         clamped_rank = max(1, min(8, int(self.rank)))
         return self.model_copy(update={"score": clamped_score, "rank": clamped_rank})
 
 
 class LLMNeedResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     needs: List[LLMNeedItem]
 
     @model_validator(mode="after")
@@ -99,7 +97,6 @@ class LLMNeedResponse(BaseModel):
 
 
 def _build_need_scores(items: List[LLMNeedItem]) -> List[NeedScore]:
-    # Pick the best entry per need code (lowest rank wins, tie-break by higher score).
     best_by_code: Dict[NeedCode, LLMNeedItem] = {}
     for item in items:
         current = best_by_code.get(item.code)
@@ -109,7 +106,6 @@ def _build_need_scores(items: List[LLMNeedItem]) -> List[NeedScore]:
         if item.rank < current.rank or (item.rank == current.rank and item.score > current.score):
             best_by_code[item.code] = item
 
-    # Fill missing needs with a neutral baseline so the API never breaks.
     for code in NeedCode:
         if code not in best_by_code:
             best_by_code[code] = LLMNeedItem(
@@ -121,7 +117,7 @@ def _build_need_scores(items: List[LLMNeedItem]) -> List[NeedScore]:
 
     ordered_items = sorted(
         best_by_code.values(),
-        key=lambda i: (i.rank, -i.score, i.code.value),
+        key=lambda item: (item.rank, -item.score, item.code.value),
     )
 
     needs: List[NeedScore] = []
@@ -140,48 +136,22 @@ def _build_need_scores(items: List[LLMNeedItem]) -> List[NeedScore]:
     return needs
 
 
-def _extract_response_text(response: Any) -> str:
-    # The OpenAI responses endpoint exposes convenience helpers; fall back to raw content.
-    if getattr(response, "output_text", None):
-        return response.output_text
-
-    if getattr(response, "choices", None):
-        choice = response.choices[0]
-        return getattr(choice.message, "content", "") or ""
-
-    if getattr(response, "output", None):
-        fragments: List[str] = []
-        for block in response.output:
-            for content in getattr(block, "content", []) or []:
-                text = getattr(content, "text", None)
-                if text:
-                    fragments.append(text)
-        if fragments:
-            return "".join(fragments)
-
-    raise ValueError("Unable to read content from OpenAI response.")
-
-
 def _call_llm(conversation_text: str) -> List[NeedScore]:
     try:
-        response = client.responses.create(
-            model=get_model_name(),
-            input=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": USER_PROMPT_TEMPLATE.format(conversation_text=conversation_text)},
+        provider = get_llm_provider()
+        payload = provider.generate_json(
+            messages=[
+                LLMMessage(role="system", content=SYSTEM_PROMPT),
+                LLMMessage(
+                    role="user",
+                    content=USER_PROMPT_TEMPLATE.format(conversation_text=conversation_text),
+                ),
             ],
-            response_format=RESPONSE_JSON_SCHEMA,
-            temperature=0.1,
-            max_output_tokens=800,
-            timeout=LLM_TIMEOUT_SECONDS,
+            schema=RESPONSE_JSON_SCHEMA,
         )
-
-        raw_text = _extract_response_text(response)
-        parsed = json.loads(raw_text)
-        structured = LLMNeedResponse.model_validate(parsed)
+        structured = LLMNeedResponse.model_validate(payload)
         return _build_need_scores(structured.needs)
-
-    except (OpenAIError, ValidationError, json.JSONDecodeError, ValueError) as exc:
+    except (RuntimeError, ValidationError, ValueError, TypeError) as exc:
         logger.warning("LLM need analysis failed, will fall back to defaults: %s", exc)
         raise
 
@@ -203,14 +173,9 @@ def _fallback_need_scores() -> List[NeedScore]:
 
 
 async def analyze_needs(conversation_text: str) -> NeedCardResponse:
-    """
-    Entry point for the need-card analyzer.
-    Uses the OpenAI client with a structured JSON prompt, falls back to neutral defaults on failure.
-    """
     try:
         need_scores = await run_in_threadpool(_call_llm, conversation_text)
     except Exception as exc:
-        # Keep the API healthy even if OpenAI is unavailable.
         logger.error("Using fallback need scores because analysis failed: %s", exc)
         need_scores = _fallback_need_scores()
 

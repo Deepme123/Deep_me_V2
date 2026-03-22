@@ -82,6 +82,8 @@ def _update_prompt(prompt_type: str, path: Path, content: str) -> dict:
     _write_atomic(path, validated)
     if prompt_type == "system":
         prompt_loader.get_system_prompt.cache_clear()
+    if prompt_type == "task":
+        prompt_loader.get_task_prompt.cache_clear()
     return _build_prompt_response(prompt_type, validated, path)
 
 

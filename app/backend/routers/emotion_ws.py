@@ -7,13 +7,11 @@ from uuid import UUID
 from datetime import datetime
 import asyncio
 import logging
-import inspect
 import os
 import re
 import json
-import threading
 from contextlib import suppress
-from typing import AsyncGenerator, Iterable, List, Tuple, Optional, Callable, TypeVar, Any
+from typing import List, Tuple, Optional, Callable, TypeVar
 from urllib.parse import parse_qs
 
 from sqlalchemy.exc import IntegrityError
@@ -31,7 +29,8 @@ from app.backend.schemas.emotion import (
     TaskRecommendRequest,
     TaskRecommendResponse,
 )
-from app.backend.services.llm_service import stream_noa_response
+from app.backend.services.llm_service import get_backend_llm_info, stream_noa_response
+from app.backend.services.stream_bridge import iter_chunks_async
 from app.backend.services.task_recommend import recommend_tasks_from_session_core
 from app.backend.services.web_test_user import resolve_emotion_user_id
 from app.backend.core.jwt import decode_access_token
@@ -269,41 +268,6 @@ def _ensure_uuid(x: str | UUID | None) -> UUID | None:
     if x is None:
         return None
     return UUID(str(x))
-
-def _iter_chunks(gen: Iterable[str] | AsyncGenerator[str, None]):
-    """
-    sync/async 제너레이터를 항상 async 제너레이터로 래핑.
-    """
-    if inspect.isasyncgen(gen):
-        async def _ait():
-            async for x in gen:
-                yield x
-        return _ait()
-    else:
-        async def _ait2():
-            loop = asyncio.get_running_loop()
-            q: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
-
-            def _worker():
-                try:
-                    for x in gen:
-                        loop.call_soon_threadsafe(q.put_nowait, ("data", x))
-                except Exception as exc:
-                    loop.call_soon_threadsafe(q.put_nowait, ("err", exc))
-                finally:
-                    loop.call_soon_threadsafe(q.put_nowait, ("done", None))
-
-            threading.Thread(target=_worker, daemon=True).start()
-
-            while True:
-                kind, payload = await q.get()
-                if kind == "data":
-                    yield payload
-                elif kind == "err":
-                    raise payload
-                else:
-                    break
-        return _ait2()
 
 def _steps_to_conversation(steps: List[EmotionStep]) -> List[Tuple[str, str]]:
     """DB steps → ('user'|'assistant', text) 시퀀스."""
@@ -703,6 +667,14 @@ async def ws_emotion(websocket: WebSocket):
             await guard_send(
                 EmotionOpenResponse(type="open_ok", session_id=session_id, turns=0).model_dump(),
             )
+            llm_info = get_backend_llm_info()
+            logger.info(
+                "WS connected | session_id=%s user_id=%s provider=%s model=%s",
+                session_id,
+                uid,
+                llm_info.provider,
+                llm_info.model,
+            )
             logger.info("WS bootstrap open_ok sent | session_id=%s", session_id)
         except Exception:
             logger.exception("WS bootstrap open failed")
@@ -865,7 +837,7 @@ async def ws_emotion(websocket: WebSocket):
                 assistant_chunks: List[str] = []
 
                 async def _consume_stream():
-                    async for piece in _iter_chunks(
+                    async for piece in iter_chunks_async(
                         stream_noa_response(
                             system_prompt=system_prompt,
                             task_prompt=task_prompt,
