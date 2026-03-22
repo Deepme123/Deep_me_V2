@@ -136,6 +136,28 @@ def test_auto_from_session_returns_400_for_empty_or_non_dialogue_session(monkeyp
     assert fake_db.cards == []
 
 
+def test_auto_from_session_returns_502_for_empty_generated_card(monkeypatch):
+    session_id = uuid4()
+    fake_db = FakeDB(
+        sessions={session_id: SimpleNamespace(session_id=session_id)},
+        steps_by_session={
+            session_id: [
+                _step(session_id, 1, "user", user_input="요즘 계속 불안해요"),
+                _step(session_id, 2, "assistant", gpt_response="어떤 순간에 가장 크게 느껴지나요?"),
+            ]
+        },
+    )
+
+    monkeypatch.setattr(cards, "analyze_dialogue_to_card", lambda **_kwargs: sc.CardCreate())
+    client = _build_client(fake_db)
+
+    response = client.post(f"/api/sessions/{session_id}/cards/auto-from-session")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "card generation failed"
+    assert fake_db.cards == []
+
+
 def test_auto_from_session_returns_404_for_missing_session(monkeypatch):
     session_id = uuid4()
     fake_db = FakeDB(sessions={}, steps_by_session={})

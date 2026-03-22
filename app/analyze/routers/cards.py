@@ -22,6 +22,15 @@ def _get_session_or_404(db: Session, session_id: UUID) -> m.EmotionSession:
     return session
 
 
+def _has_meaningful_card_content(payload: sc.CardCreate) -> bool:
+    for value in payload.model_dump().values():
+        if isinstance(value, str) and value.strip():
+            return True
+        if isinstance(value, list) and value:
+            return True
+    return False
+
+
 def _store_card(db: Session, session_id: UUID, payload: sc.CardCreate) -> sc.CardOut:
     risk_flag, risk_level = risk_service.risk_from_payload(payload.model_dump())
 
@@ -57,6 +66,8 @@ def _analyze_and_store_card(
         raise HTTPException(status_code=400, detail="conversation history is empty")
 
     payload = analyze_dialogue_to_card(turns=turns, title_hint=title_hint)
+    if not _has_meaningful_card_content(payload):
+        raise HTTPException(status_code=502, detail="card generation failed")
     return _store_card(db=db, session_id=session_id, payload=payload)
 
 
