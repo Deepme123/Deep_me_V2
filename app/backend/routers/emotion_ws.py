@@ -45,7 +45,6 @@ from app.backend.services.step_manager import (
     CANCEL_CLOSE_STEP_TYPE,
     build_end_session_context,
     build_cancel_close_ok_message,
-    build_close_suggestion_message,
     build_fixed_farewell,
     build_soft_timeout_hint,
     build_step_context,
@@ -53,7 +52,6 @@ from app.backend.services.step_manager import (
     get_step_name,
     is_close_suggestion_cooldown,
     is_soft_close_trigger,
-    should_suggest_close,
     step_after_turn,
     step_for_prompt,
 )
@@ -524,7 +522,7 @@ async def ws_emotion(websocket: WebSocket):
     last_active = loop.time()
     shutdown = asyncio.Event()
     recommend_fuse_tripped = False
-    # Soft close is advisory. The session ends only on confirm_close/close.
+    # Legacy close-confirm compatibility. The primary soft-close path closes immediately.
     awaiting_close_confirmation = False
 
     async def close_ws(code: int = 1000, reason: str = "") -> None:
@@ -543,8 +541,11 @@ async def ws_emotion(websocket: WebSocket):
                 except asyncio.TimeoutError:
                     await _ws_send_safe(websocket, {"type": MSG_PING})
                     continue
-                await _ws_send_safe(websocket, item)
-                last_active = loop.time()
+                try:
+                    await _ws_send_safe(websocket, item)
+                    last_active = loop.time()
+                finally:
+                    send_queue.task_done()
         except WebSocketDisconnect:
             pass
         except Exception as e:
@@ -569,6 +570,12 @@ async def ws_emotion(websocket: WebSocket):
                 await close_ws(code=1013, reason="send_backpressure")
             raise SendBackpressure("send_queue_backpressure")
 
+    async def flush_outbound_messages() -> None:
+        try:
+            await asyncio.wait_for(send_queue.join(), timeout=CFG.WS_HEARTBEAT_SEC)
+        except asyncio.TimeoutError:
+            logger.warning("WS outbound flush timed out before close")
+
     async def finalize_close(
         payload: EmotionCloseRequest,
         *,
@@ -583,6 +590,7 @@ async def ws_emotion(websocket: WebSocket):
             return False
 
         awaiting_close_confirmation = False
+        await flush_outbound_messages()
         await _ws_send_safe(websocket, EmotionCloseResponse(type="close_ok").model_dump())
 
         if trigger_analysis_card and session_id is not None:
@@ -593,7 +601,7 @@ async def ws_emotion(websocket: WebSocket):
                 )
             except Exception as e:
                 logger.exception(
-                    "analysis card generation failed after confirm_close | session_id=%s | %s",
+                    "analysis card generation failed after close | session_id=%s | %s",
                     session_id,
                     _safe_str(e),
                 )
@@ -918,12 +926,9 @@ async def ws_emotion(websocket: WebSocket):
                 )
 
                 if soft_close_triggered:
-                    awaiting_close_confirmation = True
-                if should_suggest_close(steps, current_step, end_by_token) and not awaiting_close_confirmation:
-                    awaiting_close_confirmation = True
-                    await guard_send(build_close_suggestion_message())
-                elif soft_close_triggered:
-                    await guard_send(build_close_suggestion_message())
+                    if await finalize_close(EmotionCloseRequest(), trigger_analysis_card=True):
+                        break
+                    continue
                 
                 if want_activity and not soft_close_triggered:
                     if recommend_fuse_tripped:

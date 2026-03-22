@@ -219,20 +219,19 @@ def _send_message_and_collect(ws, text: str, expected_types: list[str]) -> list[
     return events
 
 
-def test_confirm_close_triggers_analysis_card_ready(ws_harness):
+def test_soft_trigger_immediately_triggers_analysis_card_ready(ws_harness):
     store, client = ws_harness
     store.current_steps = [11]
     store.llm_outputs = ["ignored"]
 
     with _open_ws(client) as ws:
-        _send_message_and_collect(
+        events = _send_message_and_collect(
             ws,
-            "이제 마무리할게",
-            ["message_start", "message_delta", "message_end", "message", "step", "suggest_close"],
+            "Please wrap this up.",
+            ["message_start", "message_delta", "message_end", "message", "step", "close_ok", "analysis_card_ready"],
         )
-        ws.send_json({"type": "confirm_close"})
-        close_event = ws.receive_json()
-        card_event = ws.receive_json()
+        close_event = events[5]
+        card_event = events[6]
 
     assert close_event["type"] == "close_ok"
     assert card_event["type"] == "analysis_card_ready"
@@ -243,7 +242,7 @@ def test_confirm_close_triggers_analysis_card_ready(ws_harness):
     assert card_event["card"]["session_id"] == str(store.session.session_id)
 
 
-def test_confirm_close_reports_analysis_card_failure_without_rolling_back_close(
+def test_soft_trigger_reports_analysis_card_failure_without_rolling_back_close(
     ws_harness,
     monkeypatch,
 ):
@@ -262,14 +261,13 @@ def test_confirm_close_reports_analysis_card_failure_without_rolling_back_close(
     )
 
     with _open_ws(client) as ws:
-        _send_message_and_collect(
+        events = _send_message_and_collect(
             ws,
-            "정말 여기서 끝낼게",
-            ["message_start", "message_delta", "message_end", "message", "step", "suggest_close"],
+            "We can stop here.",
+            ["message_start", "message_delta", "message_end", "message", "step", "close_ok", "analysis_card_failed"],
         )
-        ws.send_json({"type": "confirm_close"})
-        close_event = ws.receive_json()
-        failure_event = ws.receive_json()
+        close_event = events[5]
+        failure_event = events[6]
 
     assert close_event["type"] == "close_ok"
     assert failure_event == {

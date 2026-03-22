@@ -19,7 +19,7 @@ if str(ROOT_DIR) not in sys.path:
 
 emotion_ws = importlib.import_module("app.backend.routers.emotion_ws")
 
-FIXED_FAREWELL = "그래, 조심히 들어가. 🌿"
+FIXED_FAREWELL = emotion_ws.build_fixed_farewell()
 
 
 def _utcnow() -> datetime:
@@ -177,6 +177,13 @@ def ws_harness(monkeypatch):
     def fake_stream_noa_response(**_kwargs):
         yield store.next_llm_output()
 
+    async def fake_generate_analysis_card_async(session_id):
+        return {
+            "card_id": str(uuid4()),
+            "session_id": str(session_id),
+            "summary": "analysis summary",
+        }
+
     monkeypatch.setattr(emotion_ws, "session_scope", fake_session_scope)
     monkeypatch.setattr(emotion_ws, "_with_db", fake_with_db)
     monkeypatch.setattr(emotion_ws, "_create_emotion_session", fake_create_emotion_session)
@@ -184,6 +191,7 @@ def ws_harness(monkeypatch):
     monkeypatch.setattr(emotion_ws, "_commit_full_turn", fake_commit_full_turn)
     monkeypatch.setattr(emotion_ws, "_close_session_record", fake_close_session_record)
     monkeypatch.setattr(emotion_ws, "_append_step_marker", fake_append_step_marker)
+    monkeypatch.setattr(emotion_ws, "_generate_analysis_card_async", fake_generate_analysis_card_async)
     monkeypatch.setattr(emotion_ws, "resolve_emotion_user_id", lambda _db, _user: store.user_id)
     monkeypatch.setattr(emotion_ws, "get_system_prompt", lambda: "system")
     monkeypatch.setattr(emotion_ws, "get_task_prompt", lambda: "task")
@@ -211,7 +219,7 @@ def _send_message_and_collect(ws, text: str, expected_types: list[str]) -> list[
     return events
 
 
-def test_soft_trigger_sends_fixed_farewell_and_suggest_close(ws_harness):
+def test_soft_trigger_closes_session_immediately(ws_harness):
     store, client = ws_harness
     store.current_steps = [11]
     store.llm_outputs = ["LLM freeform close response"]
@@ -219,26 +227,30 @@ def test_soft_trigger_sends_fixed_farewell_and_suggest_close(ws_harness):
     with _open_ws(client) as ws:
         events = _send_message_and_collect(
             ws,
-            "마무리할게",
-            ["message_start", "message_delta", "message_end", "message", "step", "suggest_close"],
+            "I think this is enough for now.",
+            ["message_start", "message_delta", "message_end", "message", "step", "close_ok", "analysis_card_ready"],
         )
 
     assert events[1]["delta"] == "LLM freeform close response"
     assert events[3]["message"] == FIXED_FAREWELL
+    assert events[5]["type"] == "close_ok"
+    assert store.session is not None
+    assert store.session.ended_at is not None
 
 
-def test_confirm_close_returns_close_ok_after_soft_trigger(ws_harness):
+def test_close_still_returns_close_ok_without_soft_trigger(ws_harness):
     store, client = ws_harness
-    store.current_steps = [11]
-    store.llm_outputs = ["ignored"]
+    store.current_steps = [3]
+    store.llm_outputs = ["continue"]
 
     with _open_ws(client) as ws:
-        _send_message_and_collect(
+        events = _send_message_and_collect(
             ws,
-            "이제 끝내도 될 것 같아",
-            ["message_start", "message_delta", "message_end", "message", "step", "suggest_close"],
+            "Let's keep talking.",
+            ["message_start", "message_delta", "message_end", "message", "step"],
         )
-        ws.send_json({"type": "confirm_close"})
+        assert events[3]["message"] == "continue"
+        ws.send_json({"type": "close"})
         close_event = ws.receive_json()
 
     assert close_event["type"] == "close_ok"
@@ -246,53 +258,41 @@ def test_confirm_close_returns_close_ok_after_soft_trigger(ws_harness):
     assert store.session.ended_at is not None
 
 
-def test_cancel_close_keeps_conversation_open_and_applies_cooldown(ws_harness):
+def test_legacy_cancel_close_still_applies_cooldown(ws_harness):
     store, client = ws_harness
-    store.current_steps = [11, 11, 11, 11]
+    store.current_steps = [11, 11, 11]
     store.llm_outputs = [
-        "ignored close response",
-        "계속 얘기해도 괜찮아.",
-        "더 말해줘도 돼.",
+        "keep going a bit more",
+        "still open",
         "ignored close response again",
     ]
 
     with _open_ws(client) as ws:
-        first_turn = _send_message_and_collect(
-            ws,
-            "여기서 마무리할까?",
-            ["message_start", "message_delta", "message_end", "message", "step", "suggest_close"],
-        )
-        assert first_turn[3]["message"] == FIXED_FAREWELL
-
         ws.send_json({"type": "cancel_close"})
         cancel_event = ws.receive_json()
         assert cancel_event["type"] == "cancel_close_ok"
 
         continue_turn_1 = _send_message_and_collect(
             ws,
-            "아직 더 이야기하고 싶어",
+            "Not yet.",
             ["message_start", "message_delta", "message_end", "message", "step"],
         )
-        assert continue_turn_1[3]["message"] == "계속 얘기해도 괜찮아."
+        assert continue_turn_1[3]["message"] == "keep going a bit more"
 
         continue_turn_2 = _send_message_and_collect(
             ws,
-            "조금만 더 들어줘",
+            "One more thing.",
             ["message_start", "message_delta", "message_end", "message", "step"],
         )
-        assert continue_turn_2[3]["message"] == "더 말해줘도 돼."
+        assert continue_turn_2[3]["message"] == "still open"
 
         resumed_close_turn = _send_message_and_collect(
             ws,
-            "이제는 진짜 마무리해도 될까",
-            ["message_start", "message_delta", "message_end", "message", "step", "suggest_close"],
+            "Now we can wrap up.",
+            ["message_start", "message_delta", "message_end", "message", "step", "close_ok", "analysis_card_ready"],
         )
         assert resumed_close_turn[3]["message"] == FIXED_FAREWELL
 
-        ws.send_json({"type": "close"})
-        close_event = ws.receive_json()
-
-    assert close_event["type"] == "close_ok"
     assert any(
         step.step_type == emotion_ws.CANCEL_CLOSE_STEP_TYPE
         for step in store.steps
