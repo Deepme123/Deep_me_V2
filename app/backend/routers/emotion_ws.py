@@ -20,6 +20,7 @@ from fastapi.encoders import jsonable_encoder
 from app.backend.db.session import session_scope  # 컨텍스트 매니저 사용統一
 from app.backend.models.emotion import EmotionSession, EmotionStep
 from app.backend.schemas.emotion import (
+    ConfirmCloseRequest,
     EmotionOpenRequest,
     EmotionOpenResponse,
     EmotionMessageRequest,
@@ -967,7 +968,13 @@ async def ws_emotion(websocket: WebSocket):
                     continue
 
                 try:
-                    payload = EmotionCloseRequest(**msg)
+                    ConfirmCloseRequest(**msg)
+                    payload = EmotionCloseRequest(
+                        emotion_label=msg.get("emotion_label"),
+                        topic=msg.get("topic"),
+                        trigger_summary=msg.get("trigger_summary"),
+                        insight_summary=msg.get("insight_summary"),
+                    )
                 except Exception as e:
                     await guard_send({"type": "error", "message": f"bad confirm close payload: {e}"})
                     continue
