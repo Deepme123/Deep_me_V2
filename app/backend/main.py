@@ -8,6 +8,7 @@ from sqlmodel import text
 
 from app.backend.core.logging_config import setup_logging
 from app.backend.db.session import engine
+from app.db.session import CORE_REQUIRED_TABLES, ensure_required_tables
 
 # 모델 모듈 임포트(테이블 등록 보장용)
 from app.backend.models import emotion as _m_emotion  # noqa: F401
@@ -71,6 +72,12 @@ app.include_router(task.router)
 app.include_router(prompts.router)
 
 
+@app.on_event("startup")
+def validate_required_tables() -> None:
+    ensure_required_tables(CORE_REQUIRED_TABLES, schema="public")
+    logger.info("Required core tables verified")
+
+
 
 
 
@@ -84,6 +91,10 @@ def health_db():
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
+        ensure_required_tables(CORE_REQUIRED_TABLES, schema="public")
         return {"ok": True}
+    except RuntimeError as exc:
+        logger.exception("Required core table check failed")
+        raise HTTPException(status_code=500, detail=str(exc))
     except Exception:
         raise HTTPException(status_code=500, detail="Database connection failed")
