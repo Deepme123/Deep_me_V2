@@ -44,11 +44,7 @@ from app.backend.services.step_manager import (
     CANCEL_CLOSE_MESSAGE_TYPE,
     CANCEL_CLOSE_STEP_TYPE,
     build_cancel_close_ok_message,
-    build_fixed_farewell,
     extract_end_session_marker,
-    is_close_suggestion_cooldown,
-    is_soft_close_trigger,
-    step_for_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -509,8 +505,6 @@ async def ws_emotion(websocket: WebSocket):
     last_active = loop.time()
     shutdown = asyncio.Event()
     recommend_fuse_tripped = False
-    # Legacy close-confirm compatibility. The primary soft-close path closes immediately.
-    awaiting_close_confirmation = False
 
     async def close_ws(code: int = 1000, reason: str = "") -> None:
         if shutdown.is_set():
@@ -568,7 +562,6 @@ async def ws_emotion(websocket: WebSocket):
         *,
         trigger_analysis_card: bool = False,
     ) -> bool:
-        nonlocal awaiting_close_confirmation
         try:
             await _with_db(_close_session_record, session_id, payload)
         except Exception as e:
@@ -576,7 +569,6 @@ async def ws_emotion(websocket: WebSocket):
             await guard_send({"type": "error", "message": "close_failed"})
             return False
 
-        awaiting_close_confirmation = False
         await flush_outbound_messages()
         await _ws_send_safe(websocket, EmotionCloseResponse(type="close_ok").model_dump())
 
@@ -612,9 +604,6 @@ async def ws_emotion(websocket: WebSocket):
         return True
 
     async def enter_close_cooldown(*, send_ack: bool) -> bool:
-        nonlocal awaiting_close_confirmation
-        awaiting_close_confirmation = False
-
         try:
             await _with_db(_append_step_marker, session_id, CANCEL_CLOSE_STEP_TYPE)
         except Exception as e:
@@ -767,10 +756,6 @@ async def ws_emotion(websocket: WebSocket):
                     await guard_send({"type": "error", "message": "no session"})
                     continue
 
-                implicit_cancel_close = awaiting_close_confirmation
-                if awaiting_close_confirmation:
-                    await enter_close_cooldown(send_ack=False)
-
                 try:
                     payload = EmotionMessageRequest(**msg)
                 except Exception as e:
@@ -793,11 +778,6 @@ async def ws_emotion(websocket: WebSocket):
                     user_order = int(prep.get("user_order") or 0)
                     assistant_order = int(prep.get("assistant_order") or 0)
                     convo = prep.get("conversation") or []
-                    current_step = int(prep.get("current_step") or step_for_prompt(steps, user_text))
-                    # While cooldown is active, keep the conversation open and skip re-suggesting close.
-                    close_suggestion_cooldown = (
-                        implicit_cancel_close or is_close_suggestion_cooldown(steps)
-                    )
                 except TurnLimitReached:
                     await guard_send({"type": "limit", "message": "max turns reached"})
                     continue
@@ -860,14 +840,7 @@ async def ws_emotion(websocket: WebSocket):
                     # 내용이 비면 저장하지 않고 종료
                     await guard_send({"type": "error", "message": "empty_assistant_response", "turn_dropped": True})
                     continue
-                assistant_text, end_by_token = extract_end_session_marker(assistant_text)
-                soft_close_triggered = (
-                    is_soft_close_trigger(current_step, end_by_token)
-                    and not close_suggestion_cooldown
-                )
-                if soft_close_triggered:
-                    assistant_text = build_fixed_farewell()
-                    end_by_token = True
+                assistant_text, _end_by_token = extract_end_session_marker(assistant_text)
 
                 # ② 사용자/어시스턴트 스텝을 한 트랜잭션으로 커밋
                 try:
@@ -895,12 +868,7 @@ async def ws_emotion(websocket: WebSocket):
                     ).model_dump()
                 )
 
-                if soft_close_triggered:
-                    if await finalize_close(EmotionCloseRequest(), trigger_analysis_card=True):
-                        break
-                    continue
-                
-                if want_activity and not soft_close_triggered:
+                if want_activity:
                     if recommend_fuse_tripped:
                         await guard_send({"type": "error", "message": "recommend_unavailable"})
                     else:

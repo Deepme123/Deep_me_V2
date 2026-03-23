@@ -224,7 +224,7 @@ def _send_message_and_collect(ws, text: str, expected_types: list[str]) -> list[
     return events
 
 
-def test_soft_trigger_immediately_triggers_analysis_card_ready(ws_harness):
+def test_confirm_close_triggers_analysis_card_ready_after_message_turn(ws_harness):
     store, client = ws_harness
     store.current_steps = [11]
     store.llm_outputs = ["ignored"]
@@ -233,10 +233,12 @@ def test_soft_trigger_immediately_triggers_analysis_card_ready(ws_harness):
         events = _send_message_and_collect(
             ws,
             "Please wrap this up.",
-            ["message_start", "message_delta", "message_end", "message", "close_ok", "analysis_card_ready"],
+            ["message_start", "message_delta", "message_end", "message"],
         )
-        close_event = events[4]
-        card_event = events[5]
+        assert events[3]["message"] == "ignored"
+        ws.send_json({"type": "confirm_close"})
+        close_event = ws.receive_json()
+        card_event = ws.receive_json()
 
     assert close_event["type"] == "close_ok"
     assert card_event["type"] == "analysis_card_ready"
@@ -259,7 +261,7 @@ def test_analysis_card_generation_sees_transcript_committed_before_ready_event(
         store.generated_card_session_ids.append(session_id)
         assert [(step.step_type, step.user_input, step.gpt_response) for step in store.steps] == [
             ("user", "Please wrap this up.", ""),
-            ("assistant", "", emotion_ws.build_fixed_farewell()),
+            ("assistant", "", "ignored"),
         ]
         return {
             "card_id": str(uuid4()),
@@ -277,16 +279,20 @@ def test_analysis_card_generation_sees_transcript_committed_before_ready_event(
         events = _send_message_and_collect(
             ws,
             "Please wrap this up.",
-            ["message_start", "message_delta", "message_end", "message", "close_ok", "analysis_card_ready"],
+            ["message_start", "message_delta", "message_end", "message"],
         )
+        assert events[3]["message"] == "ignored"
+        ws.send_json({"type": "confirm_close"})
+        close_event = ws.receive_json()
+        card_event = ws.receive_json()
 
-    assert events[4]["type"] == "close_ok"
-    assert events[5]["type"] == "analysis_card_ready"
+    assert close_event["type"] == "close_ok"
+    assert card_event["type"] == "analysis_card_ready"
     assert store.session is not None
     assert store.generated_card_session_ids == [store.session.session_id]
 
 
-def test_soft_trigger_reports_analysis_card_failure_without_rolling_back_close(
+def test_confirm_close_reports_analysis_card_failure_without_rolling_back_close(
     ws_harness,
     monkeypatch,
 ):
@@ -308,10 +314,12 @@ def test_soft_trigger_reports_analysis_card_failure_without_rolling_back_close(
         events = _send_message_and_collect(
             ws,
             "We can stop here.",
-            ["message_start", "message_delta", "message_end", "message", "close_ok", "analysis_card_failed"],
+            ["message_start", "message_delta", "message_end", "message"],
         )
-        close_event = events[4]
-        failure_event = events[5]
+        assert events[3]["message"] == "ignored"
+        ws.send_json({"type": "confirm_close"})
+        close_event = ws.receive_json()
+        failure_event = ws.receive_json()
 
     assert close_event["type"] == "close_ok"
     assert failure_event == {
