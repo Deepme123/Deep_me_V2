@@ -43,11 +43,8 @@ from app.backend.services.convo_policy import (
 from app.backend.services.step_manager import (
     CANCEL_CLOSE_MESSAGE_TYPE,
     CANCEL_CLOSE_STEP_TYPE,
-    build_end_session_context,
     build_cancel_close_ok_message,
     build_fixed_farewell,
-    build_soft_timeout_hint,
-    build_step_context,
     extract_end_session_marker,
     is_close_suggestion_cooldown,
     is_soft_close_trigger,
@@ -797,9 +794,6 @@ async def ws_emotion(websocket: WebSocket):
                     assistant_order = int(prep.get("assistant_order") or 0)
                     convo = prep.get("conversation") or []
                     current_step = int(prep.get("current_step") or step_for_prompt(steps, user_text))
-                    step_context = prep.get("step_context") or build_step_context(current_step)
-                    end_session_context = prep.get("end_session_context") or build_end_session_context(current_step)
-                    soft_timeout_hint = prep.get("soft_timeout_hint") or build_soft_timeout_hint(steps, user_text)
                     # While cooldown is active, keep the conversation open and skip re-suggesting close.
                     close_suggestion_cooldown = (
                         implicit_cancel_close or is_close_suggestion_cooldown(steps)
@@ -818,12 +812,6 @@ async def ws_emotion(websocket: WebSocket):
                 # 프롬프트 로딩 + MARK C
                 try:
                     system_prompt = get_system_prompt()
-                    if step_context:
-                        system_prompt = f"{system_prompt}\n\n{step_context}"
-                    if end_session_context and not close_suggestion_cooldown:
-                        system_prompt = f"{system_prompt}\n\n{end_session_context}"
-                    if soft_timeout_hint:
-                        system_prompt = f"{system_prompt}\n\n{soft_timeout_hint}"
                     task_prompt = get_task_prompt() if want_activity else None
                 except Exception as e:
                     logger.exception("WS prompt load failed")
