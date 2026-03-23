@@ -314,20 +314,12 @@ def _prepare_message_context(db: Session, session_id: UUID, user_text: str) -> d
     user_order = last_order + 1
     assistant_order = user_order + 1
     convo = _steps_to_conversation(steps_for_convo) + [("user", user_text)]
-    current_step = step_for_prompt(steps, user_text)
-    step_context = build_step_context(current_step)
-    end_session_context = build_end_session_context(current_step)
-    soft_timeout_hint = build_soft_timeout_hint(steps, user_text)
     return {
         "steps": steps,
         "want_activity": want_activity,
         "user_order": user_order,
         "assistant_order": assistant_order,
         "conversation": convo,
-        "current_step": current_step,
-        "step_context": step_context,
-        "end_session_context": end_session_context,
-        "soft_timeout_hint": soft_timeout_hint,
     }
 
 def _commit_full_turn(
@@ -804,10 +796,10 @@ async def ws_emotion(websocket: WebSocket):
                     user_order = int(prep.get("user_order") or 0)
                     assistant_order = int(prep.get("assistant_order") or 0)
                     convo = prep.get("conversation") or []
-                    step_context = prep.get("step_context") or ""
-                    end_session_context = prep.get("end_session_context") or ""
-                    soft_timeout_hint = prep.get("soft_timeout_hint") or ""
-                    current_step = int(prep.get("current_step") or 0)
+                    current_step = int(prep.get("current_step") or step_for_prompt(steps, user_text))
+                    step_context = prep.get("step_context") or build_step_context(current_step)
+                    end_session_context = prep.get("end_session_context") or build_end_session_context(current_step)
+                    soft_timeout_hint = prep.get("soft_timeout_hint") or build_soft_timeout_hint(steps, user_text)
                     # While cooldown is active, keep the conversation open and skip re-suggesting close.
                     close_suggestion_cooldown = (
                         implicit_cancel_close or is_close_suggestion_cooldown(steps)
