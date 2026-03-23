@@ -40,7 +40,7 @@ from app.backend.services.convo_policy import (
     is_activity_turn,
     ACTIVITY_STEP_TYPE,
 )
-from app.backend.services.step_manager import (
+from app.backend.services.close_policy import (
     CANCEL_CLOSE_MESSAGE_TYPE,
     CANCEL_CLOSE_STEP_TYPE,
     build_cancel_close_ok_message,

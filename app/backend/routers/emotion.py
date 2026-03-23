@@ -9,7 +9,7 @@ from app.backend.core.prompt_loader import get_system_prompt, get_task_prompt
 from app.backend.db.session import get_session
 from app.backend.dependencies.auth import get_current_user_optional
 from app.backend.models.emotion import EmotionSession, EmotionStep
-from app.backend.services.step_manager import (
+from app.backend.services.close_policy import (
     extract_end_session_marker,
 )
 from app.backend.schemas.emotion import (
