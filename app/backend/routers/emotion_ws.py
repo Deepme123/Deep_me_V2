@@ -49,10 +49,8 @@ from app.backend.services.step_manager import (
     build_soft_timeout_hint,
     build_step_context,
     extract_end_session_marker,
-    get_step_name,
     is_close_suggestion_cooldown,
     is_soft_close_trigger,
-    step_after_turn,
     step_for_prompt,
 )
 
@@ -890,7 +888,6 @@ async def ws_emotion(websocket: WebSocket):
                 if soft_close_triggered:
                     assistant_text = build_fixed_farewell()
                     end_by_token = True
-                new_step = step_after_turn(steps, user_text, assistant_text)
 
                 # ② 사용자/어시스턴트 스텝을 한 트랜잭션으로 커밋
                 try:
@@ -916,13 +913,6 @@ async def ws_emotion(websocket: WebSocket):
                         type="message",
                         message=assistant_text,
                     ).model_dump()
-                )
-                await guard_send(
-                    {
-                        "type": "step",
-                        "step": new_step,
-                        "step_name": get_step_name(new_step),
-                    }
                 )
 
                 if soft_close_triggered:
