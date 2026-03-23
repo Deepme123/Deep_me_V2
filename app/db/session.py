@@ -4,10 +4,18 @@ import os
 from contextlib import contextmanager
 from urllib.parse import quote_plus
 
+import sqlalchemy as sa
 from sqlalchemy.engine import url as sa_url
 from sqlmodel import SQLModel, create_engine
 
 log = logging.getLogger(__name__)
+
+CORE_REQUIRED_TABLES = (
+    "user",
+    "emotionsession",
+    "emotionstep",
+)
+ANALYZE_REQUIRED_TABLES = CORE_REQUIRED_TABLES + ("emotioncard",)
 
 
 def _mask(url: str) -> str:
@@ -87,6 +95,36 @@ def get_session():
 
 def create_all_tables() -> None:
     SQLModel.metadata.create_all(engine)
+
+
+def get_existing_tables(*, schema: str | None = None) -> set[str]:
+    if schema and engine.dialect.name != "postgresql":
+        schema = None
+    inspector = sa.inspect(engine)
+    return set(inspector.get_table_names(schema=schema))
+
+
+def missing_required_tables(
+    required_tables: tuple[str, ...] | list[str],
+    *,
+    schema: str | None = None,
+) -> list[str]:
+    existing = get_existing_tables(schema=schema)
+    return [table for table in required_tables if table not in existing]
+
+
+def ensure_required_tables(
+    required_tables: tuple[str, ...] | list[str],
+    *,
+    schema: str | None = None,
+) -> None:
+    missing = missing_required_tables(required_tables, schema=schema)
+    if missing:
+        missing_csv = ", ".join(missing)
+        schema_name = schema or "default search_path"
+        raise RuntimeError(
+            f"Missing required tables in schema {schema_name}: {missing_csv}"
+        )
 
 
 @contextmanager

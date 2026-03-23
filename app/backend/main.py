@@ -8,6 +8,7 @@ from sqlmodel import text
 
 from app.backend.core.logging_config import setup_logging
 from app.backend.db.session import engine
+from app.db.session import CORE_REQUIRED_TABLES, ensure_required_tables
 
 # 모델 모듈 임포트(테이블 등록 보장용)
 from app.backend.models import emotion as _m_emotion  # noqa: F401
@@ -15,7 +16,7 @@ from app.backend.models import task as _m_task  # noqa: F401
 from app.backend.models import refresh_token as _m_refresh  # noqa: F401
 
 # 라우터
-from app.backend.routers import emotion, auth, user, task, prompts
+from app.backend.routers import emotion, auth, user, task, prompts, demo
 from app.backend.routers.emotion_ws import ws_router as emotion_ws_router
 from app.backend.routers import health_llm 
 
@@ -69,6 +70,13 @@ app.include_router(auth.auth_router)
 app.include_router(user.user_router)
 app.include_router(task.router)
 app.include_router(prompts.router)
+app.include_router(demo.router)
+
+
+@app.on_event("startup")
+def validate_required_tables() -> None:
+    ensure_required_tables(CORE_REQUIRED_TABLES, schema="public")
+    logger.info("Required core tables verified")
 
 
 
@@ -84,6 +92,10 @@ def health_db():
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
+        ensure_required_tables(CORE_REQUIRED_TABLES, schema="public")
         return {"ok": True}
+    except RuntimeError as exc:
+        logger.exception("Required core table check failed")
+        raise HTTPException(status_code=500, detail=str(exc))
     except Exception:
         raise HTTPException(status_code=500, detail="Database connection failed")

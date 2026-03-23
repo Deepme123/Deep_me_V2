@@ -1,6 +1,6 @@
 # app/schemas/emotion.py
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -64,30 +64,41 @@ class EmotionStepGenerateInput(BaseModel):
 
 
 class EmotionOpenRequest(BaseModel):
-    type: str = "open"
+    type: Literal["open"] = "open"
     access_token: Optional[str] = None
 
 
 class EmotionMessageRequest(BaseModel):
-    type: str = "message"
+    type: Literal["message"] = "message"
     text: str
 
 
 class EmotionCloseRequest(BaseModel):
-    type: str = "close"
+    # Legacy/session-finalize payload. Do not use for yes/no close intent.
+    type: Literal["close"] = "close"
     emotion_label: Optional[str] = None
     topic: Optional[str] = None
     trigger_summary: Optional[str] = None
     insight_summary: Optional[str] = None
 
 
+class ConfirmCloseRequest(BaseModel):
+    # Explicit user confirmation for the server's close suggestion.
+    type: Literal["confirm_close"] = "confirm_close"
+
+
+class CancelCloseRequest(BaseModel):
+    # User declines the current close suggestion and keeps the session open.
+    type: Literal["cancel_close"] = "cancel_close"
+
+
 class TaskRecommendRequest(BaseModel):
-    type: str = "task_recommend"
+    type: Literal["task_recommend"] = "task_recommend"
     max_items: Optional[int] = 5
 
 
 class EmotionOpenResponse(BaseModel):
-    type: str = "open_ok"
+    type: Literal["open_ok"] = "open_ok"
     session_id: UUID
     turns: int
 
@@ -99,9 +110,23 @@ class EmotionMessageResponse(BaseModel):
 
 
 class EmotionCloseResponse(BaseModel):
-    type: str = "close_ok"
+    # Final close acknowledgement after the session close has been persisted.
+    type: Literal["close_ok"] = "close_ok"
+
+
+class SuggestCloseResponse(BaseModel):
+    # Server asks the client to confirm whether the session should close now.
+    type: Literal["suggest_close"] = "suggest_close"
+
+
+class AnalysisCardStatusResponse(BaseModel):
+    type: Literal["analysis_card_status"] = "analysis_card_status"
+    session_id: UUID
+    status: Literal["pending", "ready", "failed"]
+    card_id: Optional[UUID] = None
+    message: Optional[str] = None
 
 
 class TaskRecommendResponse(BaseModel):
-    type: str = "task_recommend_ok"
+    type: Literal["task_recommend_ok"] = "task_recommend_ok"
     items: List[dict]
