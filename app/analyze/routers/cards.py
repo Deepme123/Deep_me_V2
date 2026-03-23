@@ -76,6 +76,8 @@ def _transcript_rows_to_conversation_turns(
 ) -> list[sc.ConversationTurn]:
     turns: list[sc.ConversationTurn] = []
     for row in transcript_rows:
+        if row.step_type not in {"user", "assistant"}:
+            continue
         if row.user_input:
             turns.append(
                 sc.ConversationTurn(

@@ -249,3 +249,80 @@ def test_auto_from_session_uses_dialogue_transcript_only(monkeypatch):
         ("user", "My chest tightened when I had to speak."),
         ("assistant", "It sounds like the pressure showed up in your body, too."),
     ]
+
+
+def test_auto_from_session_ignores_marker_text_when_building_transcript(monkeypatch):
+    session_id = uuid4()
+    fake_db = FakeDB(
+        sessions={session_id: SimpleNamespace(session_id=session_id)},
+        steps_by_session={
+            session_id: [
+                _step(
+                    session_id,
+                    1,
+                    "user",
+                    user_input="The team meeting made me anxious.",
+                ),
+                _step(
+                    session_id,
+                    2,
+                    "assistant",
+                    gpt_response="What thought showed up right away?",
+                ),
+                _step(
+                    session_id,
+                    3,
+                    "activity_suggest",
+                    user_input="activity marker should never appear",
+                    gpt_response="activity response should never appear",
+                ),
+                _step(
+                    session_id,
+                    4,
+                    "cancel_close",
+                    user_input="cancel_close marker should never appear",
+                    gpt_response="cancel_close response should never appear",
+                ),
+                _step(
+                    session_id,
+                    5,
+                    "user",
+                    user_input="I thought I would freeze, my chest got tight, and I avoided eye contact.",
+                ),
+                _step(
+                    session_id,
+                    6,
+                    "assistant",
+                    gpt_response="You noticed fear, the thought of freezing, body tension, and avoidance.",
+                ),
+            ]
+        },
+    )
+    captured = {}
+
+    def fake_analyze_dialogue_to_card(*, turns, title_hint):
+        captured["turns"] = turns
+        return sc.CardCreate(
+            summary="Meeting anxiety summary",
+            situation="team meeting",
+            emotion="anxiety",
+            thoughts="I would freeze",
+            physical_reactions="tight chest",
+            behaviors="avoided eye contact",
+        )
+
+    monkeypatch.setattr(cards, "analyze_dialogue_to_card", fake_analyze_dialogue_to_card)
+    client = _build_client(fake_db)
+
+    response = client.post(f"/api/sessions/{session_id}/cards/auto-from-session")
+
+    assert response.status_code == 200
+    transcript_text = [turn.text for turn in captured["turns"]]
+    assert transcript_text == [
+        "The team meeting made me anxious.",
+        "What thought showed up right away?",
+        "I thought I would freeze, my chest got tight, and I avoided eye contact.",
+        "You noticed fear, the thought of freezing, body tension, and avoidance.",
+    ]
+    assert "activity marker should never appear" not in "\n".join(transcript_text)
+    assert "cancel_close marker should never appear" not in "\n".join(transcript_text)
