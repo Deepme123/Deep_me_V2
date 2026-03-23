@@ -1,253 +1,123 @@
-# 감정 대화 → 분석 카드 팀 데모 가이드
+# Emotion Analysis Card Demo Guide
 
-이 문서는 팀원들에게 "사용자와 대화한 내용이 어떻게 정리되고, 마지막에 분석 카드가 어떻게 만들어지는지"를 짧고 명확하게 보여주기 위한 발표용 안내서다.
+This guide explains how to present the current transcript-based analysis flow.
 
-비전공자 기준으로 가장 중요한 메시지는 아래 두 줄이다.
+## Goal
 
-1. 사용자가 대화를 하면 시스템이 내용을 차곡차곡 쌓는다.
-2. 대화가 마무리될 시점이 되면 세션을 닫고, 그 기록을 바탕으로 분석 카드를 만든다.
+Show three things clearly:
 
+1. user and assistant turns are stored as a transcript
+2. session close is explicit
+3. analysis cards are derived from that stored transcript
 
-## 1. 이 데모에서 보여줘야 하는 것
+## Core Story
 
-데모의 목적은 "AI가 멋지게 말한다"를 보여주는 것이 아니다.
+The product is no longer organized around conversation steps.
 
-보여줘야 하는 핵심은 아래 3가지다.
+The simpler explanation is:
 
-1. 대화가 진행된다.
-2. 대화가 끝나는 순간이 시스템에서 감지된다.
-3. 그 직후 분석 카드가 자동으로 생성된다.
+- the user talks
+- the service stores the transcript
+- when the session is explicitly closed, the stored transcript becomes the input
+  for analysis card generation
 
-청중은 아래 흐름만 이해하면 충분하다.
+## What To Demonstrate
 
-"대화" → "마무리 판단" → "세션 종료" → "분석 카드 생성"
+### A. Transcript Accumulation
 
+Use the websocket flow to show:
 
-## 2. 가장 추천하는 데모 방식
-
-가장 안정적인 방식은 두 단계를 같이 보여주는 것이다.
-
-1. 자동 테스트로 시스템 흐름이 정확히 맞는지 먼저 보여준다.
-2. 시간이 되면 라이브 WebSocket 데모를 추가로 보여준다.
-
-이 순서를 추천하는 이유는 단순하다.
-
-- 자동 테스트는 항상 같은 결과가 나온다.
-- 라이브 대화는 LLM 반응에 따라 마무리 시점이 조금 달라질 수 있다.
-- 발표 자리에서는 "재현성"이 가장 중요하다.
-
-
-## 3. 발표용 5분 구성
-
-### 1단계. 한 문장으로 설명
-
-먼저 이렇게 설명하면 된다.
-
-"이 기능은 사용자의 감정 대화를 한 세션으로 모은 뒤, 대화가 끝나면 그 내용을 분석 카드로 자동 정리해 주는 흐름입니다."
-
-
-### 2단계. 자동 테스트 실행
-
-프로젝트 루트에서 아래 명령을 실행한다.
-
-```bash
-pytest .\tests\backend\test_emotion_ws_close_flow.py .\tests\backend\test_emotion_ws_analysis_trigger.py
-```
-
-이 테스트가 보여주는 것은 아래와 같다.
-
-- 대화가 끝나는 턴에서 `close_ok`가 온다.
-- 종료 직후 `analysis_card_ready`가 온다.
-- 카드 생성이 실패해도 세션 종료는 이미 유지된다.
-
-발표 중에는 이렇게 설명하면 된다.
-
-"지금 보는 테스트는 대화 종료와 카드 생성을 자동으로 검증하는 장면입니다. 즉, 말로만 되는 게 아니라 서버 흐름이 코드로 고정돼 있다는 뜻입니다."
-
-
-### 3단계. 라이브 데모 실행
-
-자동 테스트 뒤에 라이브 데모를 붙이면 이해가 훨씬 쉬워진다.
-
-서버 실행:
-
-```bash
-uvicorn app.main:app --reload
-```
-
-중요한 전제:
-
-- 인증 없이 빠르게 데모하려면 `.env`에 `EMOTION_NO_AUTH_WEB_TEST=true`가 있어야 한다.
-- 이 값이 없으면 WebSocket 연결이 인증 오류로 닫힐 수 있다.
-
-관련 코드:
-
-- WebSocket 진입점: [emotion_ws.py](/c:/Users/user/Desktop/Deep_me_V2/app/backend/routers/emotion_ws.py)
-- 인증 없는 데모용 사용자 처리: [web_test_user.py](/c:/Users/user/Desktop/Deep_me_V2/app/backend/services/web_test_user.py)
-
-
-## 4. 라이브 데모를 가장 쉽게 하는 방법
-
-개발자가 아닌 사람에게도 설명하기 쉬운 방법은 Postman의 WebSocket 기능을 쓰는 것이다.
-
-### Postman에서 연결하기
-
-1. Postman을 연다.
-2. `New`를 누른다.
-3. `WebSocket Request`를 고른다.
-4. 주소에 아래 값을 넣는다.
-
-```text
-ws://127.0.0.1:8000/ws/emotion
-```
-
-5. `Connect`를 누른다.
-
-정상이라면 가장 먼저 아래와 비슷한 응답이 온다.
-
-```json
-{
-  "type": "open_ok",
-  "session_id": "..."
-}
-```
-
-이 한 줄의 의미는 간단하다.
-
-"이제 이 사용자의 대화를 받을 준비가 되었다."
-
-
-## 5. 라이브 데모에서 실제로 보여줄 장면
-
-### 장면 A. 대화 시작
-
-아래처럼 메시지를 보낸다.
-
-```json
-{
-  "type": "message",
-  "text": "요즘 회사 일 때문에 계속 마음이 무겁고 잠도 잘 안 와요."
-}
-```
-
-청중에게는 이렇게 설명하면 된다.
-
-"사용자가 현재 상태를 말하면, 시스템은 이 대화를 세션 안에 기록하면서 다음 응답을 만듭니다."
-
-보통 아래 같은 이벤트들이 순서대로 온다.
-
+- `open_ok`
 - `message_start`
 - `message_delta`
 - `message_end`
 - `message`
-- `step`
 
-쉽게 말하면 이 뜻이다.
+The important point is not a hidden internal stage. The important point is that
+the transcript keeps growing in a stable format.
 
-- `message_start`: 이제 답변을 시작한다.
-- `message_delta`: 답변이 조금씩 만들어지고 있다.
-- `message_end`: 답변 생성이 끝났다.
-- `message`: 최종 답변이 완성됐다.
-- `step`: 대화가 현재 어느 단계까지 왔는지 서버가 판단했다.
+### B. Explicit Session Close
 
+The current backend treats session close as an explicit action.
 
-### 장면 B. 마무리 시점 도달
+- `close` finalizes the session
+- `confirm_close` finalizes the session and then triggers analysis card
+  generation
 
-대화를 몇 턴 더 진행한 뒤, 시스템이 마무리 시점에 도달하면 같은 턴에서 아래 순서가 나온다.
+If you need to show live `analysis_card_ready` over websocket, use a client that
+can send `confirm_close`.
 
-- `message`
-- `step`
-- `close_ok`
-- `analysis_card_ready`
+### C. Transcript-Based Card Generation
 
-이 부분이 이번 데모의 핵심이다.
+The card service reads the stored transcript rows and extracts:
 
-청중에게는 이렇게 설명하면 된다.
+- situation
+- emotion
+- thoughts
+- physical reactions
+- behaviors
+- summary and insight
 
-"예전에는 여기서 한 번 더 '정말 끝낼까요?'를 물었지만, 지금은 그 확인 단계를 없앴습니다. 그래서 마무리 시점에 도달하면 바로 세션을 닫고 분석 카드 생성으로 이어집니다."
+The card is not built from a step label. It is built from the conversation
+content.
 
+## Suggested Presenter Script
 
-## 6. 청중이 이해하기 쉬운 이벤트 설명
+### Opening
 
-기술 용어 대신 아래처럼 설명하면 된다.
+"This demo shows how a session transcript turns into an analysis card after the
+session is explicitly closed."
 
-- `open_ok`: 대화방이 열렸다.
-- `message`: AI가 최종 답변을 보냈다.
-- `step`: 대화가 어느 정도 진행됐는지 내부적으로 표시했다.
-- `close_ok`: 이 대화는 여기서 종료되었다.
-- `analysis_card_ready`: 이 대화 내용을 바탕으로 정리 카드가 만들어졌다.
-- `analysis_card_failed`: 종료는 됐지만 카드 생성은 실패했다.
+### During Conversation
 
-중요한 포인트는 이 문장 하나다.
+"The right side shows the raw websocket events, and the conversation feed shows
+the human-readable transcript."
 
-"`close_ok`는 대화 종료, `analysis_card_ready`는 정리 결과 생성이다."
+### At Close
 
+"The close event finalizes the session. When the close path includes
+`confirm_close`, the backend uses the stored transcript to generate the card."
 
-## 7. 발표자가 그대로 읽어도 되는 설명 스크립트
+### At Card Output
 
-### 시작 멘트
+"The result is not a stage summary. It is a transcript-derived analysis card."
 
-"지금부터 사용자의 감정 대화가 어떻게 끝나고, 그 기록이 어떻게 분석 카드로 바뀌는지 보여드리겠습니다."
+## Good Verification Paths
 
-### 대화 중 멘트
+### Path 1: WebSocket Contract
 
-"여기서는 사용자와 AI가 대화를 주고받고 있고, 서버는 이 내용을 세션 단위로 계속 저장하고 있습니다."
+Run:
 
-### 종료 직전 멘트
-
-"대화가 충분히 진행되면 서버가 이제 마무리 가능한 시점이라고 판단합니다."
-
-### 종료 시점 멘트
-
-"지금 `close_ok`가 왔습니다. 이건 대화가 종료되었다는 뜻입니다."
-
-### 카드 생성 멘트
-
-"이제 바로 `analysis_card_ready`가 왔습니다. 즉, 방금 대화를 재료로 분석 카드가 생성된 것입니다."
-
-
-## 8. 라이브 데모가 흔들릴 때의 현실적인 대처
-
-라이브 데모는 예측이 완벽하지 않을 수 있다. 발표 자리에서는 아래 순서로 대응하는 것이 좋다.
-
-### 가장 안전한 기본안
-
-1. 자동 테스트를 먼저 보여준다.
-2. 그 다음 라이브 데모를 보여준다.
-3. 라이브 데모가 길어지면 테스트 결과로 다시 핵심을 정리한다.
-
-이렇게 하면 라이브가 조금 흔들려도 발표 전체는 무너지지 않는다.
-
-
-## 9. 카드가 실제로 저장됐는지 확인하는 방법
-
-`analysis_card_ready` 이벤트 안에는 카드 내용이 포함된다.
-
-추가로 저장 여부까지 확인하고 싶다면, `open_ok` 또는 `analysis_card_ready`에서 받은 `session_id`를 이용해 아래 API를 조회하면 된다.
-
-```text
-GET /analyze/api/sessions/{session_id}/cards
+```bash
+pytest tests/backend/test_emotion_ws_close_flow.py tests/backend/test_emotion_ws_analysis_trigger.py
 ```
 
-관련 코드:
+This verifies:
 
-- 카드 조회 API: [cards.py](/c:/Users/user/Desktop/Deep_me_V2/app/analyze/routers/cards.py)
+- transcript turns are committed
+- explicit close returns `close_ok`
+- `confirm_close` produces `analysis_card_ready` or `analysis_card_failed`
 
-비전공자에게는 이렇게 설명하면 충분하다.
+### Path 2: Card Extraction Contract
 
-"화면에 잠깐 보이는 결과가 아니라, 실제로 카드가 저장됐는지도 나중에 다시 조회할 수 있습니다."
+Run:
 
+```bash
+pytest tests/analyze/test_cards_from_session.py tests/analyze/test_llm_card.py
+```
 
-## 10. 추천 발표 순서 한 줄 요약
+This verifies:
 
-발표는 아래 순서로 하면 된다.
+- cards can be created directly from stored session transcript rows
+- transcript-only content is passed into card extraction
+- non-dialogue markers do not define the card structure
 
-1. 기능 목적을 한 문장으로 설명한다.
-2. 자동 테스트로 흐름이 고정돼 있음을 보여준다.
-3. 라이브로 `open_ok → message → close_ok → analysis_card_ready`를 보여준다.
-4. 마지막에 "대화 종료와 카드 생성은 분리된 이벤트"라는 점을 정리한다.
+## What To Avoid Saying
 
+Avoid describing the system as:
 
-## 11. 발표자가 꼭 기억해야 할 핵심 문장
+- a step-driven interview
+- a stage machine that decides what the card means
+- a flow where reaching the last step is what creates the card
 
-"이 기능의 핵심은 대화를 잘하는 것만이 아니라, 대화가 끝나는 순간을 시스템이 정확히 잡고, 그 기록을 분석 카드로 안전하게 이어 주는 데 있습니다."
+Those descriptions are no longer true.
