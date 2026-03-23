@@ -211,3 +211,41 @@ def test_auto_from_session_allows_multiple_cards_for_same_session(monkeypatch):
     assert first.json()["card_id"] != second.json()["card_id"]
     assert first.json()["summary"] == "첫 번째 요약"
     assert second.json()["summary"] == "두 번째 요약"
+
+
+def test_auto_from_session_uses_dialogue_transcript_only(monkeypatch):
+    session_id = uuid4()
+    fake_db = FakeDB(
+        sessions={session_id: SimpleNamespace(session_id=session_id)},
+        steps_by_session={
+            session_id: [
+                _step(session_id, 1, "user", user_input="I felt tense before the meeting."),
+                _step(session_id, 2, "assistant", gpt_response="What part of the meeting felt hardest?"),
+                _step(session_id, 3, "activity_suggest"),
+                _step(session_id, 4, "cancel_close"),
+                _step(session_id, 5, "user", user_input="My chest tightened when I had to speak."),
+                _step(session_id, 6, "assistant", gpt_response="It sounds like the pressure showed up in your body, too."),
+            ]
+        },
+    )
+    captured = {}
+
+    def fake_analyze_dialogue_to_card(*, turns, title_hint):
+        captured["turns"] = turns
+        return sc.CardCreate(
+            summary="Meeting anxiety summary",
+            emotion="anxiety",
+        )
+
+    monkeypatch.setattr(cards, "analyze_dialogue_to_card", fake_analyze_dialogue_to_card)
+    client = _build_client(fake_db)
+
+    response = client.post(f"/api/sessions/{session_id}/cards/auto-from-session")
+
+    assert response.status_code == 200
+    assert [(turn.role, turn.text) for turn in captured["turns"]] == [
+        ("user", "I felt tense before the meeting."),
+        ("assistant", "What part of the meeting felt hardest?"),
+        ("user", "My chest tightened when I had to speak."),
+        ("assistant", "It sounds like the pressure showed up in your body, too."),
+    ]

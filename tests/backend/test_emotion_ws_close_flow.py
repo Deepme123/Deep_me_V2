@@ -258,6 +258,31 @@ def test_close_still_returns_close_ok_without_soft_trigger(ws_harness):
     assert store.session.ended_at is not None
 
 
+def test_manual_close_keeps_transcript_turns_committed(ws_harness):
+    store, client = ws_harness
+    store.current_steps = [3]
+    store.llm_outputs = ["Thanks for sharing that."]
+
+    with _open_ws(client) as ws:
+        events = _send_message_and_collect(
+            ws,
+            "I have been under pressure all week.",
+            ["message_start", "message_delta", "message_end", "message", "step"],
+        )
+        assert events[3]["message"] == "Thanks for sharing that."
+
+        ws.send_json({"type": "close"})
+        close_event = ws.receive_json()
+
+    assert close_event["type"] == "close_ok"
+    assert [(step.step_type, step.user_input, step.gpt_response) for step in store.steps] == [
+        ("user", "I have been under pressure all week.", ""),
+        ("assistant", "", "Thanks for sharing that."),
+    ]
+    assert store.session is not None
+    assert store.session.ended_at is not None
+
+
 def test_legacy_cancel_close_still_applies_cooldown(ws_harness):
     store, client = ws_harness
     store.current_steps = [11, 11, 11]

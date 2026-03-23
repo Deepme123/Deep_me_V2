@@ -242,6 +242,45 @@ def test_soft_trigger_immediately_triggers_analysis_card_ready(ws_harness):
     assert card_event["card"]["session_id"] == str(store.session.session_id)
 
 
+def test_analysis_card_generation_sees_transcript_committed_before_ready_event(
+    ws_harness,
+    monkeypatch,
+):
+    store, client = ws_harness
+    store.current_steps = [11]
+    store.llm_outputs = ["ignored"]
+
+    async def fake_generate_analysis_card_async(session_id):
+        store.generated_card_session_ids.append(session_id)
+        assert [(step.step_type, step.user_input, step.gpt_response) for step in store.steps] == [
+            ("user", "Please wrap this up.", ""),
+            ("assistant", "", emotion_ws.build_fixed_farewell()),
+        ]
+        return {
+            "card_id": str(uuid4()),
+            "session_id": str(session_id),
+            "summary": "analysis summary",
+        }
+
+    monkeypatch.setattr(
+        emotion_ws,
+        "_generate_analysis_card_async",
+        fake_generate_analysis_card_async,
+    )
+
+    with _open_ws(client) as ws:
+        events = _send_message_and_collect(
+            ws,
+            "Please wrap this up.",
+            ["message_start", "message_delta", "message_end", "message", "step", "close_ok", "analysis_card_ready"],
+        )
+
+    assert events[5]["type"] == "close_ok"
+    assert events[6]["type"] == "analysis_card_ready"
+    assert store.session is not None
+    assert store.generated_card_session_ids == [store.session.session_id]
+
+
 def test_soft_trigger_reports_analysis_card_failure_without_rolling_back_close(
     ws_harness,
     monkeypatch,
