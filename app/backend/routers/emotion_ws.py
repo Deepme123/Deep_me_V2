@@ -259,15 +259,17 @@ def _ensure_uuid(x: str | UUID | None) -> UUID | None:
         return None
     return UUID(str(x))
 
-def _steps_to_conversation(steps: List[EmotionStep]) -> List[Tuple[str, str]]:
-    """DB steps → ('user'|'assistant', text) 시퀀스."""
-    conv: List[Tuple[str, str]] = []
-    for s in steps:
-        if s.step_type == "user" and s.user_input:
-            conv.append(("user", s.user_input))
-        elif s.step_type == "assistant" and s.gpt_response:
-            conv.append(("assistant", s.gpt_response))
-    return conv
+def _transcript_rows_to_conversation(
+    transcript_rows: List[EmotionStep],
+) -> List[Tuple[str, str]]:
+    """DB transcript rows -> ('user'|'assistant', text) sequence."""
+    conversation: List[Tuple[str, str]] = []
+    for row in transcript_rows:
+        if row.step_type == "user" and row.user_input:
+            conversation.append(("user", row.user_input))
+        elif row.step_type == "assistant" and row.gpt_response:
+            conversation.append(("assistant", row.gpt_response))
+    return conversation
 
 def _create_emotion_session(db: Session, uid_val: UUID | None) -> EmotionSession:
     s = EmotionSession(
@@ -284,7 +286,7 @@ def _create_emotion_session(db: Session, uid_val: UUID | None) -> EmotionSession
     return s
 
 def _prepare_message_context(db: Session, session_id: UUID, user_text: str) -> dict:
-    steps: List[EmotionStep] = list(
+    transcript_rows: List[EmotionStep] = list(
         db.exec(
             select(EmotionStep)
             .where(EmotionStep.session_id == session_id)
@@ -293,22 +295,24 @@ def _prepare_message_context(db: Session, session_id: UUID, user_text: str) -> d
     )
     # Keep only the most recent 5–10 turns to reduce LLM context size.
     max_entries = CFG.WS_HISTORY_TURNS * 2  # user+assistant per turn
-    steps_for_convo = steps[-max_entries:] if len(steps) > max_entries else steps
+    recent_transcript_rows = (
+        transcript_rows[-max_entries:] if len(transcript_rows) > max_entries else transcript_rows
+    )
 
     want_activity = is_activity_turn(
         user_text=user_text,
         db=db,
         session_id=session_id,
-        steps=steps,
+        steps=transcript_rows,
     )
 
-    last_order = steps[-1].step_order if steps else 0
+    last_order = transcript_rows[-1].step_order if transcript_rows else 0
     # user/assistant orders reserved but not committed until after successful LLM turn
     user_order = last_order + 1
     assistant_order = user_order + 1
-    convo = _steps_to_conversation(steps_for_convo) + [("user", user_text)]
+    convo = _transcript_rows_to_conversation(recent_transcript_rows) + [("user", user_text)]
     return {
-        "steps": steps,
+        "transcript_rows": transcript_rows,
         "want_activity": want_activity,
         "user_order": user_order,
         "assistant_order": assistant_order,
@@ -773,7 +777,7 @@ async def ws_emotion(websocket: WebSocket):
 
                 try:
                     prep = await _with_db(_prepare_message_context, session_id, user_text)
-                    steps = prep.get("steps") or []
+                    transcript_rows = prep.get("transcript_rows") or prep.get("steps") or []
                     want_activity = bool(prep.get("want_activity"))
                     user_order = int(prep.get("user_order") or 0)
                     assistant_order = int(prep.get("assistant_order") or 0)

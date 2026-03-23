@@ -30,14 +30,16 @@ from app.backend.services.web_test_user import resolve_emotion_user_id
 router = APIRouter(prefix="/emotion", tags=["Emotion"])
 
 
-def _steps_to_conversation(steps: list[EmotionStep]) -> list[tuple[str, str]]:
-    convo: list[tuple[str, str]] = []
-    for s in steps:
-        if s.step_type == "user" and s.user_input:
-            convo.append(("user", s.user_input))
-        elif s.step_type == "assistant" and s.gpt_response:
-            convo.append(("assistant", s.gpt_response))
-    return convo
+def _transcript_rows_to_conversation(
+    transcript_rows: list[EmotionStep],
+) -> list[tuple[str, str]]:
+    conversation: list[tuple[str, str]] = []
+    for row in transcript_rows:
+        if row.step_type == "user" and row.user_input:
+            conversation.append(("user", row.user_input))
+        elif row.step_type == "assistant" and row.gpt_response:
+            conversation.append(("assistant", row.gpt_response))
+    return conversation
 
 
 def _emotion_user_id(
@@ -161,7 +163,7 @@ def generate_emotion_step(
     task_prompt = get_task_prompt() if activity_turn else None
 
     # LLM ?‘ë‹µ ?ì„±
-    convo = _steps_to_conversation(recent_all) + [("user", input_data.user_input)]
+    convo = _transcript_rows_to_conversation(recent_all) + [("user", input_data.user_input)]
     response = generate_noa_response(
         system_prompt=system_prompt,
         task_prompt=task_prompt,
