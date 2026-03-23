@@ -10,10 +10,7 @@ from app.backend.db.session import get_session
 from app.backend.dependencies.auth import get_current_user_optional
 from app.backend.models.emotion import EmotionSession, EmotionStep
 from app.backend.services.step_manager import (
-    build_fixed_farewell,
     extract_end_session_marker,
-    is_soft_close_trigger,
-    step_for_prompt,
 )
 from app.backend.schemas.emotion import (
     EmotionSessionCreate,
@@ -154,7 +151,6 @@ def generate_emotion_step(
     ).all()
 
     # ?œìŠ¤???„ë¡¬?„íŠ¸ ì¡°ë¦½
-    current_step = step_for_prompt(recent_all, input_data.user_input)
     system_prompt = get_system_prompt()
     activity_turn = is_activity_turn(
         user_text=input_data.user_input,
@@ -173,11 +169,7 @@ def generate_emotion_step(
         temperature=input_data.temperature,
         max_tokens=input_data.max_completion_tokens,
     )
-    response, end_by_token = extract_end_session_marker(response)
-    soft_close_triggered = is_soft_close_trigger(current_step, end_by_token)
-    if soft_close_triggered:
-        response = build_fixed_farewell()
-        end_by_token = True
+    response, _end_by_token = extract_end_session_marker(response)
 
     # ?¤í… ?€???œë²„?ì„œ step_order ë¶€?? ??WebSocketê³??™ì¼???œì„œ(user?’assistant?’activity)
     current_max_order = _max_step_order(db, input_data.session_id)
@@ -216,10 +208,6 @@ def generate_emotion_step(
         db.add(marker)
 
     # ì¢…ë£Œ ?´ì´ë©??¸ì…˜ ì¢…ë£Œ ?€?„ìŠ¤?¬í”„ ?¤ì •
-    if soft_close_triggered and not sess.ended_at:
-        sess.ended_at = datetime.utcnow()
-        db.add(sess)
-
     db.commit()
     db.refresh(assistant_step)
     return assistant_step
