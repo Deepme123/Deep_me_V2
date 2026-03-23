@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -61,7 +62,7 @@ def test_health_llm_stream_ok_and_contract(monkeypatch):
 
     monkeypatch.setattr(health_llm, "stream_noa_response", fake_stream_noa_response)
 
-    result = health_llm.health_llm_stream(q=None)
+    result = asyncio.run(health_llm.health_llm_stream(q=None))
 
     assert result["ok"] is True
     assert result["tokens"] == 2
@@ -79,7 +80,7 @@ def test_health_llm_stream_maps_blocked_by_content_filter(monkeypatch):
     monkeypatch.setattr(health_llm, "stream_noa_response", fake_stream_noa_response)
 
     with pytest.raises(HTTPException) as excinfo:
-        health_llm.health_llm_stream(q=None)
+        asyncio.run(health_llm.health_llm_stream(q=None))
 
     assert excinfo.value.status_code == 503
     assert excinfo.value.detail == "blocked_by_content_filter"
@@ -92,7 +93,7 @@ def test_health_llm_stream_empty_response(monkeypatch):
     monkeypatch.setattr(health_llm, "stream_noa_response", fake_stream_noa_response)
 
     with pytest.raises(HTTPException) as excinfo:
-        health_llm.health_llm_stream(q=None)
+        asyncio.run(health_llm.health_llm_stream(q=None))
 
     assert excinfo.value.status_code == 503
     assert excinfo.value.detail == "llm_stream_empty"

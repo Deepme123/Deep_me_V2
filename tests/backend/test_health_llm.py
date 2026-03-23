@@ -6,6 +6,8 @@ import sys
 import types
 import unittest
 
+DEFAULT_PONG_PROMPT = "\ub108\ub294 \uac04\ub2e8\ud788 \ud55c \ub2e8\uc5b4\ub85c\ub9cc \ub300\ub2f5\ud574: pong"
+
 
 def _install_fastapi_stub():
     fastapi = types.ModuleType("fastapi")
@@ -63,7 +65,7 @@ class HealthLLMTests(unittest.TestCase):
             {
                 "system_prompt": "(healthcheck)",
                 "task_prompt": None,
-                "conversation": [("user", "너는 간단히 한 단어로만 대답해: pong")],
+                "conversation": [("user", DEFAULT_PONG_PROMPT)],
             },
         )
 
@@ -128,7 +130,7 @@ class HealthLLMTests(unittest.TestCase):
             {
                 "system_prompt": "(healthcheck-stream)",
                 "task_prompt": None,
-                "conversation": [("user", "너는 간단히 한 단어로만 대답해: pong")],
+                "conversation": [("user", DEFAULT_PONG_PROMPT)],
             },
         )
         self.assertEqual(result, {"ok": True, "tokens": 2, "text": "pong"})
