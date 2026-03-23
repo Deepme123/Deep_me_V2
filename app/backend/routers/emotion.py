@@ -10,10 +10,7 @@ from app.backend.db.session import get_session
 from app.backend.dependencies.auth import get_current_user_optional
 from app.backend.models.emotion import EmotionSession, EmotionStep
 from app.backend.services.step_manager import (
-    build_end_session_context,
     build_fixed_farewell,
-    build_soft_timeout_hint,
-    build_step_context,
     extract_end_session_marker,
     is_soft_close_trigger,
     step_for_prompt,
@@ -159,14 +156,6 @@ def generate_emotion_step(
     # ?œìŠ¤???„ë¡¬?„íŠ¸ ì¡°ë¦½
     current_step = step_for_prompt(recent_all, input_data.user_input)
     system_prompt = get_system_prompt()
-    step_context = build_step_context(current_step)
-    soft_timeout_hint = build_soft_timeout_hint(recent_all, input_data.user_input)
-    system_prompt = f"{system_prompt}\n\n{step_context}"
-    if soft_timeout_hint:
-        system_prompt = f"{system_prompt}\n\n{soft_timeout_hint}"
-    end_session_context = build_end_session_context(current_step)
-    if end_session_context:
-        system_prompt = f"{system_prompt}\n\n{end_session_context}"
     activity_turn = is_activity_turn(
         user_text=input_data.user_input,
         db=db,
