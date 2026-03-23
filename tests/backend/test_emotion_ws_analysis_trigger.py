@@ -214,7 +214,12 @@ def _open_ws(client: TestClient):
 
 def _send_message_and_collect(ws, text: str, expected_types: list[str]) -> list[dict]:
     ws.send_json({"type": "message", "text": text})
-    events = [ws.receive_json() for _ in expected_types]
+    events = []
+    while len(events) < len(expected_types):
+        event = ws.receive_json()
+        if event["type"] == "step":
+            continue
+        events.append(event)
     assert [event["type"] for event in events] == expected_types
     return events
 
@@ -228,10 +233,10 @@ def test_soft_trigger_immediately_triggers_analysis_card_ready(ws_harness):
         events = _send_message_and_collect(
             ws,
             "Please wrap this up.",
-            ["message_start", "message_delta", "message_end", "message", "step", "close_ok", "analysis_card_ready"],
+            ["message_start", "message_delta", "message_end", "message", "close_ok", "analysis_card_ready"],
         )
-        close_event = events[5]
-        card_event = events[6]
+        close_event = events[4]
+        card_event = events[5]
 
     assert close_event["type"] == "close_ok"
     assert card_event["type"] == "analysis_card_ready"
@@ -272,11 +277,11 @@ def test_analysis_card_generation_sees_transcript_committed_before_ready_event(
         events = _send_message_and_collect(
             ws,
             "Please wrap this up.",
-            ["message_start", "message_delta", "message_end", "message", "step", "close_ok", "analysis_card_ready"],
+            ["message_start", "message_delta", "message_end", "message", "close_ok", "analysis_card_ready"],
         )
 
-    assert events[5]["type"] == "close_ok"
-    assert events[6]["type"] == "analysis_card_ready"
+    assert events[4]["type"] == "close_ok"
+    assert events[5]["type"] == "analysis_card_ready"
     assert store.session is not None
     assert store.generated_card_session_ids == [store.session.session_id]
 
@@ -303,10 +308,10 @@ def test_soft_trigger_reports_analysis_card_failure_without_rolling_back_close(
         events = _send_message_and_collect(
             ws,
             "We can stop here.",
-            ["message_start", "message_delta", "message_end", "message", "step", "close_ok", "analysis_card_failed"],
+            ["message_start", "message_delta", "message_end", "message", "close_ok", "analysis_card_failed"],
         )
-        close_event = events[5]
-        failure_event = events[6]
+        close_event = events[4]
+        failure_event = events[5]
 
     assert close_event["type"] == "close_ok"
     assert failure_event == {
