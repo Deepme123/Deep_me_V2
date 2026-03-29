@@ -473,7 +473,8 @@
             </div>
             <div class="button-row">
               <button id="sendBtn" class="primary" disabled>메시지 전송</button>
-              <button id="closeBtn" class="secondary" disabled>강제 종료 close</button>
+              <button id="confirmCloseBtn" class="secondary" disabled>카드 생성 종료 confirm_close</button>
+              <button id="closeBtn" class="ghost" disabled>종료만 close</button>
               <button id="loadCardsBtn" class="ghost" disabled>저장된 카드 조회</button>
             </div>
             <div class="button-row">
@@ -481,6 +482,9 @@
               <button class="ghost preset-btn" data-text="회의에서 말을 꺼낼 때마다 괜히 내가 부족한 사람처럼 느껴져요.">예시 2</button>
               <button class="ghost preset-btn" data-text="이제는 조금 정리가 된 것 같고 오늘 대화는 여기까지 해도 될 것 같아요.">마무리 유도</button>
             </div>
+            <p class="hint">
+              `confirm_close`는 세션 종료와 분석 카드 생성을 함께 요청합니다. `close`는 카드 생성 없이 세션만 닫습니다.
+            </p>
           </div>
         </article>
       </div>
@@ -561,6 +565,7 @@
       disconnectBtn: $("disconnectBtn"),
       resetBtn: $("resetBtn"),
       sendBtn: $("sendBtn"),
+      confirmCloseBtn: $("confirmCloseBtn"),
       closeBtn: $("closeBtn"),
       loadCardsBtn: $("loadCardsBtn"),
       messageInput: $("messageInput"),
@@ -591,6 +596,7 @@
       els.connectBtn.disabled = connected;
       els.disconnectBtn.disabled = !connected;
       els.sendBtn.disabled = !connected;
+      els.confirmCloseBtn.disabled = !connected;
       els.closeBtn.disabled = !connected;
       els.loadCardsBtn.disabled = !state.sessionId;
     }
@@ -823,6 +829,7 @@
     els.disconnectBtn.addEventListener("click", disconnect);
     els.resetBtn.addEventListener("click", resetScreen);
     els.sendBtn.addEventListener("click", submitMessage);
+    els.confirmCloseBtn.addEventListener("click", () => sendJson({ type: "confirm_close" }));
     els.messageInput.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" || event.shiftKey) return;
       event.preventDefault();

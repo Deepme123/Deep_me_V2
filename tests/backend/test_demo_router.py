@@ -26,3 +26,4 @@ def test_emotion_analysis_demo_page_serves_html():
     assert "text/html" in response.headers["content-type"]
     assert "Emotion Flow Demo" in response.text
     assert "analysis_card_ready" in response.text
+    assert "confirm_close" in response.text
