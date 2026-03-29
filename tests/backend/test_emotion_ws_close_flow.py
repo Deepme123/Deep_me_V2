@@ -42,6 +42,9 @@ class MemoryStore:
             raise AssertionError("No stubbed current_step left")
         return self.current_steps.pop(0)
 
+    def with_reserved_close_token(self, text: str) -> str:
+        return f"{text.rstrip()} {emotion_ws.RESERVED_CONFIRM_CLOSE_TOKEN}".strip()
+
 
 class FakeDB:
     def __init__(self, store: MemoryStore) -> None:
@@ -294,6 +297,50 @@ def test_manual_close_keeps_transcript_turns_committed(ws_harness):
     ]
     assert store.session is not None
     assert store.session.ended_at is not None
+
+
+def test_reserved_close_token_is_hidden_from_client_visible_message(ws_harness):
+    store, client = ws_harness
+    store.current_steps = [11]
+    store.llm_outputs = [
+        store.with_reserved_close_token("오늘은 여기까지 해도 괜찮겠어.")
+    ]
+
+    with _open_ws(client) as ws:
+        events = _send_message_and_collect(
+            ws,
+            "이제 조금 정리된 것 같아.",
+            ["message_start", "message_delta", "message_end", "message"],
+        )
+
+    assert events[1]["delta"] == "오늘은 여기까지 해도 괜찮겠어."
+    assert events[3]["message"] == "오늘은 여기까지 해도 괜찮겠어."
+    assert emotion_ws.RESERVED_CONFIRM_CLOSE_TOKEN not in events[1]["delta"]
+    assert emotion_ws.RESERVED_CONFIRM_CLOSE_TOKEN not in events[3]["message"]
+    assert [(step.step_type, step.gpt_response) for step in store.steps] == [
+        ("user", ""),
+        ("assistant", "오늘은 여기까지 해도 괜찮겠어."),
+    ]
+
+
+def test_message_without_reserved_close_token_does_not_auto_close_session(ws_harness):
+    store, client = ws_harness
+    store.current_steps = [11]
+    store.llm_outputs = ["조금만 더 이야기해보자."]
+
+    with _open_ws(client) as ws:
+        events = _send_message_and_collect(
+            ws,
+            "아직은 더 말하고 싶어.",
+            ["message_start", "message_delta", "message_end", "message"],
+        )
+        assert events[3]["message"] == "조금만 더 이야기해보자."
+        assert store.session is not None
+        assert store.session.ended_at is None
+        ws.send_json({"type": "close"})
+        close_event = _receive_non_step_event(ws)
+
+    assert close_event["type"] == "close_ok"
 
 
 def test_cancel_close_ack_keeps_session_open_for_followup_messages(ws_harness):
