@@ -43,6 +43,7 @@ from app.backend.services.convo_policy import (
 from app.backend.services.close_policy import (
     CANCEL_CLOSE_MESSAGE_TYPE,
     CANCEL_CLOSE_STEP_TYPE,
+    RESERVED_CONFIRM_CLOSE_TOKEN,
     build_cancel_close_ok_message,
     extract_end_session_marker,
 )
@@ -806,8 +807,13 @@ async def ws_emotion(websocket: WebSocket):
 
                 # 스트리밍 호출 + 누적 버퍼
                 assistant_chunks: List[str] = []
+                token_tail_buffer = ""
+                token_holdback = max(0, len(RESERVED_CONFIRM_CLOSE_TOKEN) - 1)
+                stream_piece_count = 0
+                end_by_token = False
 
                 async def _consume_stream():
+                    nonlocal token_tail_buffer, stream_piece_count, end_by_token
                     async for piece in iter_chunks_async(
                         stream_noa_response(
                             system_prompt=system_prompt,
@@ -817,12 +823,34 @@ async def ws_emotion(websocket: WebSocket):
                             max_tokens=800,
                         )
                     ):
-                        safe_piece = leak_guard.sanitize_out(piece, sys_fp)
+                        stream_piece_count += 1
+                        token_tail_buffer += piece
+                        if stream_piece_count == 1:
+                            continue
+                        emit_raw = token_tail_buffer
+                        if token_holdback:
+                            emit_raw = token_tail_buffer[:-token_holdback]
+                            token_tail_buffer = token_tail_buffer[-token_holdback:]
+                        else:
+                            token_tail_buffer = ""
+                        if not emit_raw:
+                            continue
+                        safe_piece = leak_guard.sanitize_out(emit_raw, sys_fp)
                         if not safe_piece:
                             continue
                         assistant_chunks.append(safe_piece)
                         logger.debug("WS delta | %s", _mask_preview(safe_piece))
                         await guard_send(EmotionMessageResponse(type="message_delta", delta=safe_piece).model_dump())
+
+                    final_piece, end_by_token = extract_end_session_marker(token_tail_buffer)
+                    safe_final_piece = leak_guard.sanitize_out(final_piece, sys_fp)
+                    if not safe_final_piece:
+                        return
+                    assistant_chunks.append(safe_final_piece)
+                    logger.debug("WS delta | %s", _mask_preview(safe_final_piece))
+                    await guard_send(
+                        EmotionMessageResponse(type="message_delta", delta=safe_final_piece).model_dump()
+                    )
 
                 stream_failed_reason: str | None = None
                 await guard_send(EmotionMessageResponse(type="message_start").model_dump())
@@ -844,7 +872,6 @@ async def ws_emotion(websocket: WebSocket):
                     # 내용이 비면 저장하지 않고 종료
                     await guard_send({"type": "error", "message": "empty_assistant_response", "turn_dropped": True})
                     continue
-                assistant_text, _end_by_token = extract_end_session_marker(assistant_text)
 
                 # ② 사용자/어시스턴트 스텝을 한 트랜잭션으로 커밋
                 try:
@@ -871,6 +898,12 @@ async def ws_emotion(websocket: WebSocket):
                         message=assistant_text,
                     ).model_dump()
                 )
+
+                if end_by_token:
+                    payload = EmotionCloseRequest()
+                    if await finalize_close(payload, trigger_analysis_card=True):
+                        break
+                    continue
 
                 if want_activity:
                     if recommend_fuse_tripped:
