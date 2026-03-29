@@ -810,9 +810,10 @@ async def ws_emotion(websocket: WebSocket):
                 token_tail_buffer = ""
                 token_holdback = max(0, len(RESERVED_CONFIRM_CLOSE_TOKEN) - 1)
                 stream_piece_count = 0
+                end_by_token = False
 
                 async def _consume_stream():
-                    nonlocal token_tail_buffer, stream_piece_count
+                    nonlocal token_tail_buffer, stream_piece_count, end_by_token
                     async for piece in iter_chunks_async(
                         stream_noa_response(
                             system_prompt=system_prompt,
@@ -841,7 +842,7 @@ async def ws_emotion(websocket: WebSocket):
                         logger.debug("WS delta | %s", _mask_preview(safe_piece))
                         await guard_send(EmotionMessageResponse(type="message_delta", delta=safe_piece).model_dump())
 
-                    final_piece, _end_by_token = extract_end_session_marker(token_tail_buffer)
+                    final_piece, end_by_token = extract_end_session_marker(token_tail_buffer)
                     safe_final_piece = leak_guard.sanitize_out(final_piece, sys_fp)
                     if not safe_final_piece:
                         return
@@ -897,6 +898,12 @@ async def ws_emotion(websocket: WebSocket):
                         message=assistant_text,
                     ).model_dump()
                 )
+
+                if end_by_token:
+                    payload = EmotionCloseRequest()
+                    if await finalize_close(payload, trigger_analysis_card=True):
+                        break
+                    continue
 
                 if want_activity:
                     if recommend_fuse_tripped:
