@@ -71,27 +71,29 @@ def _analyze_and_store_card(
     return _store_card(db=db, session_id=session_id, payload=payload)
 
 
-def _steps_to_conversation_turns(
-    steps: list[EmotionStep],
+def _transcript_rows_to_conversation_turns(
+    transcript_rows: list[EmotionStep],
 ) -> list[sc.ConversationTurn]:
     turns: list[sc.ConversationTurn] = []
-    for step in steps:
-        if step.user_input:
+    for row in transcript_rows:
+        if row.step_type not in {"user", "assistant"}:
+            continue
+        if row.user_input:
             turns.append(
                 sc.ConversationTurn(
                     role="user",
                     speaker="USER",
-                    text=step.user_input,
-                    timestamp=step.created_at,
+                    text=row.user_input,
+                    timestamp=row.created_at,
                 )
             )
-        if step.gpt_response:
+        if row.gpt_response:
             turns.append(
                 sc.ConversationTurn(
                     role="assistant",
                     speaker="NOA",
-                    text=step.gpt_response,
-                    timestamp=step.created_at,
+                    text=row.gpt_response,
+                    timestamp=row.created_at,
                 )
             )
     return turns
@@ -101,12 +103,12 @@ def _load_session_conversation_turns(
     db: Session,
     session_id: UUID,
 ) -> list[sc.ConversationTurn]:
-    steps = db.exec(
+    transcript_rows = db.exec(
         select(EmotionStep)
         .where(EmotionStep.session_id == session_id)
         .order_by(EmotionStep.step_order)
     ).all()
-    return _steps_to_conversation_turns(steps)
+    return _transcript_rows_to_conversation_turns(transcript_rows)
 
 
 @router.post("/sessions", response_model=sc.SessionOut)

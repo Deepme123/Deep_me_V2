@@ -452,7 +452,6 @@
             </div>
             <div class="chip-row">
               <span class="chip">session_id: <span id="sessionIdLabel">없음</span></span>
-              <span class="chip">마지막 step: <span id="stepLabel">없음</span></span>
             </div>
             <p class="hint">
               권장 순서: 연결 후 메시지를 2~4번 보내고, `close_ok`와 `analysis_card_ready`가 같은 흐름 안에서 오는지 확인하세요.
@@ -550,7 +549,6 @@
     const state = {
       ws: null,
       sessionId: null,
-      lastStep: null,
       assistantStreaming: "",
       connected: false,
     };
@@ -568,7 +566,6 @@
       messageInput: $("messageInput"),
       connectionState: $("connectionState"),
       sessionIdLabel: $("sessionIdLabel"),
-      stepLabel: $("stepLabel"),
       conversationFeed: $("conversationFeed"),
       eventTimeline: $("eventTimeline"),
       analysisCard: $("analysisCard"),
@@ -715,12 +712,6 @@
       els.loadCardsBtn.disabled = false;
     }
 
-    function rememberStep(step, stepName) {
-      if (step == null) return;
-      state.lastStep = step;
-      els.stepLabel.textContent = `${step}${stepName ? ` · ${stepName}` : ""}`;
-    }
-
     function sendJson(payload) {
       if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
         throw new Error("WebSocket is not connected");
@@ -736,9 +727,6 @@
       }
       if (payload.type === "message") {
         appendConversation("assistant", payload.message || "");
-      }
-      if (payload.type === "step") {
-        rememberStep(payload.step, payload.step_name);
       }
       if (payload.type === "close_ok") {
         setConnectionState("세션 종료", "closed");
@@ -817,9 +805,7 @@
     function resetScreen() {
       disconnect();
       state.sessionId = null;
-      state.lastStep = null;
       els.sessionIdLabel.textContent = "없음";
-      els.stepLabel.textContent = "없음";
       clearNode(els.conversationFeed, '<div class="empty">아직 대화가 없습니다. 연결한 뒤 메시지를 보내세요.</div>');
       clearNode(els.eventTimeline, '<div class="empty">이벤트가 여기에 쌓입니다.</div>');
       clearNode(els.analysisCard, '<div class="empty">아직 분석 카드가 생성되지 않았습니다.</div>');

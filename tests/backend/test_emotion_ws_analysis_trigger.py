@@ -214,12 +214,17 @@ def _open_ws(client: TestClient):
 
 def _send_message_and_collect(ws, text: str, expected_types: list[str]) -> list[dict]:
     ws.send_json({"type": "message", "text": text})
-    events = [ws.receive_json() for _ in expected_types]
+    events = []
+    while len(events) < len(expected_types):
+        event = ws.receive_json()
+        if event["type"] == "step":
+            continue
+        events.append(event)
     assert [event["type"] for event in events] == expected_types
     return events
 
 
-def test_soft_trigger_immediately_triggers_analysis_card_ready(ws_harness):
+def test_confirm_close_triggers_analysis_card_ready_after_message_turn(ws_harness):
     store, client = ws_harness
     store.current_steps = [11]
     store.llm_outputs = ["ignored"]
@@ -228,10 +233,12 @@ def test_soft_trigger_immediately_triggers_analysis_card_ready(ws_harness):
         events = _send_message_and_collect(
             ws,
             "Please wrap this up.",
-            ["message_start", "message_delta", "message_end", "message", "step", "close_ok", "analysis_card_ready"],
+            ["message_start", "message_delta", "message_end", "message"],
         )
-        close_event = events[5]
-        card_event = events[6]
+        assert events[3]["message"] == "ignored"
+        ws.send_json({"type": "confirm_close"})
+        close_event = ws.receive_json()
+        card_event = ws.receive_json()
 
     assert close_event["type"] == "close_ok"
     assert card_event["type"] == "analysis_card_ready"
@@ -242,7 +249,50 @@ def test_soft_trigger_immediately_triggers_analysis_card_ready(ws_harness):
     assert card_event["card"]["session_id"] == str(store.session.session_id)
 
 
-def test_soft_trigger_reports_analysis_card_failure_without_rolling_back_close(
+def test_analysis_card_generation_sees_transcript_committed_before_ready_event(
+    ws_harness,
+    monkeypatch,
+):
+    store, client = ws_harness
+    store.current_steps = [11]
+    store.llm_outputs = ["ignored"]
+
+    async def fake_generate_analysis_card_async(session_id):
+        store.generated_card_session_ids.append(session_id)
+        assert [(step.step_type, step.user_input, step.gpt_response) for step in store.steps] == [
+            ("user", "Please wrap this up.", ""),
+            ("assistant", "", "ignored"),
+        ]
+        return {
+            "card_id": str(uuid4()),
+            "session_id": str(session_id),
+            "summary": "analysis summary",
+        }
+
+    monkeypatch.setattr(
+        emotion_ws,
+        "_generate_analysis_card_async",
+        fake_generate_analysis_card_async,
+    )
+
+    with _open_ws(client) as ws:
+        events = _send_message_and_collect(
+            ws,
+            "Please wrap this up.",
+            ["message_start", "message_delta", "message_end", "message"],
+        )
+        assert events[3]["message"] == "ignored"
+        ws.send_json({"type": "confirm_close"})
+        close_event = ws.receive_json()
+        card_event = ws.receive_json()
+
+    assert close_event["type"] == "close_ok"
+    assert card_event["type"] == "analysis_card_ready"
+    assert store.session is not None
+    assert store.generated_card_session_ids == [store.session.session_id]
+
+
+def test_confirm_close_reports_analysis_card_failure_without_rolling_back_close(
     ws_harness,
     monkeypatch,
 ):
@@ -264,10 +314,12 @@ def test_soft_trigger_reports_analysis_card_failure_without_rolling_back_close(
         events = _send_message_and_collect(
             ws,
             "We can stop here.",
-            ["message_start", "message_delta", "message_end", "message", "step", "close_ok", "analysis_card_failed"],
+            ["message_start", "message_delta", "message_end", "message"],
         )
-        close_event = events[5]
-        failure_event = events[6]
+        assert events[3]["message"] == "ignored"
+        ws.send_json({"type": "confirm_close"})
+        close_event = ws.receive_json()
+        failure_event = ws.receive_json()
 
     assert close_event["type"] == "close_ok"
     assert failure_event == {

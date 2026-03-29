@@ -1,29 +1,28 @@
-# app/routers/health_llm.py
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Query
 
 from app.backend.services.llm_service import generate_noa_response, stream_noa_response
 from app.backend.services.stream_bridge import iter_chunks_async
 
 router = APIRouter(prefix="/health", tags=["health"])
 
+DEFAULT_PONG_PROMPT = "\ub108\ub294 \uac04\ub2e8\ud788 \ud55c \ub2e8\uc5b4\ub85c\ub9cc \ub300\ub2f5\ud574: pong"
+HEALTHCHECK_QUERY_DESCRIPTION = (
+    "\ud14c\uc2a4\ud2b8\uc6a9 \ud504\ub86c\ud504\ud2b8(\uc5c6\uc73c\uba74 \uae30\ubcf8 pong \uac80\uc0ac)"
+)
+
 
 @router.get("/llm")
-def health_llm(q: Optional[str] = Query(None, description="테스트용 프롬프트(없으면 기본 pong 검사)")):
-    """
-    비-스트리밍 단발 호출 점검.
-    기본 프롬프트: 'pong'을 한 단어로만 답하도록 유도.
-    - OK: {"ok": true, "text": "..."}
-    - 비정상(내용없음/예상외 응답): 503
-    """
-    prompt = q or "너는 간단히 한 단어로만 대답해: pong"
-
+def health_llm(
+    q: Optional[str] = Query(None, description=HEALTHCHECK_QUERY_DESCRIPTION),
+):
     text = generate_noa_response(
         system_prompt="(healthcheck)",
         task_prompt=None,
-        conversation=[("user", prompt)],
+        conversation=[("user", q or DEFAULT_PONG_PROMPT)],
     )
     text = (text or "").strip()
 
@@ -38,17 +37,15 @@ def health_llm(q: Optional[str] = Query(None, description="테스트용 프롬�
 
 @router.get("/llm/stream")
 async def health_llm_stream(
-    q: Optional[str] = Query(None, description="Healthcheck prompt (defaults to pong check)"),
+    q: Optional[str] = Query(None, description=HEALTHCHECK_QUERY_DESCRIPTION),
 ):
-    prompt = q or "Respond with only one word: pong"
-
     tokens: list[str] = []
     try:
         async for piece in iter_chunks_async(
             stream_noa_response(
                 system_prompt="(healthcheck-stream)",
                 task_prompt=None,
-                conversation=[("user", prompt)],
+                conversation=[("user", q or DEFAULT_PONG_PROMPT)],
             )
         ):
             if piece:

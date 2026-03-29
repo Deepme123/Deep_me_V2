@@ -78,6 +78,51 @@ class LLMCardTests(unittest.TestCase):
 
         self.assertEqual(card.model_dump(), sc.CardCreate().model_dump())
 
+    def test_analyze_dialogue_to_card_passes_rich_transcript_details_to_prompt(self) -> None:
+        provider = _FakeProvider(
+            payload={
+                "summary": "The user felt anxious in a team meeting.",
+                "situation": "A team meeting at work.",
+                "emotion": "Anxious and afraid.",
+                "thoughts": "They thought they would freeze.",
+                "physical_reactions": "Tight chest.",
+                "behaviors": "Avoided eye contact.",
+            }
+        )
+        turns = [
+            sc.ConversationTurn(
+                role="user",
+                speaker="USER",
+                text="In today's team meeting I felt anxious.",
+            ),
+            sc.ConversationTurn(
+                role="assistant",
+                speaker="NOA",
+                text="What went through your mind and body in that moment?",
+            ),
+            sc.ConversationTurn(
+                role="user",
+                speaker="USER",
+                text="I thought I would freeze, my chest got tight, and I avoided eye contact.",
+            ),
+        ]
+
+        with patch.object(llm_card, "_get_card_llm_provider", return_value=provider):
+            card = llm_card.analyze_dialogue_to_card(turns)
+
+        self.assertEqual(card.situation, "A team meeting at work.")
+        self.assertEqual(card.emotion, "Anxious and afraid.")
+        self.assertEqual(card.thoughts, "They thought they would freeze.")
+        self.assertEqual(card.physical_reactions, "Tight chest.")
+        self.assertEqual(card.behaviors, "Avoided eye contact.")
+        messages, _schema, _options = provider.calls[0]
+        user_prompt = messages[1].content
+        self.assertIn("team meeting", user_prompt)
+        self.assertIn("felt anxious", user_prompt)
+        self.assertIn("would freeze", user_prompt)
+        self.assertIn("chest got tight", user_prompt)
+        self.assertIn("avoided eye contact", user_prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

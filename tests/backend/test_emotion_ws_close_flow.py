@@ -19,8 +19,6 @@ if str(ROOT_DIR) not in sys.path:
 
 emotion_ws = importlib.import_module("app.backend.routers.emotion_ws")
 
-FIXED_FAREWELL = emotion_ws.build_fixed_farewell()
-
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
@@ -214,12 +212,25 @@ def _open_ws(client: TestClient):
 
 def _send_message_and_collect(ws, text: str, expected_types: list[str]) -> list[dict]:
     ws.send_json({"type": "message", "text": text})
-    events = [ws.receive_json() for _ in expected_types]
+    events = []
+    while len(events) < len(expected_types):
+        event = ws.receive_json()
+        if event["type"] == "step":
+            continue
+        events.append(event)
     assert [event["type"] for event in events] == expected_types
     return events
 
 
-def test_soft_trigger_closes_session_immediately(ws_harness):
+def _receive_non_step_event(ws) -> dict:
+    while True:
+        event = ws.receive_json()
+        if event["type"] == "step":
+            continue
+        return event
+
+
+def test_step_11_message_does_not_auto_close_session(ws_harness):
     store, client = ws_harness
     store.current_steps = [11]
     store.llm_outputs = ["LLM freeform close response"]
@@ -228,12 +239,14 @@ def test_soft_trigger_closes_session_immediately(ws_harness):
         events = _send_message_and_collect(
             ws,
             "I think this is enough for now.",
-            ["message_start", "message_delta", "message_end", "message", "step", "close_ok", "analysis_card_ready"],
+            ["message_start", "message_delta", "message_end", "message"],
         )
+        ws.send_json({"type": "close"})
+        close_event = _receive_non_step_event(ws)
 
     assert events[1]["delta"] == "LLM freeform close response"
-    assert events[3]["message"] == FIXED_FAREWELL
-    assert events[5]["type"] == "close_ok"
+    assert events[3]["message"] == "LLM freeform close response"
+    assert close_event["type"] == "close_ok"
     assert store.session is not None
     assert store.session.ended_at is not None
 
@@ -247,24 +260,48 @@ def test_close_still_returns_close_ok_without_soft_trigger(ws_harness):
         events = _send_message_and_collect(
             ws,
             "Let's keep talking.",
-            ["message_start", "message_delta", "message_end", "message", "step"],
+            ["message_start", "message_delta", "message_end", "message"],
         )
         assert events[3]["message"] == "continue"
         ws.send_json({"type": "close"})
-        close_event = ws.receive_json()
+        close_event = _receive_non_step_event(ws)
 
     assert close_event["type"] == "close_ok"
     assert store.session is not None
     assert store.session.ended_at is not None
 
 
-def test_legacy_cancel_close_still_applies_cooldown(ws_harness):
+def test_manual_close_keeps_transcript_turns_committed(ws_harness):
     store, client = ws_harness
-    store.current_steps = [11, 11, 11]
+    store.current_steps = [3]
+    store.llm_outputs = ["Thanks for sharing that."]
+
+    with _open_ws(client) as ws:
+        events = _send_message_and_collect(
+            ws,
+            "I have been under pressure all week.",
+            ["message_start", "message_delta", "message_end", "message"],
+        )
+        assert events[3]["message"] == "Thanks for sharing that."
+
+        ws.send_json({"type": "close"})
+        close_event = _receive_non_step_event(ws)
+
+    assert close_event["type"] == "close_ok"
+    assert [(step.step_type, step.user_input, step.gpt_response) for step in store.steps] == [
+        ("user", "I have been under pressure all week.", ""),
+        ("assistant", "", "Thanks for sharing that."),
+    ]
+    assert store.session is not None
+    assert store.session.ended_at is not None
+
+
+def test_cancel_close_ack_keeps_session_open_for_followup_messages(ws_harness):
+    store, client = ws_harness
+    store.current_steps = [11, 11]
     store.llm_outputs = [
         "keep going a bit more",
         "still open",
-        "ignored close response again",
     ]
 
     with _open_ws(client) as ws:
@@ -275,23 +312,19 @@ def test_legacy_cancel_close_still_applies_cooldown(ws_harness):
         continue_turn_1 = _send_message_and_collect(
             ws,
             "Not yet.",
-            ["message_start", "message_delta", "message_end", "message", "step"],
+            ["message_start", "message_delta", "message_end", "message"],
         )
         assert continue_turn_1[3]["message"] == "keep going a bit more"
 
         continue_turn_2 = _send_message_and_collect(
             ws,
             "One more thing.",
-            ["message_start", "message_delta", "message_end", "message", "step"],
+            ["message_start", "message_delta", "message_end", "message"],
         )
         assert continue_turn_2[3]["message"] == "still open"
-
-        resumed_close_turn = _send_message_and_collect(
-            ws,
-            "Now we can wrap up.",
-            ["message_start", "message_delta", "message_end", "message", "step", "close_ok", "analysis_card_ready"],
-        )
-        assert resumed_close_turn[3]["message"] == FIXED_FAREWELL
+        ws.send_json({"type": "close"})
+        close_event = _receive_non_step_event(ws)
+        assert close_event["type"] == "close_ok"
 
     assert any(
         step.step_type == emotion_ws.CANCEL_CLOSE_STEP_TYPE

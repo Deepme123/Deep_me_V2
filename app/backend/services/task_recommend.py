@@ -38,11 +38,11 @@ def load_task_recommendation_context(
         .order_by(EmotionStep.created_at.desc())
         .limit(recent_steps_limit)
     )
-    steps = list(reversed(db.exec(stmt).all()))
+    transcript_rows = list(reversed(db.exec(stmt).all()))
 
     history_lines = [
         f"유저: {step.user_input or ''}\nGPT: {step.gpt_response or ''}".strip()
-        for step in steps
+        for step in transcript_rows
         if (step.user_input or step.gpt_response)
     ]
 
