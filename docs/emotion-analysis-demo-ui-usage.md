@@ -23,8 +23,11 @@ events.
 1. Open the page.
 2. Connect to `/ws/emotion`.
 3. Send one or more messages.
-4. Watch the transcript and raw event log update.
-5. Close the session or load stored cards for the current session.
+4. Use the wrap-up preset or other closing language to encourage a final
+   assistant turn.
+5. Watch the transcript and raw event log update.
+6. When the model ends with the reserved close token, confirm that the session
+   auto-closes and the saved card list refreshes itself.
 
 ## Important Event Meanings
 
@@ -36,18 +39,21 @@ events.
 - `close_ok`: the session close was persisted
 - `analysis_card_ready`: transcript-based card generation succeeded
 - `analysis_card_failed`: the session closed, but card generation failed
+- the reserved token is stripped before the assistant message reaches the demo
+  transcript or stored transcript rows
 
 ## Current Close Behavior
 
-The backend is manual-close-first.
+The current backend has two close paths.
 
-- sending `close` closes the session
-- sending `confirm_close` closes the session and triggers card generation
+- sending `close` closes the session manually and returns `close_ok`
+- when the model ends a response with `[[CONFIRM_CLOSE]]`, the backend strips
+  the token from the visible assistant text, then auto-triggers the same close
+  path that leads to `close_ok` and analysis card generation
 
-The current demo page includes a `close` action. If you need to exercise live
-`analysis_card_ready` over websocket, use a websocket client that can send
-`confirm_close`, or verify saved cards through the analyze API after the
-appropriate close flow.
+The current demo page exposes the manual `close` button and also includes a
+wrap-up preset that is useful when you want to observe token-driven auto-close
+behavior.
 
 ## Recommended Checks
 
@@ -72,7 +78,8 @@ When card generation is part of the close flow, confirm:
 
 - `analysis_card_ready` appears in the event log
 - the card panel renders the returned card
-- the stored card list can be loaded again by `session_id`
+- the stored card list refreshes automatically after the websocket event
+- the stored card list can still be loaded again by `session_id`
 
 ## Useful Commands
 
