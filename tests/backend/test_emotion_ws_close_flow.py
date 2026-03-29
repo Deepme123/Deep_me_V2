@@ -42,6 +42,9 @@ class MemoryStore:
             raise AssertionError("No stubbed current_step left")
         return self.current_steps.pop(0)
 
+    def with_reserved_close_token(self, text: str) -> str:
+        return f"{text.rstrip()} {emotion_ws.RESERVED_CONFIRM_CLOSE_TOKEN}".strip()
+
 
 class FakeDB:
     def __init__(self, store: MemoryStore) -> None:
