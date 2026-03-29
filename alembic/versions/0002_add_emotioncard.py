@@ -16,7 +16,7 @@ branch_labels = None
 depends_on = None
 
 
-def _json_type() -> sa.TypeEngine:
+def _json_type():
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
         return postgresql.JSONB(astext_type=sa.Text())
