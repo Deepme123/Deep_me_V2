@@ -146,3 +146,19 @@ def test_stream_text_falls_back_from_reasoning_responses_to_chat_backups():
     assert output == "fallback"
     assert responses.stream_calls[0]["model"] == "gpt-5-mini"
     assert client.chat.completions.calls[0]["model"] == "gpt-4o-mini"
+
+
+def test_responses_input_uses_output_text_for_assistant_history():
+    provider = OpenAIProvider(settings=_build_settings("gpt-5-mini"), client=FakeClient(responses=FakeResponsesAPI()))
+
+    payload = provider._to_responses_input(
+        [
+            LLMMessage(role="system", content="System"),
+            LLMMessage(role="assistant", content="Earlier reply"),
+            LLMMessage(role="user", content="Latest user message"),
+        ]
+    )
+
+    assert payload[0]["content"] == [{"type": "input_text", "text": "System"}]
+    assert payload[1]["content"] == [{"type": "output_text", "text": "Earlier reply"}]
+    assert payload[2]["content"] == [{"type": "input_text", "text": "Latest user message"}]
