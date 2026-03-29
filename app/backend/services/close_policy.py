@@ -12,9 +12,9 @@ CANCEL_CLOSE_STEP_TYPE = os.getenv("CANCEL_CLOSE_STEP_TYPE", "cancel_close")
 def extract_end_session_marker(text: str) -> tuple[str, bool]:
     if not text:
         return "", False
-    if END_SESSION_TOKEN not in text:
+    if RESERVED_CONFIRM_CLOSE_TOKEN not in text:
         return text, False
-    cleaned = text.replace(END_SESSION_TOKEN, "").strip()
+    cleaned = text.replace(RESERVED_CONFIRM_CLOSE_TOKEN, "").strip()
     return cleaned, True
 
 
