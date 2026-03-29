@@ -733,6 +733,7 @@
       }
       if (payload.type === "analysis_card_ready") {
         renderAnalysisCard(payload.card || {});
+        void loadCards();
       }
       if (payload.type === "analysis_card_failed") {
         clearNode(els.analysisCard, `<div class="empty">분석 카드 생성에 실패했습니다.\n${payload.message || ""}</div>`);
