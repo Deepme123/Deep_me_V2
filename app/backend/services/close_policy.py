@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+RESERVED_CONFIRM_CLOSE_TOKEN = "[[CONFIRM_CLOSE]]"
 END_SESSION_TOKEN = "__END_SESSION__"
 CANCEL_CLOSE_MESSAGE_TYPE = "cancel_close"
 CANCEL_CLOSE_OK_MESSAGE_TYPE = "cancel_close_ok"
