@@ -252,6 +252,35 @@ def test_confirm_close_triggers_analysis_card_ready_after_message_turn(ws_harnes
     assert card_event["card"]["session_id"] == str(store.session.session_id)
 
 
+def test_reserved_close_token_auto_triggers_close_and_analysis_card_ready(ws_harness):
+    store, client = ws_harness
+    store.current_steps = [11]
+    store.llm_outputs = [store.with_reserved_close_token("이제 여기서 마무리해도 괜찮겠어.")]
+
+    with _open_ws(client) as ws:
+        events = _send_message_and_collect(
+            ws,
+            "오늘은 여기까지 하고 싶어.",
+            [
+                "message_start",
+                "message_delta",
+                "message_end",
+                "message",
+                "close_ok",
+                "analysis_card_ready",
+            ],
+        )
+
+    assert events[1]["delta"] == "이제 여기서 마무리해도 괜찮겠어."
+    assert events[3]["message"] == "이제 여기서 마무리해도 괜찮겠어."
+    assert events[4]["type"] == "close_ok"
+    assert events[5]["type"] == "analysis_card_ready"
+    assert store.session is not None
+    assert store.session.ended_at is not None
+    assert store.generated_card_session_ids == [store.session.session_id]
+    assert events[5]["session_id"] == str(store.session.session_id)
+
+
 def test_analysis_card_generation_sees_transcript_committed_before_ready_event(
     ws_harness,
     monkeypatch,
