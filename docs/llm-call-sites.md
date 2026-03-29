@@ -9,6 +9,15 @@ The current design is transcript-first:
 - analysis cards are generated from the stored session transcript
 - no route appends step-specific prompt fragments
 
+## Reserved Close Token Contract
+
+The system prompt now defines `[[CONFIRM_CLOSE]]` as a reserved token.
+
+- the model should append it only when it intends to end the session
+- the token belongs at the very end of the assistant response
+- at this stage the contract is prompt-only; the backend does not yet consume
+  `[[CONFIRM_CLOSE]]` as a session-close trigger
+
 ## 1. WebSocket Conversation
 
 File:
