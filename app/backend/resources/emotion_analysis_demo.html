@@ -198,6 +198,14 @@
       padding: 18px 20px 10px;
     }
 
+    .panel-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
     .panel-title {
       margin: 0;
       font-family: var(--serif);
@@ -250,6 +258,11 @@
     .ghost {
       background: rgba(111, 45, 23, 0.06);
       color: var(--ink);
+    }
+
+    .mini {
+      padding: 9px 14px;
+      font-size: 0.88rem;
     }
 
     .status-pill {
@@ -540,6 +553,9 @@
             <h2 class="panel-title">대화 내역</h2>
             <p class="panel-sub">사용자와 AI 메시지를 시간 순서대로 정리해 보여줍니다.</p>
           </div>
+          <div class="panel-actions">
+            <button id="copyConversationBtn" class="ghost mini" type="button">대화 복사</button>
+          </div>
         </div>
         <div class="panel-body">
           <div id="conversationFeed" class="feed">
@@ -597,6 +613,8 @@
       ws: null,
       sessionId: null,
       connected: false,
+      conversationHistory: [],
+      copyFeedbackTimer: null,
     };
 
     const $ = (id) => document.getElementById(id);
@@ -610,6 +628,7 @@
       closeBtn: $("closeBtn"),
       loadCardsBtn: $("loadCardsBtn"),
       messageInput: $("messageInput"),
+      copyConversationBtn: $("copyConversationBtn"),
       connectionState: $("connectionState"),
       sessionIdLabel: $("sessionIdLabel"),
       conversationFeed: $("conversationFeed"),
@@ -650,6 +669,8 @@
 
     function appendConversation(role, text) {
       if (!text) return;
+      const time = nowStamp();
+      state.conversationHistory.push({ role, text, time });
       if (els.conversationFeed.querySelector(".empty")) {
         clearNode(els.conversationFeed);
       }
@@ -658,7 +679,7 @@
       item.innerHTML = `
         <div class="bubble-head">
           <span class="bubble-role">${role}</span>
-          <span class="bubble-time">${nowStamp()}</span>
+          <span class="bubble-time">${time}</span>
         </div>
         <p class="bubble-text"></p>
       `;
@@ -763,6 +784,65 @@
       state.ws.send(JSON.stringify(payload));
     }
 
+    async function copyToClipboard(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+
+      const temp = document.createElement("textarea");
+      temp.value = text;
+      temp.setAttribute("readonly", "readonly");
+      temp.style.position = "fixed";
+      temp.style.opacity = "0";
+      document.body.appendChild(temp);
+      temp.select();
+      document.execCommand("copy");
+      document.body.removeChild(temp);
+    }
+
+    function formatConversationForCopy() {
+      return state.conversationHistory
+        .map(({ role, text, time }) => {
+          const roleLabel = role === "user" ? "사용자" : role === "assistant" ? "AI" : role;
+          return `[${roleLabel}] ${time}\n${text}`;
+        })
+        .join("\n\n");
+    }
+
+    function updateCopyButtonLabel(label) {
+      if (!els.copyConversationBtn) return;
+      els.copyConversationBtn.textContent = label;
+      if (state.copyFeedbackTimer) {
+        window.clearTimeout(state.copyFeedbackTimer);
+        state.copyFeedbackTimer = null;
+      }
+      if (label !== "대화 복사") {
+        state.copyFeedbackTimer = window.setTimeout(() => {
+          els.copyConversationBtn.textContent = "대화 복사";
+          state.copyFeedbackTimer = null;
+        }, 1800);
+      }
+    }
+
+    async function copyConversation() {
+      if (state.conversationHistory.length === 0) {
+        updateCopyButtonLabel("복사할 대화 없음");
+        return;
+      }
+
+      try {
+        await copyToClipboard(formatConversationForCopy());
+        updateCopyButtonLabel("복사 완료");
+      } catch (error) {
+        updateCopyButtonLabel("복사 실패");
+        appendEvent({
+          type: "copy_failed",
+          message: String(error.message || error),
+        });
+      }
+    }
+
     function handleEvent(payload) {
       appendEvent(payload);
       if (payload.type === "open_ok") {
@@ -850,7 +930,9 @@
     function resetScreen() {
       disconnect();
       state.sessionId = null;
+      state.conversationHistory = [];
       els.sessionIdLabel.textContent = "없음";
+      updateCopyButtonLabel("대화 복사");
       clearNode(els.conversationFeed, '<div class="empty">아직 대화가 없습니다. 연결한 뒤 메시지를 보내 보세요.</div>');
       clearNode(els.eventTimeline, '<div class="empty">이벤트가 여기에 쌓입니다.</div>');
       clearNode(els.analysisCard, '<div class="empty">아직 분석 카드가 생성되지 않았습니다.</div>');
@@ -860,14 +942,28 @@
     function submitMessage() {
       const text = els.messageInput.value.trim();
       if (!text) return;
-      appendConversation("user", text);
-      sendJson({ type: "message", text });
+      try {
+        sendJson({ type: "message", text });
+        appendConversation("user", text);
+        els.messageInput.value = "";
+        els.messageInput.focus();
+      } catch (error) {
+        appendEvent({
+          type: "send_failed",
+          message: String(error.message || error),
+          text,
+        });
+        els.messageInput.focus();
+      }
     }
 
     els.connectBtn.addEventListener("click", connect);
     els.disconnectBtn.addEventListener("click", disconnect);
     els.resetBtn.addEventListener("click", resetScreen);
     els.sendBtn.addEventListener("click", submitMessage);
+    els.copyConversationBtn.addEventListener("click", () => {
+      void copyConversation();
+    });
     els.messageInput.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" || event.shiftKey) return;
       event.preventDefault();
@@ -878,6 +974,7 @@
     document.querySelectorAll(".preset-btn").forEach((button) => {
       button.addEventListener("click", () => {
         els.messageInput.value = button.dataset.text || "";
+        els.messageInput.focus();
       });
     });
 
