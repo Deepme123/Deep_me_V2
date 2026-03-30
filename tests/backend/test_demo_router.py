@@ -24,5 +24,23 @@ def test_emotion_analysis_demo_page_serves_html():
 
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert "Emotion Flow Demo" in response.text
-    assert "analysis_card_ready" in response.text
+    assert '<div class="shell">' in response.text
+    assert '/demo/assets/emotion-analysis-demo.css' in response.text
+    assert '/demo/assets/emotion-analysis-demo.js' in response.text
+
+
+def test_emotion_analysis_demo_assets_serve_static_files():
+    app = FastAPI()
+    app.include_router(demo_router)
+    client = TestClient(app)
+
+    css_response = client.get("/demo/assets/emotion-analysis-demo.css")
+    js_response = client.get("/demo/assets/emotion-analysis-demo.js")
+
+    assert css_response.status_code == 200
+    assert "text/css" in css_response.headers["content-type"]
+    assert ".hero-card" in css_response.text
+
+    assert js_response.status_code == 200
+    assert "application/javascript" in js_response.headers["content-type"]
+    assert "function connect()" in js_response.text
