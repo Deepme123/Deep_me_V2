@@ -349,10 +349,18 @@ class OpenAIProvider(LLMProvider):
         return [
             {
                 "role": message.role,
-                "content": [{"type": "input_text", "text": message.content}],
+                "content": [
+                    {
+                        "type": self._responses_content_type_for_role(message.role),
+                        "text": message.content,
+                    }
+                ],
             }
             for message in messages
         ]
+
+    def _responses_content_type_for_role(self, role: str) -> str:
+        return "output_text" if role == "assistant" else "input_text"
 
     def _to_chat_messages(self, messages: Sequence[LLMMessage]) -> list[dict[str, str]]:
         return [{"role": message.role, "content": message.content} for message in messages]
