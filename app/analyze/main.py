@@ -7,7 +7,7 @@ from sqlmodel import Session, text
 from app.analyze.db import get_db
 from app.analyze.routers import cards as cards_router
 from app.analyze.routers import summaries as summaries_router
-from app.db.session import ANALYZE_REQUIRED_TABLES, ensure_required_tables
+from app.db.session import ANALYZE_REQUIRED_TABLES, ensure_required_tables, get_engine
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,8 @@ app.include_router(summaries_router.router)
 
 @app.on_event("startup")
 def validate_required_tables() -> None:
+    with get_engine().connect() as conn:
+        conn.execute(text("SELECT 1"))
     ensure_required_tables(ANALYZE_REQUIRED_TABLES, schema="public")
     logger.info("Required analyze tables verified")
 
