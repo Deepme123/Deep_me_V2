@@ -75,6 +75,8 @@ app.include_router(demo.router)
 
 @app.on_event("startup")
 def validate_required_tables() -> None:
+    with get_engine().connect() as conn:
+        conn.execute(text("SELECT 1"))
     ensure_required_tables(CORE_REQUIRED_TABLES, schema="public")
     logger.info("Required core tables verified")
 
