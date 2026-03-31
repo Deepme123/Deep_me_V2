@@ -36,8 +36,6 @@ auth_router = APIRouter()
 # ──────────────────────────────────────────────────────────────────────────────
 # 환경변수 & 상수
 # ──────────────────────────────────────────────────────────────────────────────
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/callback")
 
 # Access Token TTL(분) — app/core/tokens.create_access_token은 .env의 ACCESS_TOKEN_EXPIRE_MINUTES를 사용
@@ -54,8 +52,15 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
-if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
-    raise RuntimeError("❌ GOOGLE_CLIENT_ID 또는 GOOGLE_CLIENT_SECRET 미설정 (.env 확인 필요)")
+def _get_google_oauth_config() -> tuple[str, str]:
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google OAuth is not configured",
+        )
+    return client_id, client_secret
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Pydantic 모델
@@ -112,12 +117,17 @@ def _get_or_create_user(db: Session, *, email: str, name: str | None) -> User:
         db.refresh(user)
     return user
 
-async def _verify_id_token_and_extract(http: httpx.AsyncClient, id_token: str) -> tuple[str, str | None]:
+async def _verify_id_token_and_extract(
+    http: httpx.AsyncClient,
+    id_token: str,
+    *,
+    google_client_id: str,
+) -> tuple[str, str | None]:
     r = await http.get(GOOGLE_TOKENINFO_URL, params={"id_token": id_token}, timeout=10.0)
     if r.status_code != 200:
         raise HTTPException(status_code=400, detail="유효하지 않은 id_token")
     data = r.json()
-    if data.get("aud") != GOOGLE_CLIENT_ID:
+    if data.get("aud") != google_client_id:
         raise HTTPException(status_code=400, detail="aud 불일치")
     if data.get("iss") not in {"accounts.google.com", "https://accounts.google.com"}:
         raise HTTPException(status_code=400, detail="iss 불일치")
@@ -183,8 +193,9 @@ def issue_tokens_for_user(
 # ──────────────────────────────────────────────────────────────────────────────
 @auth_router.get("/auth/login/google", tags=["auth"])
 def login_via_google():
+    google_client_id, _google_client_secret = _get_google_oauth_config()
     params = {
-        "client_id": GOOGLE_CLIENT_ID,
+        "client_id": google_client_id,
         "redirect_uri": REDIRECT_URI,
         "response_type": "code",
         "scope": "openid email profile",
@@ -199,13 +210,14 @@ async def google_auth_callback(
     db: Session = Depends(get_session),
 ):
     # code → access_token 교환
+    google_client_id, google_client_secret = _get_google_oauth_config()
     async with httpx.AsyncClient() as http:
         token_res = await http.post(
             GOOGLE_TOKEN_URL,
             data={
                 "code": code,
-                "client_id": GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
+                "client_id": google_client_id,
+                "client_secret": google_client_secret,
                 "redirect_uri": REDIRECT_URI,
                 "grant_type": "authorization_code",
             },
@@ -248,8 +260,13 @@ async def auth_with_google(
     response: Response,
     db: Session = Depends(get_session),
 ):
+    google_client_id, _google_client_secret = _get_google_oauth_config()
     async with httpx.AsyncClient() as http:
-        email, name = await _verify_id_token_and_extract(http, body.id_token)
+        email, name = await _verify_id_token_and_extract(
+            http,
+            body.id_token,
+            google_client_id=google_client_id,
+        )
     user = _get_or_create_user(db, email=email, name=name)
 
     meta = issue_tokens_for_user(
