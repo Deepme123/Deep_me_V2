@@ -8,10 +8,9 @@ from datetime import datetime
 import asyncio
 import logging
 import os
-import re
 import json
 from contextlib import suppress
-from typing import List, Tuple, Optional, Callable, TypeVar
+from typing import List, Callable, TypeVar
 from urllib.parse import parse_qs
 
 from sqlalchemy.exc import IntegrityError
@@ -33,6 +32,13 @@ from app.backend.schemas.emotion import (
 from app.backend.services.llm_service import get_backend_llm_info, stream_noa_response
 from app.backend.services.stream_bridge import iter_chunks_async
 from app.backend.services.task_recommend import recommend_tasks_from_session_core
+from app.backend.services.ws_utils import (
+    LeakGuard as SharedLeakGuard,
+    ensure_uuid,
+    mask_preview,
+    safe_str,
+    transcript_rows_to_conversation,
+)
 from app.backend.services.web_test_user import resolve_emotion_user_id
 from app.backend.core.jwt import decode_access_token
 from app.backend.core.prompt_loader import get_system_prompt, get_task_prompt
@@ -133,7 +139,7 @@ def _decode_user_id_from_token(token: str | None) -> UUID | None:
     if not payload or not isinstance(payload, dict):
         return None
     try:
-        return _ensure_uuid(payload.get("sub"))
+        return ensure_uuid(payload.get("sub"))
     except Exception:
         return None
 
@@ -156,7 +162,7 @@ async def _ws_send_safe(websocket: WebSocket, data: dict, *, timeout: float | No
         else:
             await _send()
     except Exception as e:
-        logger.warning("WS send failed | %s | keys=%s", _safe_str(e), list(data.keys()))
+        logger.warning("WS send failed | %s | keys=%s", safe_str(e), list(data.keys()))
 
 async def _ws_recv_safe(
     websocket: WebSocket,
@@ -182,7 +188,7 @@ async def _ws_recv_safe(
     except WebSocketDisconnect:
         raise
     except Exception as e:
-        logger.warning("WS recv() failed | %s", _safe_str(e))
+        logger.warning("WS recv() failed | %s", safe_str(e))
         return None
 
     # 원시 프레임 로깅
@@ -311,7 +317,7 @@ def _prepare_message_context(db: Session, session_id: UUID, user_text: str) -> d
     # user/assistant orders reserved but not committed until after successful LLM turn
     user_order = last_order + 1
     assistant_order = user_order + 1
-    convo = _transcript_rows_to_conversation(recent_transcript_rows) + [("user", user_text)]
+    convo = transcript_rows_to_conversation(recent_transcript_rows) + [("user", user_text)]
     return {
         "transcript_rows": transcript_rows,
         "want_activity": want_activity,
@@ -503,7 +509,7 @@ async def ws_emotion(websocket: WebSocket):
     await websocket.accept(subprotocol=subproto if subproto else None)
 
     session_id: UUID | None = None
-    leak_guard = LeakGuard()
+    leak_guard = SharedLeakGuard()
     sys_fp: set[int] = set()
     send_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=CFG.WS_SEND_BUFFER)
     loop = asyncio.get_running_loop()
@@ -535,7 +541,7 @@ async def ws_emotion(websocket: WebSocket):
         except WebSocketDisconnect:
             pass
         except Exception as e:
-            logger.warning("WS sender loop error | %s", _safe_str(e))
+            logger.warning("WS sender loop error | %s", safe_str(e))
         finally:
             shutdown.set()
 
@@ -570,7 +576,7 @@ async def ws_emotion(websocket: WebSocket):
         try:
             await _with_db(_close_session_record, session_id, payload)
         except Exception as e:
-            logger.warning("WS close update failed | %s", _safe_str(e))
+            logger.warning("WS close update failed | %s", safe_str(e))
             await guard_send({"type": "error", "message": "close_failed"})
             return False
 
@@ -587,7 +593,7 @@ async def ws_emotion(websocket: WebSocket):
                 logger.exception(
                     "analysis card generation failed after close | session_id=%s | %s",
                     session_id,
-                    _safe_str(e),
+                    safe_str(e),
                 )
                 await _ws_send_safe(
                     websocket,
@@ -612,7 +618,7 @@ async def ws_emotion(websocket: WebSocket):
         try:
             await _with_db(_append_step_marker, session_id, CANCEL_CLOSE_STEP_TYPE)
         except Exception as e:
-            logger.warning("WS cancel_close marker failed | %s", _safe_str(e))
+            logger.warning("WS cancel_close marker failed | %s", safe_str(e))
             if send_ack:
                 await guard_send({"type": "error", "message": "cancel_close_failed"})
             return False
@@ -647,7 +653,7 @@ async def ws_emotion(websocket: WebSocket):
             try:
                 session = await _with_db(_create_emotion_session, uid)
             except IntegrityError as ie:
-                logger.warning("bootstrap commit FK failed; retrying as anonymous | %s", _safe_str(ie))
+                logger.warning("bootstrap commit FK failed; retrying as anonymous | %s", safe_str(ie))
                 session = await _with_db(_create_emotion_session, None)
 
             session_id = session.session_id  # ← 세션 아이디 보관
@@ -695,7 +701,7 @@ async def ws_emotion(websocket: WebSocket):
                 await close_ws(code=1007, reason=str(e))
                 break
             except Exception as e:
-                logger.warning("WS recv failed | %s", _safe_str(e))
+                logger.warning("WS recv failed | %s", safe_str(e))
                 await guard_send({"type": "error", "message": "recv_failed"})
                 break
             if msg is None or shutdown.is_set():
@@ -741,7 +747,7 @@ async def ws_emotion(websocket: WebSocket):
                 try:
                     session = await _with_db(_create_emotion_session, uid)
                 except IntegrityError as ie:
-                    logger.warning("open commit FK failed; retrying anonymous | %s", _safe_str(ie))
+                    logger.warning("open commit FK failed; retrying anonymous | %s", safe_str(ie))
                     session = await _with_db(_create_emotion_session, None)
 
                 session_id = session.session_id
@@ -771,7 +777,7 @@ async def ws_emotion(websocket: WebSocket):
                 if len(user_text.encode("utf-8")) > CFG.WS_MAX_USER_TEXT_LEN:
                     await guard_send({"type": "error", "message": "message_too_large"})
                     continue
-                logger.info("WS recv user | %s", _mask_preview(user_text, 100))
+                logger.info("WS recv user | %s", mask_preview(user_text, 100))
 
                 # MARK A: DB 조회 직전
                 logger.warning("WS MARK A | before DB fetch")
@@ -788,7 +794,7 @@ async def ws_emotion(websocket: WebSocket):
                     continue
                 except Exception as e:
                     logger.exception("WS DB fetch failed")
-                    await guard_send({"type": "error", "message": f"db_failed: {_safe_str(e)}"})
+                    await guard_send({"type": "error", "message": f"db_failed: {safe_str(e)}"})
                     continue
 
                 # MARK B: DB 조회 통과
@@ -800,7 +806,7 @@ async def ws_emotion(websocket: WebSocket):
                     task_prompt = get_task_prompt() if want_activity else None
                 except Exception as e:
                     logger.exception("WS prompt load failed")
-                    await guard_send({"type": "error", "message": f"prompt_failed: {_safe_str(e)}"})
+                    await guard_send({"type": "error", "message": f"prompt_failed: {safe_str(e)}"})
                     continue
 
                 logger.warning("WS MARK C | after prompt load, before stream")
@@ -839,7 +845,7 @@ async def ws_emotion(websocket: WebSocket):
                         if not safe_piece:
                             continue
                         assistant_chunks.append(safe_piece)
-                        logger.debug("WS delta | %s", _mask_preview(safe_piece))
+                        logger.debug("WS delta | %s", mask_preview(safe_piece))
                         await guard_send(EmotionMessageResponse(type="message_delta", delta=safe_piece).model_dump())
 
                     final_piece, end_by_token = extract_end_session_marker(token_tail_buffer)
@@ -847,7 +853,7 @@ async def ws_emotion(websocket: WebSocket):
                     if not safe_final_piece:
                         return
                     assistant_chunks.append(safe_final_piece)
-                    logger.debug("WS delta | %s", _mask_preview(safe_final_piece))
+                    logger.debug("WS delta | %s", mask_preview(safe_final_piece))
                     await guard_send(
                         EmotionMessageResponse(type="message_delta", delta=safe_final_piece).model_dump()
                     )
@@ -859,7 +865,7 @@ async def ws_emotion(websocket: WebSocket):
                 except asyncio.TimeoutError:
                     stream_failed_reason = "stream_timeout"
                 except Exception as e:
-                    stream_failed_reason = f"stream_failed:{_safe_str(e)}"
+                    stream_failed_reason = f"stream_failed:{safe_str(e)}"
                 finally:
                     await guard_send(EmotionMessageResponse(type="message_end").model_dump())
 
@@ -916,7 +922,7 @@ async def ws_emotion(websocket: WebSocket):
                             )
                         except Exception as e:
                             recommend_fuse_tripped = True
-                            logger.warning("task recommend failed | %s", _safe_str(e))
+                            logger.warning("task recommend failed | %s", safe_str(e))
                             await guard_send({"type": "error", "message": "recommend_unavailable"})
                         else:
                             if items:
@@ -992,8 +998,8 @@ async def ws_emotion(websocket: WebSocket):
                     )
                 except Exception as e:
                     recommend_fuse_tripped = True
-                    logger.error("task recommend failed | %s", _safe_str(e))
-                    await guard_send({"type": "error", "message": f"recommend failed: {_safe_str(e)}"})
+                    logger.error("task recommend failed | %s", safe_str(e))
+                    await guard_send({"type": "error", "message": f"recommend failed: {safe_str(e)}"})
                     continue
 
                 await guard_send(TaskRecommendResponse(
