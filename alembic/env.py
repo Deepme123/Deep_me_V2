@@ -6,7 +6,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 from sqlmodel import SQLModel
 
-from app.db.session import DATABASE_URL
+from app.db.session import get_database_url
 
 # Ensure project root is on sys.path for imports.
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,7 +18,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+config.set_main_option("sqlalchemy.url", get_database_url())
 
 # Import all models so SQLModel.metadata is populated.
 from app.backend.models import user, task, refresh_token, emotion  # noqa: F401,E402

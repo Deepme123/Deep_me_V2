@@ -7,7 +7,7 @@ from fastapi.responses import Response
 from sqlmodel import text
 
 from app.backend.core.logging_config import setup_logging
-from app.backend.db.session import engine
+from app.backend.db.session import get_engine
 from app.db.session import CORE_REQUIRED_TABLES, ensure_required_tables
 
 # 모델 모듈 임포트(테이블 등록 보장용)
@@ -90,7 +90,7 @@ def health_app():
 @app.get("/health/db")
 def health_db():
     try:
-        with engine.connect() as conn:
+        with get_engine().connect() as conn:
             conn.execute(text("SELECT 1"))
         ensure_required_tables(CORE_REQUIRED_TABLES, schema="public")
         return {"ok": True}
