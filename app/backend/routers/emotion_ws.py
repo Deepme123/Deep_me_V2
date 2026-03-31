@@ -44,6 +44,12 @@ from app.backend.services.ws_protocol import (
     extract_token_fallback as protocol_extract_token_fallback,
     ws_recv_safe as protocol_ws_recv_safe,
 )
+from app.backend.services.ws_post_actions import (
+    enter_close_cooldown as post_action_enter_close_cooldown,
+    finalize_close as post_action_finalize_close,
+    generate_analysis_card_async as post_action_generate_analysis_card_async,
+    recommend_tasks_async as post_action_recommend_tasks_async,
+)
 from app.backend.services.ws_session_service import (
     append_step_marker as session_append_step_marker,
     close_session_record as session_close_session_record,
@@ -336,35 +342,10 @@ def _append_step_marker(db: Session, session_id: UUID, step_type: str) -> None:
     session_append_step_marker(db, session_id, step_type)
 
 async def _recommend_tasks_async(session_id: UUID, max_items: int) -> List[dict]:
-    def _work() -> List[dict]:
-        with session_scope() as db:
-            sess = db.get(EmotionSession, session_id)
-            if not sess or not sess.user_id:
-                return []
-            uid = sess.user_id
-
-        tasks = recommend_tasks_from_session_core(
-            user_id=uid,
-            session_id=session_id,
-            n=max(1, max_items),
-        )
-        return jsonable_encoder(tasks, exclude_none=True) if tasks else []
-
-    return await asyncio.to_thread(_work)
+    return await post_action_recommend_tasks_async(session_id, max_items)
 
 async def _generate_analysis_card_async(session_id: UUID) -> dict:
-    def _work() -> dict:
-        from app.analyze.routers.cards import create_card_auto_from_session
-
-        with session_scope() as db:
-            card = create_card_auto_from_session(
-                session_id=session_id,
-                body=None,
-                db=db,
-            )
-        return jsonable_encoder(card, exclude_none=True)
-
-    return await asyncio.to_thread(_work)
+    return await post_action_generate_analysis_card_async(session_id)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Leak guard
@@ -468,64 +449,39 @@ async def ws_emotion(websocket: WebSocket):
     async def flush_outbound_messages() -> None:
         await outbound.flush()
 
+    async def _close_session_record_async(session_id_arg: UUID, payload: EmotionCloseRequest) -> None:
+        await _with_db(_close_session_record, session_id_arg, payload)
+
+    async def _append_step_marker_async(session_id_arg: UUID, step_type: str) -> None:
+        await _with_db(_append_step_marker, session_id_arg, step_type)
+
     async def finalize_close(
         payload: EmotionCloseRequest,
         *,
         trigger_analysis_card: bool = False,
     ) -> bool:
-        try:
-            await _with_db(_close_session_record, session_id, payload)
-        except Exception as e:
-            logger.warning("WS close update failed | %s", safe_str(e))
-            await guard_send({"type": "error", "message": "close_failed"})
-            return False
-
-        await flush_outbound_messages()
-        await _ws_send_safe(websocket, EmotionCloseResponse(type="close_ok").model_dump())
-
-        if trigger_analysis_card and session_id is not None:
-            try:
-                card = await asyncio.wait_for(
-                    _generate_analysis_card_async(session_id),
-                    timeout=CFG.ANALYSIS_CARD_TIMEOUT,
-                )
-            except Exception as e:
-                logger.exception(
-                    "analysis card generation failed after close | session_id=%s | %s",
-                    session_id,
-                    safe_str(e),
-                )
-                await _ws_send_safe(
-                    websocket,
-                    {
-                        "type": "analysis_card_failed",
-                        "session_id": session_id,
-                        "message": "analysis_card_generation_failed",
-                    },
-                )
-            else:
-                await _ws_send_safe(
-                    websocket,
-                    {
-                        "type": "analysis_card_ready",
-                        "session_id": session_id,
-                        "card": card,
-                    },
-                )
-        return True
+        return await post_action_finalize_close(
+            session_id=session_id,
+            payload=payload,
+            trigger_analysis_card=trigger_analysis_card,
+            close_session_record=_close_session_record_async,
+            flush_outbound_messages=flush_outbound_messages,
+            send_immediate=lambda data: _ws_send_safe(websocket, data),
+            generate_analysis_card=_generate_analysis_card_async,
+            analysis_card_timeout=CFG.ANALYSIS_CARD_TIMEOUT,
+            logger=logger,
+        )
 
     async def enter_close_cooldown(*, send_ack: bool) -> bool:
-        try:
-            await _with_db(_append_step_marker, session_id, CANCEL_CLOSE_STEP_TYPE)
-        except Exception as e:
-            logger.warning("WS cancel_close marker failed | %s", safe_str(e))
-            if send_ack:
-                await guard_send({"type": "error", "message": "cancel_close_failed"})
-            return False
-
-        if send_ack:
-            await guard_send(build_cancel_close_ok_message())
-        return True
+        return await post_action_enter_close_cooldown(
+            session_id=session_id,
+            cancel_close_step_type=CANCEL_CLOSE_STEP_TYPE,
+            append_step_marker=_append_step_marker_async,
+            send_ack=send_ack,
+            guard_send=guard_send,
+            build_cancel_close_ok_message=build_cancel_close_ok_message,
+            logger=logger,
+        )
 
     send_task = asyncio.create_task(outbound.sender())
 
