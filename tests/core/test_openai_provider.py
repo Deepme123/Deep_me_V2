@@ -46,9 +46,9 @@ class FakeStreamContext:
 
 
 class FakeResponsesAPI:
-    def __init__(self, *, create_result=None, create_error=None, stream_result=None, stream_error=None):
+    def __init__(self, *, create_result=None, create_errors=None, stream_result=None, stream_error=None):
         self.create_result = create_result
-        self.create_error = create_error
+        self.create_errors = list(create_errors or [])
         self.stream_result = stream_result
         self.stream_error = stream_error
         self.create_calls = []
@@ -56,8 +56,8 @@ class FakeResponsesAPI:
 
     def create(self, **kwargs):
         self.create_calls.append(kwargs)
-        if self.create_error is not None:
-            raise self.create_error
+        if self.create_errors:
+            raise self.create_errors.pop(0)
         return self.create_result
 
     def stream(self, **kwargs):
@@ -103,7 +103,65 @@ def test_generate_json_parses_responses_output_text():
 
     assert result == {"ok": True}
     assert responses.create_calls[0]["model"] == "gpt-4.1-mini"
-    assert responses.create_calls[0]["response_format"]["json_schema"]["name"] == "sample"
+    assert responses.create_calls[0]["text"]["format"]["json_schema"]["name"] == "sample"
+
+
+def test_generate_json_normalizes_openai_strict_schema_for_optional_fields():
+    schema = LLMJsonSchema(
+        name="sample",
+        schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "summary": {"type": "string"},
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "label": {"type": "string"},
+                            "score": {"type": "integer"},
+                        },
+                        "required": ["label"],
+                    },
+                },
+            },
+            "required": ["summary"],
+        },
+    )
+
+    normalized = schema.to_openai_response_format()["json_schema"]["schema"]
+
+    assert normalized["required"] == ["summary", "tags"]
+    assert normalized["properties"]["summary"]["type"] == "string"
+    assert normalized["properties"]["tags"]["type"] == ["array", "null"]
+    assert normalized["properties"]["tags"]["items"]["required"] == ["label", "score"]
+    assert normalized["properties"]["tags"]["items"]["properties"]["score"]["type"] == [
+        "integer",
+        "null",
+    ]
+
+
+def test_generate_json_falls_back_to_legacy_responses_response_format():
+    responses = FakeResponsesAPI(
+        create_result=SimpleNamespace(output_text='{"ok": true}'),
+        create_errors=[TypeError("got an unexpected keyword argument 'text'")],
+    )
+    client = FakeClient(responses=responses)
+    provider = OpenAIProvider(settings=_build_settings("gpt-4.1-mini"), client=client)
+
+    result = provider.generate_json(
+        messages=[
+            LLMMessage(role="system", content="Return JSON."),
+            LLMMessage(role="user", content="Ping"),
+        ],
+        schema=LLMJsonSchema(name="sample", schema={"type": "object"}),
+    )
+
+    assert result == {"ok": True}
+    assert "text" in responses.create_calls[0]
+    assert responses.create_calls[1]["response_format"]["json_schema"]["name"] == "sample"
 
 
 def test_stream_text_uses_primary_chat_model_for_non_reasoning_model():
