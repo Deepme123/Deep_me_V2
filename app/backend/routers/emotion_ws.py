@@ -44,6 +44,14 @@ from app.backend.services.ws_protocol import (
     extract_token_fallback as protocol_extract_token_fallback,
     ws_recv_safe as protocol_ws_recv_safe,
 )
+from app.backend.services.ws_session_service import (
+    append_step_marker as session_append_step_marker,
+    close_session_record as session_close_session_record,
+    commit_full_turn as session_commit_full_turn,
+    create_emotion_session as session_create_emotion_session,
+    prepare_message_context as session_prepare_message_context,
+    with_db as session_with_db,
+)
 from app.backend.services.stream_bridge import iter_chunks_async
 from app.backend.services.task_recommend import recommend_tasks_from_session_core
 from app.backend.services.ws_utils import (
@@ -162,7 +170,7 @@ def _run_with_session(fn: Callable[[Session], T], *args, **kwargs) -> T:
         return fn(db, *args, **kwargs)
 
 async def _with_db(fn: Callable[[Session], T], *args, **kwargs) -> T:
-    return await asyncio.to_thread(_run_with_session, fn, *args, **kwargs)
+    return await session_with_db(fn, *args, **kwargs)
 
 async def _ws_send_safe(websocket: WebSocket, data: dict, *, timeout: float | None = None) -> None:
     payload = jsonable_encoder(data, exclude_none=True)
@@ -293,52 +301,15 @@ def _transcript_rows_to_conversation(
     return conversation
 
 def _create_emotion_session(db: Session, uid_val: UUID | None) -> EmotionSession:
-    s = EmotionSession(
-        user_id=uid_val,
-        started_at=datetime.utcnow(),
-        emotion_label=None,
-        topic=None,
-        trigger_summary=None,
-        insight_summary=None,
-    )
-    db.add(s)
-    db.commit()
-    db.refresh(s)
-    return s
+    return session_create_emotion_session(db, uid_val)
 
 def _prepare_message_context(db: Session, session_id: UUID, user_text: str) -> dict:
-    transcript_rows: List[EmotionStep] = list(
-        db.exec(
-            select(EmotionStep)
-            .where(EmotionStep.session_id == session_id)
-            .order_by(EmotionStep.created_at.asc())
-        )
+    return session_prepare_message_context(
+        db,
+        session_id,
+        user_text,
+        ws_history_turns=CFG.WS_HISTORY_TURNS,
     )
-    # Keep only the most recent 5–10 turns to reduce LLM context size.
-    max_entries = CFG.WS_HISTORY_TURNS * 2  # user+assistant per turn
-    recent_transcript_rows = (
-        transcript_rows[-max_entries:] if len(transcript_rows) > max_entries else transcript_rows
-    )
-
-    want_activity = is_activity_turn(
-        user_text=user_text,
-        db=db,
-        session_id=session_id,
-        steps=transcript_rows,
-    )
-
-    last_order = transcript_rows[-1].step_order if transcript_rows else 0
-    # user/assistant orders reserved but not committed until after successful LLM turn
-    user_order = last_order + 1
-    assistant_order = user_order + 1
-    convo = transcript_rows_to_conversation(recent_transcript_rows) + [("user", user_text)]
-    return {
-        "transcript_rows": transcript_rows,
-        "want_activity": want_activity,
-        "user_order": user_order,
-        "assistant_order": assistant_order,
-        "conversation": convo,
-    }
 
 def _commit_full_turn(
     db: Session,
@@ -350,74 +321,21 @@ def _commit_full_turn(
     *,
     add_activity_marker: bool,
 ) -> None:
-    step_user = EmotionStep(
-        session_id=session_id,
-        step_order=user_order,
-        step_type="user",
-        user_input=user_text,
-        gpt_response="",
-        created_at=datetime.utcnow(),
-        insight_tag=None,
+    session_commit_full_turn(
+        db,
+        session_id,
+        user_text,
+        assistant_text,
+        user_order,
+        assistant_order,
+        add_activity_marker=add_activity_marker,
     )
-    step_assistant = EmotionStep(
-        session_id=session_id,
-        step_order=assistant_order,
-        step_type="assistant",
-        user_input="",
-        gpt_response=assistant_text,
-        created_at=datetime.utcnow(),
-        insight_tag=None,
-    )
-    db.add(step_user)
-    db.add(step_assistant)
-
-    if add_activity_marker:
-        marker = EmotionStep(
-            session_id=session_id,
-            step_order=assistant_order + 1,
-            step_type=ACTIVITY_STEP_TYPE,
-            user_input="",
-            gpt_response="",
-            created_at=datetime.utcnow(),
-            insight_tag=None,
-        )
-        db.add(marker)
-
-    db.commit()
 
 def _close_session_record(db: Session, session_id: UUID, payload: EmotionCloseRequest) -> None:
-    s = db.get(EmotionSession, session_id)
-    if s:
-        s.ended_at = datetime.utcnow()
-        if payload.emotion_label:
-            s.emotion_label = payload.emotion_label
-        if payload.topic:
-            s.topic = payload.topic
-        if payload.trigger_summary:
-            s.trigger_summary = payload.trigger_summary
-        if payload.insight_summary:
-            s.insight_summary = payload.insight_summary
-        db.add(s)
-        db.commit()
+    session_close_session_record(db, session_id, payload)
 
 def _append_step_marker(db: Session, session_id: UUID, step_type: str) -> None:
-    last_order = db.exec(
-        select(EmotionStep.step_order)
-        .where(EmotionStep.session_id == session_id)
-        .order_by(EmotionStep.step_order.desc())
-        .limit(1)
-    ).first()
-    marker = EmotionStep(
-        session_id=session_id,
-        step_order=int(last_order or 0) + 1,
-        step_type=step_type,
-        user_input="",
-        gpt_response="",
-        created_at=datetime.utcnow(),
-        insight_tag=None,
-    )
-    db.add(marker)
-    db.commit()
+    session_append_step_marker(db, session_id, step_type)
 
 async def _recommend_tasks_async(session_id: UUID, max_items: int) -> List[dict]:
     def _work() -> List[dict]:
