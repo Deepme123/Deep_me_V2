@@ -52,6 +52,10 @@ from app.backend.services.ws_session_service import (
     prepare_message_context as session_prepare_message_context,
     with_db as session_with_db,
 )
+from app.backend.services.ws_streaming import (
+    OutboundWSChannel,
+    ws_send_safe as streaming_ws_send_safe,
+)
 from app.backend.services.stream_bridge import iter_chunks_async
 from app.backend.services.task_recommend import recommend_tasks_from_session_core
 from app.backend.services.ws_utils import (
@@ -173,18 +177,12 @@ async def _with_db(fn: Callable[[Session], T], *args, **kwargs) -> T:
     return await session_with_db(fn, *args, **kwargs)
 
 async def _ws_send_safe(websocket: WebSocket, data: dict, *, timeout: float | None = None) -> None:
-    payload = jsonable_encoder(data, exclude_none=True)
-
-    async def _send():
-        await websocket.send_json(payload)
-
-    try:
-        if timeout:
-            await asyncio.wait_for(_send(), timeout=timeout)
-        else:
-            await _send()
-    except Exception as e:
-        logger.warning("WS send failed | %s | keys=%s", safe_str(e), list(data.keys()))
+    await streaming_ws_send_safe(
+        websocket,
+        data,
+        timeout=timeout,
+        logger=logger,
+    )
 
 async def _ws_recv_safe(
     websocket: WebSocket,
@@ -443,9 +441,6 @@ async def ws_emotion(websocket: WebSocket):
     session_id: UUID | None = None
     leak_guard = SharedLeakGuard()
     sys_fp: set[int] = set()
-    send_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=CFG.WS_SEND_BUFFER)
-    loop = asyncio.get_running_loop()
-    last_active = loop.time()
     shutdown = asyncio.Event()
     recommend_fuse_tripped = False
 
@@ -456,49 +451,22 @@ async def ws_emotion(websocket: WebSocket):
         with suppress(Exception):
             await websocket.close(code=code, reason=reason)
 
-    async def sender():
-        nonlocal last_active
-        try:
-            while not shutdown.is_set():
-                try:
-                    item = await asyncio.wait_for(send_queue.get(), timeout=CFG.WS_HEARTBEAT_SEC)
-                except asyncio.TimeoutError:
-                    await _ws_send_safe(websocket, {"type": MSG_PING})
-                    continue
-                try:
-                    await _ws_send_safe(websocket, item)
-                    last_active = loop.time()
-                finally:
-                    send_queue.task_done()
-        except WebSocketDisconnect:
-            pass
-        except Exception as e:
-            logger.warning("WS sender loop error | %s", safe_str(e))
-        finally:
-            shutdown.set()
+    outbound = OutboundWSChannel(
+        websocket=websocket,
+        heartbeat_sec=CFG.WS_HEARTBEAT_SEC,
+        send_buffer=CFG.WS_SEND_BUFFER,
+        shutdown=shutdown,
+        logger=logger,
+        close_ws=close_ws,
+        send_backpressure_error=SendBackpressure,
+        ping_message={"type": MSG_PING},
+    )
 
     async def guard_send(data: dict):
-        if shutdown.is_set():
-            return
-        try:
-            await asyncio.wait_for(send_queue.put(data), timeout=CFG.WS_HEARTBEAT_SEC)
-        except asyncio.TimeoutError:
-            shutdown.set()
-            with suppress(Exception):
-                await _ws_send_safe(
-                    websocket,
-                    {"type": "error", "message": "send_backpressure"},
-                    timeout=1,
-                )
-            with suppress(Exception):
-                await close_ws(code=1013, reason="send_backpressure")
-            raise SendBackpressure("send_queue_backpressure")
+        await outbound.guard_send(data)
 
     async def flush_outbound_messages() -> None:
-        try:
-            await asyncio.wait_for(send_queue.join(), timeout=CFG.WS_HEARTBEAT_SEC)
-        except asyncio.TimeoutError:
-            logger.warning("WS outbound flush timed out before close")
+        await outbound.flush()
 
     async def finalize_close(
         payload: EmotionCloseRequest,
@@ -559,7 +527,7 @@ async def ws_emotion(websocket: WebSocket):
             await guard_send(build_cancel_close_ok_message())
         return True
 
-    send_task = asyncio.create_task(sender())
+    send_task = asyncio.create_task(outbound.sender())
 
     # ── 연결 직후 인증된 사용자 기준으로 세션 자동 오픈
     async def _bootstrap_open_if_possible():
@@ -649,9 +617,6 @@ async def ws_emotion(websocket: WebSocket):
                 logger.warning("WS PARSED | %s", msg.get("type"))
             except Exception:
                 pass
-
-            # 활동 시각 갱신
-            last_active = loop.time()
 
             typ = msg.get("type")
 
