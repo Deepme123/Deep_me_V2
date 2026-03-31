@@ -2,6 +2,7 @@
 import logging
 import os
 from contextlib import contextmanager
+from functools import lru_cache
 from urllib.parse import quote_plus
 
 import sqlalchemy as sa
@@ -74,30 +75,36 @@ def _build_db_url() -> str:
     log.info("DB URL: %s", _mask(url))
     return url
 
+@lru_cache(maxsize=1)
+def get_database_url() -> str:
+    return _build_db_url()
 
-DATABASE_URL = _build_db_url()
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-    pool_recycle=1800,
-    pool_size=5,
-    max_overflow=5,
-)
+
+@lru_cache(maxsize=1)
+def get_engine():
+    return create_engine(
+        get_database_url(),
+        pool_pre_ping=True,
+        pool_recycle=1800,
+        pool_size=5,
+        max_overflow=5,
+    )
 
 
 def get_session():
     """FastAPI Depends(get_session) generator."""
     from sqlmodel import Session
 
-    with Session(engine) as s:
+    with Session(get_engine()) as s:
         yield s
 
 
 def create_all_tables() -> None:
-    SQLModel.metadata.create_all(engine)
+    SQLModel.metadata.create_all(get_engine())
 
 
 def get_existing_tables(*, schema: str | None = None) -> set[str]:
+    engine = get_engine()
     if schema and engine.dialect.name != "postgresql":
         schema = None
     inspector = sa.inspect(engine)
@@ -132,7 +139,7 @@ def session_scope():
     """Context-managed session for non-Depends use (eg. websockets)."""
     from sqlmodel import Session
 
-    s = Session(engine)
+    s = Session(get_engine())
     try:
         yield s
     except Exception:

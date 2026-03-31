@@ -6,7 +6,7 @@ from typing import List
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.analyze import schemas as sc
-from app.analyze.config import settings
+from app.analyze.config import get_settings
 from app.core.llm import LLMJsonSchema, LLMMessage, create_llm_provider
 
 logger = logging.getLogger(__name__)
@@ -73,6 +73,7 @@ class _LLMCardPayload(BaseModel):
 
 
 def _get_card_llm_provider():
+    settings = get_settings()
     return create_llm_provider(
         model_default=settings.llm_model,
         temperature_default=settings.llm_temperature,
