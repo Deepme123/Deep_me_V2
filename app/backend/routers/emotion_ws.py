@@ -2,20 +2,16 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from sqlmodel import select, Session
+from sqlmodel import Session
 from uuid import UUID
-from datetime import datetime
 import asyncio
 import logging
 import os
 from contextlib import suppress
-from typing import List, Callable, TypeVar
+from typing import Callable, TypeVar
 
 from sqlalchemy.exc import IntegrityError
-from fastapi.encoders import jsonable_encoder
-
 from app.backend.db.session import session_scope  # 컨텍스트 매니저 사용統一
-from app.backend.models.emotion import EmotionSession, EmotionStep
 from app.backend.schemas.emotion import (
     ConfirmCloseRequest,
     EmotionOpenRequest,
@@ -23,7 +19,6 @@ from app.backend.schemas.emotion import (
     EmotionMessageRequest,
     EmotionMessageResponse,
     EmotionCloseRequest,
-    EmotionCloseResponse,
     TaskRecommendRequest,
     TaskRecommendResponse,
 )
@@ -63,23 +58,15 @@ from app.backend.services.ws_streaming import (
     ws_send_safe as streaming_ws_send_safe,
 )
 from app.backend.services.stream_bridge import iter_chunks_async
-from app.backend.services.task_recommend import recommend_tasks_from_session_core
 from app.backend.services.ws_utils import (
     LeakGuard as SharedLeakGuard,
-    ensure_uuid,
     mask_preview,
     safe_str,
-    transcript_rows_to_conversation,
 )
 from app.backend.services.web_test_user import resolve_emotion_user_id
-from app.backend.core.jwt import decode_access_token
 from app.backend.core.prompt_loader import get_system_prompt, get_task_prompt
-from app.backend.services.convo_policy import (
-    is_activity_turn,
-    ACTIVITY_STEP_TYPE,
-)
+from app.backend.services.convo_policy import is_activity_turn  # test patch point
 from app.backend.services.close_policy import (
-    CANCEL_CLOSE_MESSAGE_TYPE,
     CANCEL_CLOSE_STEP_TYPE,
     RESERVED_CONFIRM_CLOSE_TOKEN,
     build_cancel_close_ok_message,
@@ -107,77 +94,13 @@ class WSConfig:
 
 CFG = WSConfig()
 
-# 메시지 타입 상수
-MSG_OPEN = "open"
-MSG_MESSAGE = "message"
-MSG_CLOSE = "close"
-MSG_CONFIRM_CLOSE = "confirm_close"
-MSG_CANCEL_CLOSE = CANCEL_CLOSE_MESSAGE_TYPE
-MSG_TASK_RECOMMEND = "task_recommend"
-MSG_PING = "ping"
-MSG_PONG = "pong"
-
 T = TypeVar("T")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 유틸
-
-def _safe_str(x: object) -> str:
-    try:
-        return str(x)
-    except Exception:
-        return repr(x)
-
-def _mask_preview(s: str, k: int = 80) -> str:
-    s = s.replace("\n", " ")
-    return (s[:k] + "…") if len(s) > k else s
 class TurnLimitReached(Exception):
     """Raised when a session has reached the configured turn limit."""
-    pass
-
-class IdleTimeout(Exception):
-    """Raised when websocket idle timeout hit."""
-    pass
-
-class InvalidPayload(Exception):
-    """Raised when websocket payload is malformed or unsupported."""
-    pass
 
 class SendBackpressure(Exception):
     """Raised when websocket send queue is saturated."""
-    pass
-
-def _extract_bearer_token(websocket: WebSocket) -> str | None:
-    auth_header = websocket.headers.get("authorization") or websocket.headers.get("Authorization")
-    if not auth_header:
-        return None
-    if auth_header.lower().startswith("bearer "):
-        return auth_header.split(" ", 1)[1].strip() or None
-    return None
-
-def _extract_token_fallback(websocket: WebSocket) -> str | None:
-    # query param fallback
-    q = websocket.query_params
-    if q:
-        for key in ("access_token", "token", "auth_token"):
-            if q.get(key):
-                return q.get(key)
-    return None
-
-def _decode_user_id_from_token(token: str | None) -> UUID | None:
-    if not token:
-        return None
-    payload = decode_access_token(token)
-    if not payload or not isinstance(payload, dict):
-        return None
-    try:
-        return ensure_uuid(payload.get("sub"))
-    except Exception:
-        return None
-
-def _run_with_session(fn: Callable[[Session], T], *args, **kwargs) -> T:
-    with session_scope() as db:
-        return fn(db, *args, **kwargs)
 
 async def _with_db(fn: Callable[[Session], T], *args, **kwargs) -> T:
     return await session_with_db(fn, *args, **kwargs)
@@ -190,121 +113,7 @@ async def _ws_send_safe(websocket: WebSocket, data: dict, *, timeout: float | No
         logger=logger,
     )
 
-async def _ws_recv_safe(
-    websocket: WebSocket,
-    *,
-    timeout: float | None = None,
-    raise_on_timeout: bool = False,
-    strict_json: bool = True,
-) -> dict | None:
-    """
-    클라이언트 프레임 관용 처리:
-    - JSON: dict
-    - 단어: ping/open/close/confirm_close/cancel_close
-    - 쿼리스트링: type=message&text=...
-    - 그 외 문자열: {"type":"message","text": "..."}
-    timeout 시 {"type":"ping"} 반환
-    """
-    try:
-        event = await asyncio.wait_for(websocket.receive(), timeout=timeout) if timeout else await websocket.receive()
-    except asyncio.TimeoutError:
-        if raise_on_timeout:
-            raise IdleTimeout()
-        return {"type": "ping"}
-    except WebSocketDisconnect:
-        raise
-    except Exception as e:
-        logger.warning("WS recv() failed | %s", safe_str(e))
-        return None
-
-    # 원시 프레임 로깅
-    try:
-        logger.warning(
-            "WS RAW EVENT | keys=%s txt=%r bin=%s",
-            list(event.keys()),
-            (event.get("text") or "")[:80],
-            bool(event.get("bytes")),
-        )
-    except Exception:
-        pass
-
-    if event.get("type") == "websocket.disconnect":
-        raise WebSocketDisconnect(event.get("code"))
-
-    text = event.get("text")
-    data = event.get("bytes")
-
-    if text is not None:
-        t = text.strip()
-
-        # 1) JSON 시도 (+ 레거시 정규화)
-        if t and (t.startswith("{") or t.startswith("[")):
-            try:
-                obj = json.loads(t)
-                if isinstance(obj, dict):
-                    if "type" in obj:
-                        return obj
-                    if "user_input" in obj or "text" in obj:
-                        text_val = obj.get("user_input") or obj.get("text") or ""
-                        norm = {"type": "message", "text": text_val}
-                        for k in ("step_type", "emotion_label", "topic", "trigger_summary", "insight_summary", "max_items", "access_token"):
-                            if k in obj:
-                                norm[k] = obj[k]
-                        return norm
-            except Exception:
-                if strict_json:
-                    raise InvalidPayload("invalid_json")
-                pass
-
-        # 2) 단어 명령
-        tl = t.lower()
-        if tl == "ping":
-            return {"type": "ping"}
-        if tl == "open":
-            return {"type": "open"}
-        if tl == "close":
-            return {"type": "close"}
-        if tl == MSG_CONFIRM_CLOSE:
-            return {"type": MSG_CONFIRM_CLOSE}
-        if tl == MSG_CANCEL_CLOSE:
-            return {"type": MSG_CANCEL_CLOSE}
-
-        # 3) 쿼리스트링
-        if "=" in t and "&" in t:
-            try:
-                q = parse_qs(t, keep_blank_values=True)
-                obj = {k: (v[0] if isinstance(v, list) and v else v) for k, v in q.items()}
-                if "type" in obj:
-                    return obj
-            except Exception:
-                pass
-
-        # 4) 일반 텍스트 → 사용자 메시지
-        return {"type": "message", "text": t}
-
-    if data is not None:
-        raise InvalidPayload("binary_frames_not_allowed")
-
-    return None
-
-def _ensure_uuid(x: str | UUID | None) -> UUID | None:
-    if x is None:
-        return None
-    return UUID(str(x))
-
-def _transcript_rows_to_conversation(
-    transcript_rows: List[EmotionStep],
-) -> List[Tuple[str, str]]:
-    """DB transcript rows -> ('user'|'assistant', text) sequence."""
-    conversation: List[Tuple[str, str]] = []
-    for row in transcript_rows:
-        if row.step_type == "user" and row.user_input:
-            conversation.append(("user", row.user_input))
-        elif row.step_type == "assistant" and row.gpt_response:
-            conversation.append(("assistant", row.gpt_response))
-    return conversation
-
-def _create_emotion_session(db: Session, uid_val: UUID | None) -> EmotionSession:
+def _create_emotion_session(db: Session, uid_val: UUID | None) -> object:
     return session_create_emotion_session(db, uid_val)
 
 def _prepare_message_context(db: Session, session_id: UUID, user_text: str) -> dict:
@@ -341,59 +150,11 @@ def _close_session_record(db: Session, session_id: UUID, payload: EmotionCloseRe
 def _append_step_marker(db: Session, session_id: UUID, step_type: str) -> None:
     session_append_step_marker(db, session_id, step_type)
 
-async def _recommend_tasks_async(session_id: UUID, max_items: int) -> List[dict]:
+async def _recommend_tasks_async(session_id: UUID, max_items: int) -> list[dict]:
     return await post_action_recommend_tasks_async(session_id, max_items)
 
 async def _generate_analysis_card_async(session_id: UUID) -> dict:
     return await post_action_generate_analysis_card_async(session_id)
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Leak guard
-
-class LeakGuard:
-    _DEFAULT_MARKERS = [
-        r"<<SYS>>",
-        r"\bBEGIN SYSTEM PROMPT\b",
-        r"\[\s*SYSTEM\s*\]",
-        r"\bDO NOT DISCLOSE\b",
-        r"\bdeveloper prompt\b",
-    ]
-
-    def __init__(self) -> None:
-        self.markers: List[str] = list(self._DEFAULT_MARKERS)
-        self.ngram: int = int(os.getenv("LEAK_GUARD_NGRAM", "20"))
-        self.min_match: int = int(os.getenv("LEAK_GUARD_MIN_MATCH", "3"))
-        self.mode: str = os.getenv("LEAK_GUARD_MODE", "mask")  # 'mask' | 'drop'
-
-    def fingerprint(self, text: str, n: Optional[int] = None) -> set[int]:
-        n = self.ngram if n is None else n
-        if not text:
-            return set()
-        step = max(3, n // 2)
-        return {hash(text[i:i+n]) for i in range(0, max(0, len(text) - n + 1), step)}
-
-    def _might_leak(self, text: str, sys_fp: set[int], n: Optional[int] = None) -> bool:
-        n = self.ngram if n is None else n
-        if not text or not sys_fp:
-            return False
-        step = max(3, n // 2)
-        fp = {hash(text[i:i+n]) for i in range(0, max(0, len(text) - n + 1), step)}
-        return len(sys_fp & fp) >= self.min_match
-
-    def _redact(self, text: str) -> str:
-        out = text
-        for pat in self.markers:
-            out = re.sub(pat, "[redacted]", out, flags=re.I)
-        return out
-
-    def sanitize_out(self, piece: str, sys_fp: set[int]) -> str:
-        if not isinstance(piece, str) or not piece:
-            return ""
-        if self._might_leak(piece, sys_fp):
-            if self.mode == "drop":
-                return ""
-            return self._redact(piece)
-        return self._redact(piece)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 라우터
@@ -670,7 +431,7 @@ async def ws_emotion(websocket: WebSocket):
                 logger.warning("WS MARK C | after prompt load, before stream")
 
                 # 스트리밍 호출 + 누적 버퍼
-                assistant_chunks: List[str] = []
+                assistant_chunks: list[str] = []
                 token_tail_buffer = ""
                 token_holdback = max(0, len(RESERVED_CONFIRM_CLOSE_TOKEN) - 1)
                 stream_piece_count = 0
