@@ -8,10 +8,8 @@ from datetime import datetime
 import asyncio
 import logging
 import os
-import json
 from contextlib import suppress
 from typing import List, Callable, TypeVar
-from urllib.parse import parse_qs
 
 from sqlalchemy.exc import IntegrityError
 from fastapi.encoders import jsonable_encoder
@@ -30,6 +28,22 @@ from app.backend.schemas.emotion import (
     TaskRecommendResponse,
 )
 from app.backend.services.llm_service import get_backend_llm_info, stream_noa_response
+from app.backend.services.ws_protocol import (
+    MSG_CANCEL_CLOSE,
+    MSG_CLOSE,
+    MSG_CONFIRM_CLOSE,
+    MSG_MESSAGE,
+    MSG_OPEN,
+    MSG_PING,
+    MSG_PONG,
+    MSG_TASK_RECOMMEND,
+    IdleTimeout as ProtocolIdleTimeout,
+    InvalidPayload as ProtocolInvalidPayload,
+    decode_user_id_from_token as protocol_decode_user_id_from_token,
+    extract_bearer_token as protocol_extract_bearer_token,
+    extract_token_fallback as protocol_extract_token_fallback,
+    ws_recv_safe as protocol_ws_recv_safe,
+)
 from app.backend.services.stream_bridge import iter_chunks_async
 from app.backend.services.task_recommend import recommend_tasks_from_session_core
 from app.backend.services.ws_utils import (
@@ -490,8 +504,8 @@ class LeakGuard:
 @router.websocket("/ws/emotion")
 async def ws_emotion(websocket: WebSocket):
     # Pre-accept JWT validation (header/query)
-    raw_token = _extract_bearer_token(websocket) or _extract_token_fallback(websocket)
-    auth_user_id = _decode_user_id_from_token(raw_token)
+    raw_token = protocol_extract_bearer_token(websocket) or protocol_extract_token_fallback(websocket)
+    auth_user_id = protocol_decode_user_id_from_token(raw_token)
     if raw_token and not auth_user_id:
         await websocket.close(code=4401, reason="invalid_token")
         return
@@ -690,13 +704,18 @@ async def ws_emotion(websocket: WebSocket):
         while not shutdown.is_set():
             # 수신을 먼저 기다림
             try:
-                msg = await _ws_recv_safe(websocket, timeout=CFG.WS_IDLE_TIMEOUT, raise_on_timeout=True, strict_json=True)
-            except IdleTimeout:
+                msg = await protocol_ws_recv_safe(
+                    websocket,
+                    timeout=CFG.WS_IDLE_TIMEOUT,
+                    raise_on_timeout=True,
+                    strict_json=True,
+                )
+            except ProtocolIdleTimeout:
                 await guard_send({"type": "error", "message": "idle_timeout"})
                 break
             except WebSocketDisconnect:
                 break
-            except InvalidPayload as e:
+            except ProtocolInvalidPayload as e:
                 await guard_send({"type": "error", "message": str(e)})
                 await close_ws(code=1007, reason=str(e))
                 break
