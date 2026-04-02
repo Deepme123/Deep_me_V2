@@ -83,8 +83,37 @@
             <p class="hint">
               권장 순서: 연결 후 메시지를 2~4번 보내고 마무리 유도 예시로 대화를 끝내 보세요.
               모델이 종료 응답 끝에 예약 토큰을 붙이면 <code>close_ok</code>와
-              <code>analysis_card_ready</code>가 이어집니다. `confirm_close`는 세션 종료와 분석 카드 생성을 함께 요청하고,
-              `close`는 카드 생성 없이 세션만 닫습니다.
+              <code>analysis_card_ready</code>가 이어집니다. <code>그냥 종료</code>는 세션만 닫고,
+              <code>분석 후 종료</code>는 세션 종료 뒤 분석 카드 생성까지 함께 요청합니다.
+            </p>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">메시지 보내기</h2>
+              <p class="panel-sub">Enter로 전송하고, Shift+Enter로 줄바꿈할 수 있습니다.</p>
+            </div>
+          </div>
+          <div class="panel-body stack">
+            <div class="field">
+              <label for="messageInput">보낼 메시지</label>
+              <textarea id="messageInput">요즘 회사 일 때문에 계속 마음이 무겁고 잠도 잘 안 와요.</textarea>
+            </div>
+            <div class="button-row">
+              <button id="sendBtn" class="primary" disabled>메시지 전송</button>
+              <button id="closeOnlyBtn" class="secondary" disabled>그냥 종료</button>
+              <button id="confirmCloseBtn" class="secondary" disabled>분석 후 종료</button>
+              <button id="loadCardsBtn" class="ghost" disabled>저장 카드 조회</button>
+            </div>
+            <div class="button-row">
+              <button class="ghost preset-btn" data-text="요즘 회사 일 때문에 계속 마음이 무겁고 잠도 잘 안 와요.">예시 1</button>
+              <button class="ghost preset-btn" data-text="회의에서 말을 꺼낼 때마다 괜히 내가 부족한 사람처럼 느껴져요.">예시 2</button>
+              <button class="ghost preset-btn" data-text="이제는 조금 정리가 된 것 같고 오늘 대화는 여기까지 해도 될 것 같아요.">마무리 유도</button>
+            </div>
+            <p class="hint">
+              `confirm_close`는 세션 종료와 분석 카드 생성을 함께 요청합니다. `close`는 카드 생성 없이 세션만 닫습니다.
             </p>
           </div>
         </article>

@@ -100,6 +100,7 @@
       connected: false,
       conversationHistory: [],
       copyFeedbackTimer: null,
+      closeIntent: null,
     };
 
     const $ = (id) => document.getElementById(id);
@@ -110,7 +111,8 @@
       disconnectBtn: $("disconnectBtn"),
       resetBtn: $("resetBtn"),
       sendBtn: $("sendBtn"),
-      closeBtn: $("closeBtn"),
+      closeOnlyBtn: $("closeOnlyBtn"),
+      confirmCloseBtn: $("confirmCloseBtn"),
       loadCardsBtn: $("loadCardsBtn"),
       messageInput: $("messageInput"),
       copyConversationBtn: $("copyConversationBtn"),
@@ -267,7 +269,8 @@
       els.connectBtn.disabled = connected;
       els.disconnectBtn.disabled = !connected;
       els.sendBtn.disabled = !connected;
-      els.closeBtn.disabled = !connected;
+      els.closeOnlyBtn.disabled = !connected;
+      els.confirmCloseBtn.disabled = !connected;
       els.loadCardsBtn.disabled = !state.sessionId;
     }
 
@@ -275,6 +278,28 @@
       node.innerHTML = "";
       if (emptyHtml) {
         node.innerHTML = emptyHtml;
+      }
+    }
+
+    function resetAnalysisPanels() {
+      clearNode(els.analysisCard, '<div class="empty">아직 분석 카드가 생성되지 않았습니다.</div>');
+      clearNode(els.savedCards, '<div class="empty">세션이 끝나면 저장 카드 조회 버튼으로 결과를 확인할 수 있습니다.</div>');
+    }
+
+    function sendCloseRequest(payload, intent, pendingMessage) {
+      state.closeIntent = intent;
+      if (pendingMessage) {
+        clearNode(els.analysisCard, `<div class="empty">${pendingMessage}</div>`);
+      }
+      try {
+        sendJson(payload);
+      } catch (error) {
+        state.closeIntent = null;
+        appendEvent({
+          type: "send_failed",
+          message: String(error.message || error),
+          text: JSON.stringify(payload),
+        });
       }
     }
 
@@ -392,6 +417,9 @@
 
     function rememberSession(sessionId) {
       if (!sessionId) return;
+      if (state.sessionId !== sessionId) {
+        resetAnalysisPanels();
+      }
       state.sessionId = sessionId;
       els.sessionIdLabel.textContent = sessionId;
       els.loadCardsBtn.disabled = false;
@@ -466,6 +494,7 @@
       appendEvent(payload);
       if (payload.type === "open_ok") {
         rememberSession(payload.session_id);
+        state.closeIntent = null;
         setConnectionState("연결됨", "connected");
       }
       if (payload.type === "message") {
@@ -473,13 +502,24 @@
       }
       if (payload.type === "close_ok") {
         setConnectionState("세션 종료", "closed");
+        if (state.closeIntent === "close_only") {
+          clearNode(
+            els.analysisCard,
+            '<div class="empty">세션이 종료되었습니다. 이번 종료에서는 분석 카드를 생성하지 않았습니다.</div>',
+          );
+        }
       }
       if (payload.type === "analysis_card_ready") {
+        state.closeIntent = null;
         renderAnalysisCard(payload.card || {});
         void loadCards();
       }
       if (payload.type === "analysis_card_failed") {
-        clearNode(els.analysisCard, `<div class="empty">분석 카드 생성에 실패했습니다.\n${payload.message || ""}</div>`);
+        state.closeIntent = null;
+        clearNode(
+          els.analysisCard,
+          `<div class="empty">세션은 종료되었지만 분석 카드 생성에는 실패했습니다.\n${payload.message || ""}</div>`,
+        );
       }
     }
 
@@ -549,14 +589,14 @@
     function resetScreen() {
       disconnect();
       state.sessionId = null;
+      state.closeIntent = null;
       state.conversationHistory = [];
       els.sessionIdLabel.textContent = "없음";
       els.loadCardsBtn.disabled = true;
       updateCopyButtonLabel("대화 복사");
       clearNode(els.conversationFeed, '<div class="empty">아직 대화가 없습니다. 연결한 뒤 메시지를 보내 보세요.</div>');
       clearNode(els.eventTimeline, '<div class="empty">이벤트가 여기에 쌓입니다.</div>');
-      clearNode(els.analysisCard, '<div class="empty">아직 분석 카드가 생성되지 않았습니다.</div>');
-      clearNode(els.savedCards, '<div class="empty">세션이 끝나면 저장 카드 조회 버튼으로 결과를 확인할 수 있습니다.</div>');
+      resetAnalysisPanels();
     }
 
     function submitMessage() {
@@ -590,7 +630,16 @@
       event.preventDefault();
       submitMessage();
     });
-    els.closeBtn.addEventListener("click", () => sendJson({ type: "close" }));
+    els.closeOnlyBtn.addEventListener("click", () => {
+      sendCloseRequest({ type: "close" }, "close_only");
+    });
+    els.confirmCloseBtn.addEventListener("click", () => {
+      sendCloseRequest(
+        { type: "confirm_close" },
+        "close_and_analyze",
+        "세션을 종료하고 분석 카드를 생성하는 중입니다.",
+      );
+    });
     els.loadCardsBtn.addEventListener("click", loadCards);
     document.querySelectorAll(".preset-btn").forEach((button) => {
       button.addEventListener("click", () => {

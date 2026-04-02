@@ -254,10 +254,20 @@ def test_step_11_message_does_not_auto_close_session(ws_harness):
     assert store.session.ended_at is not None
 
 
-def test_close_still_returns_close_ok_without_soft_trigger(ws_harness):
+def test_close_still_returns_close_ok_without_soft_trigger(ws_harness, monkeypatch):
     store, client = ws_harness
     store.current_steps = [3]
     store.llm_outputs = ["continue"]
+    analysis_card_calls = []
+
+    async def fake_generate_analysis_card_async(session_id):
+        analysis_card_calls.append(session_id)
+        return {
+            "session_id": str(session_id),
+            "summary": "should not be generated",
+        }
+
+    monkeypatch.setattr(emotion_ws, "_generate_analysis_card_async", fake_generate_analysis_card_async)
 
     with _open_ws(client) as ws:
         events = _send_message_and_collect(
@@ -272,6 +282,7 @@ def test_close_still_returns_close_ok_without_soft_trigger(ws_harness):
     assert close_event["type"] == "close_ok"
     assert store.session is not None
     assert store.session.ended_at is not None
+    assert analysis_card_calls == []
 
 
 def test_manual_close_keeps_transcript_turns_committed(ws_harness):
