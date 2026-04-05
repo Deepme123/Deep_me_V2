@@ -60,7 +60,8 @@
             <p class="hint">
               권장 순서: 연결 후 메시지를 2~4번 보내고 마무리 유도 예시로 대화를 끝내 보세요.
               모델이 종료 응답 끝에 예약 토큰을 붙이면 <code>close_ok</code>와
-              <code>analysis_card_ready</code>가 이어집니다. <code>그냥 종료</code>는 세션만 닫고,
+              <code>analysis_card_ready</code>가 이어집니다. 자동 종료는 모델이 STEP 12 마무리 응답 끝에
+              <code>[[CONFIRM_CLOSE]]</code>를 붙일 때만 동작합니다. <code>그냥 종료</code>는 세션만 닫고,
               <code>분석 후 종료</code>는 세션 종료 뒤 분석 카드 생성까지 함께 요청합니다.
             </p>
           </div>
