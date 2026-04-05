@@ -336,8 +336,8 @@ def test_reserved_close_token_is_hidden_from_client_visible_message(ws_harness):
 
 def test_message_without_reserved_close_token_does_not_auto_close_session(ws_harness):
     store, client = ws_harness
-    store.current_steps = [11]
-    store.llm_outputs = ["조금만 더 이야기해보자."]
+    store.current_steps = [12]
+    store.llm_outputs = ["오늘은 여기까지. 얘기해줘서 고마워 즐거웠어. 조심히 들어가."]
 
     with _open_ws(client) as ws:
         events = _send_message_and_collect(
@@ -345,7 +345,7 @@ def test_message_without_reserved_close_token_does_not_auto_close_session(ws_har
             "아직은 더 말하고 싶어.",
             ["message_start", "message_delta", "message_end", "message"],
         )
-        assert events[3]["message"] == "조금만 더 이야기해보자."
+        assert events[3]["message"] == "오늘은 여기까지. 얘기해줘서 고마워 즐거웠어. 조심히 들어가."
         assert store.session is not None
         assert store.session.ended_at is None
         ws.send_json({"type": "close"})
