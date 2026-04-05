@@ -34,6 +34,8 @@ def test_emotion_analysis_demo_page_serves_html():
     assert 'id="closeBtn"' not in response.text
     assert "그냥 종료" in response.text
     assert "분석 후 종료" in response.text
+    assert "자동 종료는 모델이 STEP 12 마무리 응답 끝에" in response.text
+    assert "[[CONFIRM_CLOSE]]" in response.text
 
 
 def test_emotion_analysis_demo_assets_serve_static_files():
