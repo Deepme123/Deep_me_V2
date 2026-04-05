@@ -54,7 +54,12 @@ class LLMCardTests(unittest.TestCase):
         self.assertEqual(card.core_emotions, ["anxiety", "fatigue"])
         messages, schema, _options = provider.calls[0]
         self.assertEqual(messages[0].role, "system")
+        self.assertIn("Write every natural-language string value in Korean.", messages[0].content)
         self.assertIn("work stress", messages[1].content)
+        self.assertIn(
+            "keep schema keys in English, but write every summary, label, sentence, and list item in Korean.",
+            messages[1].content,
+        )
         self.assertEqual(schema.name, "emotion_card")
 
     def test_analyze_dialogue_to_card_falls_back_on_json_generation_failure(self) -> None:
