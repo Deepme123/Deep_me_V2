@@ -101,6 +101,7 @@
       conversationHistory: [],
       copyFeedbackTimer: null,
       closeIntent: null,
+      streamEvent: null,
     };
 
     const $ = (id) => document.getElementById(id);
@@ -281,6 +282,10 @@
       }
     }
 
+    function resetEventAggregation() {
+      state.streamEvent = null;
+    }
+
     function resetAnalysisPanels() {
       clearNode(els.analysisCard, '<div class="empty">아직 분석 카드가 생성되지 않았습니다.</div>');
       clearNode(els.savedCards, '<div class="empty">세션이 끝나면 저장 카드 조회 버튼으로 결과를 확인할 수 있습니다.</div>');
@@ -323,18 +328,21 @@
       els.conversationFeed.appendChild(item);
     }
 
-    function appendEvent(payload) {
+    function ensureEventTimelineReady() {
       if (els.eventTimeline.querySelector(".empty")) {
         clearNode(els.eventTimeline);
       }
-      const eventMeta = getEventMeta(payload);
+    }
+
+    function createEventItem(title, subLabel) {
+      ensureEventTimelineReady();
       const item = document.createElement("article");
       item.className = "event";
       item.innerHTML = `
         <div class="event-head">
           <div>
-            <p class="event-title">${eventMeta.title}</p>
-            <p class="event-sub">${payload.type || "unknown"}</p>
+            <p class="event-title"></p>
+            <p class="event-sub"></p>
           </div>
           <span class="event-time">${nowStamp()}</span>
         </div>
@@ -344,9 +352,103 @@
           <pre></pre>
         </details>
       `;
-      item.querySelector(".event-description").textContent = eventMeta.description;
-      item.querySelector("pre").textContent = JSON.stringify(payload, null, 2);
+      item.querySelector(".event-title").textContent = title;
+      item.querySelector(".event-sub").textContent = subLabel;
       els.eventTimeline.appendChild(item);
+      return item;
+    }
+
+    function updateEventItem(item, { title, subLabel, description, details }) {
+      if (title) {
+        item.querySelector(".event-title").textContent = title;
+      }
+      if (subLabel) {
+        item.querySelector(".event-sub").textContent = subLabel;
+      }
+      item.querySelector(".event-description").textContent = description;
+      item.querySelector("pre").textContent = JSON.stringify(details, null, 2);
+    }
+
+    function ensureStreamEvent() {
+      if (state.streamEvent && els.eventTimeline.contains(state.streamEvent.item)) {
+        return state.streamEvent;
+      }
+      const streamEvent = {
+        item: createEventItem("AI 응답 스트림", "message_stream"),
+        chunks: [],
+        finalMessage: "",
+        sourceTypes: [],
+      };
+      state.streamEvent = streamEvent;
+      return streamEvent;
+    }
+
+    function updateStreamEvent(status) {
+      const streamEvent = ensureStreamEvent();
+      const chunkPreview = streamEvent.chunks.join("");
+      const chunkCount = streamEvent.chunks.length;
+      let description = "AI 응답 스트림을 기다리는 중입니다.";
+      if (status === "streaming") {
+        description = `스트리밍 조각 ${chunkCount}개를 하나의 로그로 합쳐서 보여주고 있습니다.`;
+      } else if (status === "finalizing") {
+        description = `스트리밍 조각 ${chunkCount}개 수신을 마쳤고 최종 응답 이벤트를 기다리는 중입니다.`;
+      } else if (status === "completed") {
+        description = `AI 응답 한 번의 흐름을 로그 1건으로 합쳤습니다. 최종 응답 길이는 ${streamEvent.finalMessage.length}자입니다.`;
+      }
+      updateEventItem(streamEvent.item, {
+        title: status === "completed" ? "AI 응답 완료" : "AI 응답 스트림",
+        subLabel: "message_stream",
+        description,
+        details: {
+          type: "message_stream",
+          status,
+          chunk_count: chunkCount,
+          preview: chunkPreview,
+          final_message: streamEvent.finalMessage || null,
+          source_types: streamEvent.sourceTypes,
+        },
+      });
+    }
+
+    function handleStreamEvent(payload) {
+      if (!["message_start", "message_delta", "message_end", "message"].includes(payload.type)) {
+        return false;
+      }
+
+      const streamEvent = ensureStreamEvent();
+      streamEvent.sourceTypes.push(payload.type);
+
+      if (payload.type === "message_delta" && payload.delta) {
+        streamEvent.chunks.push(payload.delta);
+      }
+      if (payload.type === "message") {
+        streamEvent.finalMessage = payload.message || "";
+      }
+
+      if (payload.type === "message") {
+        updateStreamEvent("completed");
+        resetEventAggregation();
+      } else if (payload.type === "message_end") {
+        updateStreamEvent("finalizing");
+      } else {
+        updateStreamEvent("streaming");
+      }
+      return true;
+    }
+
+    function appendEvent(payload) {
+      if (handleStreamEvent(payload)) {
+        return;
+      }
+      if (state.streamEvent) {
+        resetEventAggregation();
+      }
+      const eventMeta = getEventMeta(payload);
+      const item = createEventItem(eventMeta.title, payload.type || "unknown");
+      updateEventItem(item, {
+        description: eventMeta.description,
+        details: payload,
+      });
     }
 
     function renderAnalysisCard(card) {
@@ -541,6 +643,7 @@
       if (state.ws) {
         state.ws.close();
       }
+      resetEventAggregation();
       const token = els.accessToken.value.trim();
       const url = new URL(els.wsUrl.value.trim() || defaultWsUrl(), window.location.href);
       if (token) {
@@ -572,6 +675,7 @@
       ws.onclose = (event) => {
         setInteractiveState(false);
         state.ws = null;
+        resetEventAggregation();
         if (!state.sessionId) {
           setConnectionState(`연결 종료 (${event.code})`, "closed");
         }
@@ -582,6 +686,7 @@
       if (state.ws) {
         state.ws.close(1000, "manual_disconnect");
       }
+      resetEventAggregation();
       setInteractiveState(false);
       setConnectionState("연결 종료", "closed");
     }
