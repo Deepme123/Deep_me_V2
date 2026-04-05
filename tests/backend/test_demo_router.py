@@ -27,8 +27,11 @@ def test_emotion_analysis_demo_page_serves_html():
     assert '<div class="shell">' in response.text
     assert '/demo/assets/emotion-analysis-demo.css' in response.text
     assert '/demo/assets/emotion-analysis-demo.js' in response.text
+    assert response.text.count('id="messageInput"') == 1
+    assert response.text.count('id="sendBtn"') == 1
     assert 'id="closeOnlyBtn"' in response.text
     assert 'id="confirmCloseBtn"' in response.text
+    assert 'id="closeBtn"' not in response.text
     assert "그냥 종료" in response.text
     assert "분석 후 종료" in response.text
 
