@@ -94,6 +94,13 @@
       },
     };
 
+    const HIDDEN_EVENT_TYPES = new Set([
+      "message_start",
+      "message_delta",
+      "message_end",
+      "message",
+    ]);
+
     const state = {
       ws: null,
       sessionId: null,
@@ -260,6 +267,10 @@
       };
     }
 
+    function shouldDisplayEvent(payload) {
+      return !HIDDEN_EVENT_TYPES.has(payload.type);
+    }
+
     function setConnectionState(label, stateName) {
       els.connectionState.textContent = label;
       els.connectionState.dataset.state = stateName;
@@ -277,34 +288,17 @@
 
     function clearNode(node, emptyHtml) {
       node.innerHTML = "";
+      node.classList.remove("scroll-region");
       if (emptyHtml) {
         node.innerHTML = emptyHtml;
       }
     }
 
-    function resetEventAggregation() {
-      state.streamEvent = null;
-    }
-
-    function resetAnalysisPanels() {
-      clearNode(els.analysisCard, '<div class="empty">아직 분석 카드가 생성되지 않았습니다.</div>');
-      clearNode(els.savedCards, '<div class="empty">세션이 끝나면 저장 카드 조회 버튼으로 결과를 확인할 수 있습니다.</div>');
-    }
-
-    function sendCloseRequest(payload, intent, pendingMessage) {
-      state.closeIntent = intent;
-      if (pendingMessage) {
-        clearNode(els.analysisCard, `<div class="empty">${pendingMessage}</div>`);
-      }
-      try {
-        sendJson(payload);
-      } catch (error) {
-        state.closeIntent = null;
-        appendEvent({
-          type: "send_failed",
-          message: String(error.message || error),
-          text: JSON.stringify(payload),
-        });
+    function syncScrollRegion(node, itemSelector) {
+      const count = node.querySelectorAll(itemSelector).length;
+      node.classList.toggle("scroll-region", count > 5);
+      if (count > 5) {
+        node.scrollTop = node.scrollHeight;
       }
     }
 
@@ -326,9 +320,13 @@
       `;
       item.querySelector(".bubble-text").textContent = text;
       els.conversationFeed.appendChild(item);
+      syncScrollRegion(els.conversationFeed, ".bubble");
     }
 
-    function ensureEventTimelineReady() {
+    function appendEvent(payload) {
+      if (!shouldDisplayEvent(payload)) {
+        return;
+      }
       if (els.eventTimeline.querySelector(".empty")) {
         clearNode(els.eventTimeline);
       }
@@ -355,100 +353,7 @@
       item.querySelector(".event-title").textContent = title;
       item.querySelector(".event-sub").textContent = subLabel;
       els.eventTimeline.appendChild(item);
-      return item;
-    }
-
-    function updateEventItem(item, { title, subLabel, description, details }) {
-      if (title) {
-        item.querySelector(".event-title").textContent = title;
-      }
-      if (subLabel) {
-        item.querySelector(".event-sub").textContent = subLabel;
-      }
-      item.querySelector(".event-description").textContent = description;
-      item.querySelector("pre").textContent = JSON.stringify(details, null, 2);
-    }
-
-    function ensureStreamEvent() {
-      if (state.streamEvent && els.eventTimeline.contains(state.streamEvent.item)) {
-        return state.streamEvent;
-      }
-      const streamEvent = {
-        item: createEventItem("AI 응답 스트림", "message_stream"),
-        chunks: [],
-        finalMessage: "",
-        sourceTypes: [],
-      };
-      state.streamEvent = streamEvent;
-      return streamEvent;
-    }
-
-    function updateStreamEvent(status) {
-      const streamEvent = ensureStreamEvent();
-      const chunkPreview = streamEvent.chunks.join("");
-      const chunkCount = streamEvent.chunks.length;
-      let description = "AI 응답 스트림을 기다리는 중입니다.";
-      if (status === "streaming") {
-        description = `스트리밍 조각 ${chunkCount}개를 하나의 로그로 합쳐서 보여주고 있습니다.`;
-      } else if (status === "finalizing") {
-        description = `스트리밍 조각 ${chunkCount}개 수신을 마쳤고 최종 응답 이벤트를 기다리는 중입니다.`;
-      } else if (status === "completed") {
-        description = `AI 응답 한 번의 흐름을 로그 1건으로 합쳤습니다. 최종 응답 길이는 ${streamEvent.finalMessage.length}자입니다.`;
-      }
-      updateEventItem(streamEvent.item, {
-        title: status === "completed" ? "AI 응답 완료" : "AI 응답 스트림",
-        subLabel: "message_stream",
-        description,
-        details: {
-          type: "message_stream",
-          status,
-          chunk_count: chunkCount,
-          preview: chunkPreview,
-          final_message: streamEvent.finalMessage || null,
-          source_types: streamEvent.sourceTypes,
-        },
-      });
-    }
-
-    function handleStreamEvent(payload) {
-      if (!["message_start", "message_delta", "message_end", "message"].includes(payload.type)) {
-        return false;
-      }
-
-      const streamEvent = ensureStreamEvent();
-      streamEvent.sourceTypes.push(payload.type);
-
-      if (payload.type === "message_delta" && payload.delta) {
-        streamEvent.chunks.push(payload.delta);
-      }
-      if (payload.type === "message") {
-        streamEvent.finalMessage = payload.message || "";
-      }
-
-      if (payload.type === "message") {
-        updateStreamEvent("completed");
-        resetEventAggregation();
-      } else if (payload.type === "message_end") {
-        updateStreamEvent("finalizing");
-      } else {
-        updateStreamEvent("streaming");
-      }
-      return true;
-    }
-
-    function appendEvent(payload) {
-      if (handleStreamEvent(payload)) {
-        return;
-      }
-      if (state.streamEvent) {
-        resetEventAggregation();
-      }
-      const eventMeta = getEventMeta(payload);
-      const item = createEventItem(eventMeta.title, payload.type || "unknown");
-      updateEventItem(item, {
-        description: eventMeta.description,
-        details: payload,
-      });
+      syncScrollRegion(els.eventTimeline, ".event");
     }
 
     function renderAnalysisCard(card) {
@@ -735,16 +640,8 @@
       event.preventDefault();
       submitMessage();
     });
-    els.closeOnlyBtn.addEventListener("click", () => {
-      sendCloseRequest({ type: "close" }, "close_only");
-    });
-    els.confirmCloseBtn.addEventListener("click", () => {
-      sendCloseRequest(
-        { type: "confirm_close" },
-        "close_and_analyze",
-        "세션을 종료하고 분석 카드를 생성하는 중입니다.",
-      );
-    });
+    els.closeOnlyBtn.addEventListener("click", () => sendJson({ type: "close" }));
+    els.confirmCloseBtn.addEventListener("click", () => sendJson({ type: "confirm_close" }));
     els.loadCardsBtn.addEventListener("click", loadCards);
     document.querySelectorAll(".preset-btn").forEach((button) => {
       button.addEventListener("click", () => {
