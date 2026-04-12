@@ -27,6 +27,10 @@ def test_emotion_analysis_demo_page_serves_html():
     assert '<div class="shell">' in response.text
     assert '/demo/assets/emotion-analysis-demo.css' in response.text
     assert '/demo/assets/emotion-analysis-demo.js' in response.text
+    assert '<article class="panel composer-panel">' in response.text
+    assert 'id="closeOnlyBtn"' in response.text
+    assert 'id="confirmCloseBtn"' in response.text
+    assert "메시지 보내기" not in response.text
 
 
 def test_emotion_analysis_demo_assets_serve_static_files():
@@ -40,7 +44,11 @@ def test_emotion_analysis_demo_assets_serve_static_files():
     assert css_response.status_code == 200
     assert "text/css" in css_response.headers["content-type"]
     assert ".hero-card" in css_response.text
+    assert ".composer-panel" in css_response.text
+    assert ".scroll-region" in css_response.text
 
     assert js_response.status_code == 200
     assert "application/javascript" in js_response.headers["content-type"]
     assert "function connect()" in js_response.text
+    assert "const HIDDEN_EVENT_TYPES" in js_response.text
+    assert '"confirm_close"' in js_response.text
