@@ -7,10 +7,10 @@ from fastapi.responses import FileResponse, HTMLResponse
 
 router = APIRouter(tags=["demo"])
 
-RESOURCE_DIR = Path(__file__).resolve().parents[1] / "resources"
-DEMO_PAGE_PATH = RESOURCE_DIR / "emotion_analysis_demo.html"
-DEMO_CSS_PATH = RESOURCE_DIR / "emotion_analysis_demo.css"
-DEMO_JS_PATH = RESOURCE_DIR / "emotion_analysis_demo.js"
+DEMO_UI_DIR = Path(__file__).resolve().parents[1] / "demo_ui"
+DEMO_PAGE_PATH = DEMO_UI_DIR / "pages" / "emotion_analysis_demo.html"
+DEMO_CSS_PATH = DEMO_UI_DIR / "assets" / "emotion_analysis_demo.css"
+DEMO_JS_PATH = DEMO_UI_DIR / "assets" / "emotion_analysis_demo.js"
 
 
 def _ensure_demo_asset(path: Path) -> Path:
