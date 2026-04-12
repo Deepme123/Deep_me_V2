@@ -298,6 +298,15 @@
       }
     }
 
+    function resetEventAggregation() {
+      state.streamEvent = null;
+    }
+
+    function resetAnalysisPanels() {
+      clearNode(els.analysisCard, '<div class="empty">아직 분석 카드가 생성되지 않았습니다.</div>');
+      clearNode(els.savedCards, '<div class="empty">세션이 끝나면 저장 카드 조회 버튼으로 결과를 확인할 수 있습니다.</div>');
+    }
+
     function syncScrollRegion(node, itemSelector) {
       const count = node.querySelectorAll(itemSelector).length;
       node.classList.toggle("scroll-region", count > 5);
