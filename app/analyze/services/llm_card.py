@@ -6,7 +6,7 @@ from typing import List
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.analyze import schemas as sc
-from app.analyze.config import settings
+from app.analyze.config import get_settings
 from app.core.llm import LLMJsonSchema, LLMMessage, create_llm_provider
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,8 @@ _CARD_SCHEMA = LLMJsonSchema(
 
 _SYSTEM_PROMPT = """You are a psychologist who reads a counseling conversation and extracts a structured emotion card.
 Return JSON only.
+Keep the JSON field names exactly as provided in the schema.
+Write every natural-language string value in Korean.
 
 Field definitions:
 - summary: one or two sentences summarizing the overall situation
@@ -73,6 +75,7 @@ class _LLMCardPayload(BaseModel):
 
 
 def _get_card_llm_provider():
+    settings = get_settings()
     return create_llm_provider(
         model_default=settings.llm_model,
         temperature_default=settings.llm_temperature,
@@ -110,6 +113,7 @@ def analyze_dialogue_to_card(
     hint_block = f"Title hint: {title_hint}\n\n" if title_hint else ""
     user_prompt = (
         "Analyze the counseling conversation below and return only JSON that matches the schema.\n\n"
+        "Output rule: keep schema keys in English, but write every summary, label, sentence, and list item in Korean.\n\n"
         f"{hint_block}"
         "[Conversation Start]\n"
         f"{dialogue_text}\n"

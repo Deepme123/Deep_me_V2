@@ -25,21 +25,10 @@ from app.backend.services.convo_policy import (
     is_activity_turn,
 )
 from app.backend.services.llm_service import generate_noa_response
+from app.backend.services.ws_utils import transcript_rows_to_conversation
 from app.backend.services.web_test_user import resolve_emotion_user_id
 
 router = APIRouter(prefix="/emotion", tags=["Emotion"])
-
-
-def _transcript_rows_to_conversation(
-    transcript_rows: list[EmotionStep],
-) -> list[tuple[str, str]]:
-    conversation: list[tuple[str, str]] = []
-    for row in transcript_rows:
-        if row.step_type == "user" and row.user_input:
-            conversation.append(("user", row.user_input))
-        elif row.step_type == "assistant" and row.gpt_response:
-            conversation.append(("assistant", row.gpt_response))
-    return conversation
 
 
 def _emotion_user_id(
@@ -163,7 +152,7 @@ def generate_emotion_step(
     task_prompt = get_task_prompt() if activity_turn else None
 
     # LLM ?‘ë‹µ ?ì„±
-    convo = _transcript_rows_to_conversation(recent_all) + [("user", input_data.user_input)]
+    convo = transcript_rows_to_conversation(recent_all) + [("user", input_data.user_input)]
     response = generate_noa_response(
         system_prompt=system_prompt,
         task_prompt=task_prompt,

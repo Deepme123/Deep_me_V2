@@ -107,6 +107,8 @@
       connected: false,
       conversationHistory: [],
       copyFeedbackTimer: null,
+      closeIntent: null,
+      streamEvent: null,
     };
 
     const $ = (id) => document.getElementById(id);
@@ -328,14 +330,17 @@
       if (els.eventTimeline.querySelector(".empty")) {
         clearNode(els.eventTimeline);
       }
-      const eventMeta = getEventMeta(payload);
+    }
+
+    function createEventItem(title, subLabel) {
+      ensureEventTimelineReady();
       const item = document.createElement("article");
       item.className = "event";
       item.innerHTML = `
         <div class="event-head">
           <div>
-            <p class="event-title">${eventMeta.title}</p>
-            <p class="event-sub">${payload.type || "unknown"}</p>
+            <p class="event-title"></p>
+            <p class="event-sub"></p>
           </div>
           <span class="event-time">${nowStamp()}</span>
         </div>
@@ -345,8 +350,8 @@
           <pre></pre>
         </details>
       `;
-      item.querySelector(".event-description").textContent = eventMeta.description;
-      item.querySelector("pre").textContent = JSON.stringify(payload, null, 2);
+      item.querySelector(".event-title").textContent = title;
+      item.querySelector(".event-sub").textContent = subLabel;
       els.eventTimeline.appendChild(item);
       syncScrollRegion(els.eventTimeline, ".event");
     }
@@ -419,6 +424,9 @@
 
     function rememberSession(sessionId) {
       if (!sessionId) return;
+      if (state.sessionId !== sessionId) {
+        resetAnalysisPanels();
+      }
       state.sessionId = sessionId;
       els.sessionIdLabel.textContent = sessionId;
       els.loadCardsBtn.disabled = false;
@@ -493,6 +501,7 @@
       appendEvent(payload);
       if (payload.type === "open_ok") {
         rememberSession(payload.session_id);
+        state.closeIntent = null;
         setConnectionState("연결됨", "connected");
       }
       if (payload.type === "message") {
@@ -500,13 +509,24 @@
       }
       if (payload.type === "close_ok") {
         setConnectionState("세션 종료", "closed");
+        if (state.closeIntent === "close_only") {
+          clearNode(
+            els.analysisCard,
+            '<div class="empty">세션이 종료되었습니다. 이번 종료에서는 분석 카드를 생성하지 않았습니다.</div>',
+          );
+        }
       }
       if (payload.type === "analysis_card_ready") {
+        state.closeIntent = null;
         renderAnalysisCard(payload.card || {});
         void loadCards();
       }
       if (payload.type === "analysis_card_failed") {
-        clearNode(els.analysisCard, `<div class="empty">분석 카드 생성에 실패했습니다.\n${payload.message || ""}</div>`);
+        state.closeIntent = null;
+        clearNode(
+          els.analysisCard,
+          `<div class="empty">세션은 종료되었지만 분석 카드 생성에는 실패했습니다.\n${payload.message || ""}</div>`,
+        );
       }
     }
 
@@ -528,6 +548,7 @@
       if (state.ws) {
         state.ws.close();
       }
+      resetEventAggregation();
       const token = els.accessToken.value.trim();
       const url = new URL(els.wsUrl.value.trim() || defaultWsUrl(), window.location.href);
       if (token) {
@@ -559,6 +580,7 @@
       ws.onclose = (event) => {
         setInteractiveState(false);
         state.ws = null;
+        resetEventAggregation();
         if (!state.sessionId) {
           setConnectionState(`연결 종료 (${event.code})`, "closed");
         }
@@ -569,6 +591,7 @@
       if (state.ws) {
         state.ws.close(1000, "manual_disconnect");
       }
+      resetEventAggregation();
       setInteractiveState(false);
       setConnectionState("연결 종료", "closed");
     }
@@ -576,14 +599,14 @@
     function resetScreen() {
       disconnect();
       state.sessionId = null;
+      state.closeIntent = null;
       state.conversationHistory = [];
       els.sessionIdLabel.textContent = "없음";
       els.loadCardsBtn.disabled = true;
       updateCopyButtonLabel("대화 복사");
       clearNode(els.conversationFeed, '<div class="empty">아직 대화가 없습니다. 연결한 뒤 메시지를 보내 보세요.</div>');
       clearNode(els.eventTimeline, '<div class="empty">이벤트가 여기에 쌓입니다.</div>');
-      clearNode(els.analysisCard, '<div class="empty">아직 분석 카드가 생성되지 않았습니다.</div>');
-      clearNode(els.savedCards, '<div class="empty">세션이 끝나면 저장 카드 조회 버튼으로 결과를 확인할 수 있습니다.</div>');
+      resetAnalysisPanels();
     }
 
     function submitMessage() {

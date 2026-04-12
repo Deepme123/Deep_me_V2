@@ -106,17 +106,13 @@ class OpenAIProvider(LLMProvider):
         response_format = schema.to_openai_response_format()
 
         try:
-            params: dict[str, Any] = {
-                "model": resolved.model,
-                "input": self._to_responses_input(messages),
-                "response_format": response_format,
-            }
-            if resolved.max_tokens > 0:
-                params["max_output_tokens"] = resolved.max_tokens
-            if not self._is_reasoning_model(resolved.model):
-                params["temperature"] = resolved.temperature
-
-            response = client.responses.create(**params)
+            response = self._create_responses_json(
+                client=client,
+                model=resolved.model,
+                messages=messages,
+                options=resolved,
+                response_format=response_format,
+            )
             return self._parse_json_response(response)
         except Exception as exc:
             logger.warning(
@@ -144,6 +140,36 @@ class OpenAIProvider(LLMProvider):
         raise RuntimeError(
             f"OpenAI JSON generation failed for model={resolved.model}; last={last_error}"
         )
+
+    def _create_responses_json(
+        self,
+        *,
+        client: Any,
+        model: str,
+        messages: Sequence[LLMMessage],
+        options: _ResolvedOptions,
+        response_format: dict[str, Any],
+    ) -> Any:
+        params: dict[str, Any] = {
+            "model": model,
+            "input": self._to_responses_input(messages),
+            "text": {"format": response_format},
+        }
+        if options.max_tokens > 0:
+            params["max_output_tokens"] = options.max_tokens
+        if not self._is_reasoning_model(model):
+            params["temperature"] = options.temperature
+
+        try:
+            return client.responses.create(**params)
+        except TypeError as exc:
+            if "text" not in str(exc):
+                raise
+
+        legacy_params = dict(params)
+        legacy_params.pop("text", None)
+        legacy_params["response_format"] = response_format
+        return client.responses.create(**legacy_params)
 
     def _resolve_backup_models(self, backup_models: Sequence[str]) -> tuple[str, ...]:
         cleaned = tuple(model.strip() for model in backup_models if model.strip())

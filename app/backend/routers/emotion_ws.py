@@ -2,23 +2,16 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from sqlmodel import select, Session
+from sqlmodel import Session
 from uuid import UUID
-from datetime import datetime
 import asyncio
 import logging
 import os
-import re
-import json
 from contextlib import suppress
-from typing import List, Tuple, Optional, Callable, TypeVar
-from urllib.parse import parse_qs
+from typing import Callable, TypeVar
 
 from sqlalchemy.exc import IntegrityError
-from fastapi.encoders import jsonable_encoder
-
-from app.backend.db.session import session_scope  # 컨텍스트 매니저 사용統一
-from app.backend.models.emotion import EmotionSession, EmotionStep
+from app.backend.db.session import session_scope  # 컨텍스트 매니저 사용
 from app.backend.schemas.emotion import (
     ConfirmCloseRequest,
     EmotionOpenRequest,
@@ -26,22 +19,54 @@ from app.backend.schemas.emotion import (
     EmotionMessageRequest,
     EmotionMessageResponse,
     EmotionCloseRequest,
-    EmotionCloseResponse,
     TaskRecommendRequest,
     TaskRecommendResponse,
 )
 from app.backend.services.llm_service import get_backend_llm_info, stream_noa_response
-from app.backend.services.stream_bridge import iter_chunks_async
-from app.backend.services.task_recommend import recommend_tasks_from_session_core
-from app.backend.services.web_test_user import resolve_emotion_user_id
-from app.backend.core.jwt import decode_access_token
-from app.backend.core.prompt_loader import get_system_prompt, get_task_prompt
-from app.backend.services.convo_policy import (
-    is_activity_turn,
-    ACTIVITY_STEP_TYPE,
+from app.backend.services.ws_protocol import (
+    MSG_CANCEL_CLOSE,
+    MSG_CLOSE,
+    MSG_CONFIRM_CLOSE,
+    MSG_MESSAGE,
+    MSG_OPEN,
+    MSG_PING,
+    MSG_PONG,
+    MSG_TASK_RECOMMEND,
+    IdleTimeout as ProtocolIdleTimeout,
+    InvalidPayload as ProtocolInvalidPayload,
+    decode_user_id_from_token as protocol_decode_user_id_from_token,
+    extract_bearer_token as protocol_extract_bearer_token,
+    extract_token_fallback as protocol_extract_token_fallback,
+    ws_recv_safe as protocol_ws_recv_safe,
 )
+from app.backend.services.ws_post_actions import (
+    enter_close_cooldown as post_action_enter_close_cooldown,
+    finalize_close as post_action_finalize_close,
+    generate_analysis_card_async as post_action_generate_analysis_card_async,
+    recommend_tasks_async as post_action_recommend_tasks_async,
+)
+from app.backend.services.ws_session_service import (
+    append_step_marker as session_append_step_marker,
+    close_session_record as session_close_session_record,
+    commit_full_turn as session_commit_full_turn,
+    create_emotion_session as session_create_emotion_session,
+    prepare_message_context as session_prepare_message_context,
+    with_db as session_with_db,
+)
+from app.backend.services.ws_streaming import (
+    OutboundWSChannel,
+    ws_send_safe as streaming_ws_send_safe,
+)
+from app.backend.services.stream_bridge import iter_chunks_async
+from app.backend.services.ws_utils import (
+    LeakGuard as SharedLeakGuard,
+    mask_preview,
+    safe_str,
+)
+from app.backend.services.web_test_user import resolve_emotion_user_id
+from app.backend.core.prompt_loader import get_system_prompt, get_task_prompt
+from app.backend.services.convo_policy import is_activity_turn  # test patch point
 from app.backend.services.close_policy import (
-    CANCEL_CLOSE_MESSAGE_TYPE,
     CANCEL_CLOSE_STEP_TYPE,
     RESERVED_CONFIRM_CLOSE_TOKEN,
     build_cancel_close_ok_message,
@@ -69,256 +94,35 @@ class WSConfig:
 
 CFG = WSConfig()
 
-# 메시지 타입 상수
-MSG_OPEN = "open"
-MSG_MESSAGE = "message"
-MSG_CLOSE = "close"
-MSG_CONFIRM_CLOSE = "confirm_close"
-MSG_CANCEL_CLOSE = CANCEL_CLOSE_MESSAGE_TYPE
-MSG_TASK_RECOMMEND = "task_recommend"
-MSG_PING = "ping"
-MSG_PONG = "pong"
-
 T = TypeVar("T")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 유틸
-
-def _safe_str(x: object) -> str:
-    try:
-        return str(x)
-    except Exception:
-        return repr(x)
-
-def _mask_preview(s: str, k: int = 80) -> str:
-    s = s.replace("\n", " ")
-    return (s[:k] + "…") if len(s) > k else s
 class TurnLimitReached(Exception):
     """Raised when a session has reached the configured turn limit."""
-    pass
-
-class IdleTimeout(Exception):
-    """Raised when websocket idle timeout hit."""
-    pass
-
-class InvalidPayload(Exception):
-    """Raised when websocket payload is malformed or unsupported."""
-    pass
 
 class SendBackpressure(Exception):
     """Raised when websocket send queue is saturated."""
-    pass
-
-def _extract_bearer_token(websocket: WebSocket) -> str | None:
-    auth_header = websocket.headers.get("authorization") or websocket.headers.get("Authorization")
-    if not auth_header:
-        return None
-    if auth_header.lower().startswith("bearer "):
-        return auth_header.split(" ", 1)[1].strip() or None
-    return None
-
-def _extract_token_fallback(websocket: WebSocket) -> str | None:
-    # query param fallback
-    q = websocket.query_params
-    if q:
-        for key in ("access_token", "token", "auth_token"):
-            if q.get(key):
-                return q.get(key)
-    return None
-
-def _decode_user_id_from_token(token: str | None) -> UUID | None:
-    if not token:
-        return None
-    payload = decode_access_token(token)
-    if not payload or not isinstance(payload, dict):
-        return None
-    try:
-        return _ensure_uuid(payload.get("sub"))
-    except Exception:
-        return None
-
-def _run_with_session(fn: Callable[[Session], T], *args, **kwargs) -> T:
-    with session_scope() as db:
-        return fn(db, *args, **kwargs)
 
 async def _with_db(fn: Callable[[Session], T], *args, **kwargs) -> T:
-    return await asyncio.to_thread(_run_with_session, fn, *args, **kwargs)
+    return await session_with_db(fn, *args, **kwargs)
 
 async def _ws_send_safe(websocket: WebSocket, data: dict, *, timeout: float | None = None) -> None:
-    payload = jsonable_encoder(data, exclude_none=True)
-
-    async def _send():
-        await websocket.send_json(payload)
-
-    try:
-        if timeout:
-            await asyncio.wait_for(_send(), timeout=timeout)
-        else:
-            await _send()
-    except Exception as e:
-        logger.warning("WS send failed | %s | keys=%s", _safe_str(e), list(data.keys()))
-
-async def _ws_recv_safe(
-    websocket: WebSocket,
-    *,
-    timeout: float | None = None,
-    raise_on_timeout: bool = False,
-    strict_json: bool = True,
-) -> dict | None:
-    """
-    클라이언트 프레임 관용 처리:
-    - JSON: dict
-    - 단어: ping/open/close/confirm_close/cancel_close
-    - 쿼리스트링: type=message&text=...
-    - 그 외 문자열: {"type":"message","text": "..."}
-    timeout 시 {"type":"ping"} 반환
-    """
-    try:
-        event = await asyncio.wait_for(websocket.receive(), timeout=timeout) if timeout else await websocket.receive()
-    except asyncio.TimeoutError:
-        if raise_on_timeout:
-            raise IdleTimeout()
-        return {"type": "ping"}
-    except WebSocketDisconnect:
-        raise
-    except Exception as e:
-        logger.warning("WS recv() failed | %s", _safe_str(e))
-        return None
-
-    # 원시 프레임 로깅
-    try:
-        logger.warning(
-            "WS RAW EVENT | keys=%s txt=%r bin=%s",
-            list(event.keys()),
-            (event.get("text") or "")[:80],
-            bool(event.get("bytes")),
-        )
-    except Exception:
-        pass
-
-    if event.get("type") == "websocket.disconnect":
-        raise WebSocketDisconnect(event.get("code"))
-
-    text = event.get("text")
-    data = event.get("bytes")
-
-    if text is not None:
-        t = text.strip()
-
-        # 1) JSON 시도 (+ 레거시 정규화)
-        if t and (t.startswith("{") or t.startswith("[")):
-            try:
-                obj = json.loads(t)
-                if isinstance(obj, dict):
-                    if "type" in obj:
-                        return obj
-                    if "user_input" in obj or "text" in obj:
-                        text_val = obj.get("user_input") or obj.get("text") or ""
-                        norm = {"type": "message", "text": text_val}
-                        for k in ("step_type", "emotion_label", "topic", "trigger_summary", "insight_summary", "max_items", "access_token"):
-                            if k in obj:
-                                norm[k] = obj[k]
-                        return norm
-            except Exception:
-                if strict_json:
-                    raise InvalidPayload("invalid_json")
-                pass
-
-        # 2) 단어 명령
-        tl = t.lower()
-        if tl == "ping":
-            return {"type": "ping"}
-        if tl == "open":
-            return {"type": "open"}
-        if tl == "close":
-            return {"type": "close"}
-        if tl == MSG_CONFIRM_CLOSE:
-            return {"type": MSG_CONFIRM_CLOSE}
-        if tl == MSG_CANCEL_CLOSE:
-            return {"type": MSG_CANCEL_CLOSE}
-
-        # 3) 쿼리스트링
-        if "=" in t and "&" in t:
-            try:
-                q = parse_qs(t, keep_blank_values=True)
-                obj = {k: (v[0] if isinstance(v, list) and v else v) for k, v in q.items()}
-                if "type" in obj:
-                    return obj
-            except Exception:
-                pass
-
-        # 4) 일반 텍스트 → 사용자 메시지
-        return {"type": "message", "text": t}
-
-    if data is not None:
-        raise InvalidPayload("binary_frames_not_allowed")
-
-    return None
-
-def _ensure_uuid(x: str | UUID | None) -> UUID | None:
-    if x is None:
-        return None
-    return UUID(str(x))
-
-def _transcript_rows_to_conversation(
-    transcript_rows: List[EmotionStep],
-) -> List[Tuple[str, str]]:
-    """DB transcript rows -> ('user'|'assistant', text) sequence."""
-    conversation: List[Tuple[str, str]] = []
-    for row in transcript_rows:
-        if row.step_type == "user" and row.user_input:
-            conversation.append(("user", row.user_input))
-        elif row.step_type == "assistant" and row.gpt_response:
-            conversation.append(("assistant", row.gpt_response))
-    return conversation
-
-def _create_emotion_session(db: Session, uid_val: UUID | None) -> EmotionSession:
-    s = EmotionSession(
-        user_id=uid_val,
-        started_at=datetime.utcnow(),
-        emotion_label=None,
-        topic=None,
-        trigger_summary=None,
-        insight_summary=None,
+    await streaming_ws_send_safe(
+        websocket,
+        data,
+        timeout=timeout,
+        logger=logger,
     )
-    db.add(s)
-    db.commit()
-    db.refresh(s)
-    return s
+
+def _create_emotion_session(db: Session, uid_val: UUID | None) -> object:
+    return session_create_emotion_session(db, uid_val)
 
 def _prepare_message_context(db: Session, session_id: UUID, user_text: str) -> dict:
-    transcript_rows: List[EmotionStep] = list(
-        db.exec(
-            select(EmotionStep)
-            .where(EmotionStep.session_id == session_id)
-            .order_by(EmotionStep.created_at.asc())
-        )
+    return session_prepare_message_context(
+        db,
+        session_id,
+        user_text,
+        ws_history_turns=CFG.WS_HISTORY_TURNS,
     )
-    # Keep only the most recent 5–10 turns to reduce LLM context size.
-    max_entries = CFG.WS_HISTORY_TURNS * 2  # user+assistant per turn
-    recent_transcript_rows = (
-        transcript_rows[-max_entries:] if len(transcript_rows) > max_entries else transcript_rows
-    )
-
-    want_activity = is_activity_turn(
-        user_text=user_text,
-        db=db,
-        session_id=session_id,
-        steps=transcript_rows,
-    )
-
-    last_order = transcript_rows[-1].step_order if transcript_rows else 0
-    # user/assistant orders reserved but not committed until after successful LLM turn
-    user_order = last_order + 1
-    assistant_order = user_order + 1
-    convo = _transcript_rows_to_conversation(recent_transcript_rows) + [("user", user_text)]
-    return {
-        "transcript_rows": transcript_rows,
-        "want_activity": want_activity,
-        "user_order": user_order,
-        "assistant_order": assistant_order,
-        "conversation": convo,
-    }
 
 def _commit_full_turn(
     db: Session,
@@ -330,153 +134,27 @@ def _commit_full_turn(
     *,
     add_activity_marker: bool,
 ) -> None:
-    step_user = EmotionStep(
-        session_id=session_id,
-        step_order=user_order,
-        step_type="user",
-        user_input=user_text,
-        gpt_response="",
-        created_at=datetime.utcnow(),
-        insight_tag=None,
+    session_commit_full_turn(
+        db,
+        session_id,
+        user_text,
+        assistant_text,
+        user_order,
+        assistant_order,
+        add_activity_marker=add_activity_marker,
     )
-    step_assistant = EmotionStep(
-        session_id=session_id,
-        step_order=assistant_order,
-        step_type="assistant",
-        user_input="",
-        gpt_response=assistant_text,
-        created_at=datetime.utcnow(),
-        insight_tag=None,
-    )
-    db.add(step_user)
-    db.add(step_assistant)
-
-    if add_activity_marker:
-        marker = EmotionStep(
-            session_id=session_id,
-            step_order=assistant_order + 1,
-            step_type=ACTIVITY_STEP_TYPE,
-            user_input="",
-            gpt_response="",
-            created_at=datetime.utcnow(),
-            insight_tag=None,
-        )
-        db.add(marker)
-
-    db.commit()
 
 def _close_session_record(db: Session, session_id: UUID, payload: EmotionCloseRequest) -> None:
-    s = db.get(EmotionSession, session_id)
-    if s:
-        s.ended_at = datetime.utcnow()
-        if payload.emotion_label:
-            s.emotion_label = payload.emotion_label
-        if payload.topic:
-            s.topic = payload.topic
-        if payload.trigger_summary:
-            s.trigger_summary = payload.trigger_summary
-        if payload.insight_summary:
-            s.insight_summary = payload.insight_summary
-        db.add(s)
-        db.commit()
+    session_close_session_record(db, session_id, payload)
 
 def _append_step_marker(db: Session, session_id: UUID, step_type: str) -> None:
-    last_order = db.exec(
-        select(EmotionStep.step_order)
-        .where(EmotionStep.session_id == session_id)
-        .order_by(EmotionStep.step_order.desc())
-        .limit(1)
-    ).first()
-    marker = EmotionStep(
-        session_id=session_id,
-        step_order=int(last_order or 0) + 1,
-        step_type=step_type,
-        user_input="",
-        gpt_response="",
-        created_at=datetime.utcnow(),
-        insight_tag=None,
-    )
-    db.add(marker)
-    db.commit()
+    session_append_step_marker(db, session_id, step_type)
 
-async def _recommend_tasks_async(session_id: UUID, max_items: int) -> List[dict]:
-    def _work() -> List[dict]:
-        with session_scope() as db:
-            sess = db.get(EmotionSession, session_id)
-            if not sess or not sess.user_id:
-                return []
-            uid = sess.user_id
-
-        tasks = recommend_tasks_from_session_core(
-            user_id=uid,
-            session_id=session_id,
-            n=max(1, max_items),
-        )
-        return jsonable_encoder(tasks, exclude_none=True) if tasks else []
-
-    return await asyncio.to_thread(_work)
+async def _recommend_tasks_async(session_id: UUID, max_items: int) -> list[dict]:
+    return await post_action_recommend_tasks_async(session_id, max_items)
 
 async def _generate_analysis_card_async(session_id: UUID) -> dict:
-    def _work() -> dict:
-        from app.analyze.routers.cards import create_card_auto_from_session
-
-        with session_scope() as db:
-            card = create_card_auto_from_session(
-                session_id=session_id,
-                body=None,
-                db=db,
-            )
-        return jsonable_encoder(card, exclude_none=True)
-
-    return await asyncio.to_thread(_work)
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Leak guard
-
-class LeakGuard:
-    _DEFAULT_MARKERS = [
-        r"<<SYS>>",
-        r"\bBEGIN SYSTEM PROMPT\b",
-        r"\[\s*SYSTEM\s*\]",
-        r"\bDO NOT DISCLOSE\b",
-        r"\bdeveloper prompt\b",
-    ]
-
-    def __init__(self) -> None:
-        self.markers: List[str] = list(self._DEFAULT_MARKERS)
-        self.ngram: int = int(os.getenv("LEAK_GUARD_NGRAM", "20"))
-        self.min_match: int = int(os.getenv("LEAK_GUARD_MIN_MATCH", "3"))
-        self.mode: str = os.getenv("LEAK_GUARD_MODE", "mask")  # 'mask' | 'drop'
-
-    def fingerprint(self, text: str, n: Optional[int] = None) -> set[int]:
-        n = self.ngram if n is None else n
-        if not text:
-            return set()
-        step = max(3, n // 2)
-        return {hash(text[i:i+n]) for i in range(0, max(0, len(text) - n + 1), step)}
-
-    def _might_leak(self, text: str, sys_fp: set[int], n: Optional[int] = None) -> bool:
-        n = self.ngram if n is None else n
-        if not text or not sys_fp:
-            return False
-        step = max(3, n // 2)
-        fp = {hash(text[i:i+n]) for i in range(0, max(0, len(text) - n + 1), step)}
-        return len(sys_fp & fp) >= self.min_match
-
-    def _redact(self, text: str) -> str:
-        out = text
-        for pat in self.markers:
-            out = re.sub(pat, "[redacted]", out, flags=re.I)
-        return out
-
-    def sanitize_out(self, piece: str, sys_fp: set[int]) -> str:
-        if not isinstance(piece, str) or not piece:
-            return ""
-        if self._might_leak(piece, sys_fp):
-            if self.mode == "drop":
-                return ""
-            return self._redact(piece)
-        return self._redact(piece)
+    return await post_action_generate_analysis_card_async(session_id)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 라우터
@@ -484,8 +162,8 @@ class LeakGuard:
 @router.websocket("/ws/emotion")
 async def ws_emotion(websocket: WebSocket):
     # Pre-accept JWT validation (header/query)
-    raw_token = _extract_bearer_token(websocket) or _extract_token_fallback(websocket)
-    auth_user_id = _decode_user_id_from_token(raw_token)
+    raw_token = protocol_extract_bearer_token(websocket) or protocol_extract_token_fallback(websocket)
+    auth_user_id = protocol_decode_user_id_from_token(raw_token)
     if raw_token and not auth_user_id:
         await websocket.close(code=4401, reason="invalid_token")
         return
@@ -503,11 +181,8 @@ async def ws_emotion(websocket: WebSocket):
     await websocket.accept(subprotocol=subproto if subproto else None)
 
     session_id: UUID | None = None
-    leak_guard = LeakGuard()
+    leak_guard = SharedLeakGuard()
     sys_fp: set[int] = set()
-    send_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=CFG.WS_SEND_BUFFER)
-    loop = asyncio.get_running_loop()
-    last_active = loop.time()
     shutdown = asyncio.Event()
     recommend_fuse_tripped = False
 
@@ -518,110 +193,58 @@ async def ws_emotion(websocket: WebSocket):
         with suppress(Exception):
             await websocket.close(code=code, reason=reason)
 
-    async def sender():
-        nonlocal last_active
-        try:
-            while not shutdown.is_set():
-                try:
-                    item = await asyncio.wait_for(send_queue.get(), timeout=CFG.WS_HEARTBEAT_SEC)
-                except asyncio.TimeoutError:
-                    await _ws_send_safe(websocket, {"type": MSG_PING})
-                    continue
-                try:
-                    await _ws_send_safe(websocket, item)
-                    last_active = loop.time()
-                finally:
-                    send_queue.task_done()
-        except WebSocketDisconnect:
-            pass
-        except Exception as e:
-            logger.warning("WS sender loop error | %s", _safe_str(e))
-        finally:
-            shutdown.set()
+    outbound = OutboundWSChannel(
+        websocket=websocket,
+        heartbeat_sec=CFG.WS_HEARTBEAT_SEC,
+        send_buffer=CFG.WS_SEND_BUFFER,
+        shutdown=shutdown,
+        logger=logger,
+        close_ws=close_ws,
+        send_backpressure_error=SendBackpressure,
+        ping_message={"type": MSG_PING},
+    )
 
     async def guard_send(data: dict):
-        if shutdown.is_set():
-            return
-        try:
-            await asyncio.wait_for(send_queue.put(data), timeout=CFG.WS_HEARTBEAT_SEC)
-        except asyncio.TimeoutError:
-            shutdown.set()
-            with suppress(Exception):
-                await _ws_send_safe(
-                    websocket,
-                    {"type": "error", "message": "send_backpressure"},
-                    timeout=1,
-                )
-            with suppress(Exception):
-                await close_ws(code=1013, reason="send_backpressure")
-            raise SendBackpressure("send_queue_backpressure")
+        await outbound.guard_send(data)
 
     async def flush_outbound_messages() -> None:
-        try:
-            await asyncio.wait_for(send_queue.join(), timeout=CFG.WS_HEARTBEAT_SEC)
-        except asyncio.TimeoutError:
-            logger.warning("WS outbound flush timed out before close")
+        await outbound.flush()
+
+    async def _close_session_record_async(session_id_arg: UUID, payload: EmotionCloseRequest) -> None:
+        await _with_db(_close_session_record, session_id_arg, payload)
+
+    async def _append_step_marker_async(session_id_arg: UUID, step_type: str) -> None:
+        await _with_db(_append_step_marker, session_id_arg, step_type)
 
     async def finalize_close(
         payload: EmotionCloseRequest,
         *,
         trigger_analysis_card: bool = False,
     ) -> bool:
-        try:
-            await _with_db(_close_session_record, session_id, payload)
-        except Exception as e:
-            logger.warning("WS close update failed | %s", _safe_str(e))
-            await guard_send({"type": "error", "message": "close_failed"})
-            return False
-
-        await flush_outbound_messages()
-        await _ws_send_safe(websocket, EmotionCloseResponse(type="close_ok").model_dump())
-
-        if trigger_analysis_card and session_id is not None:
-            try:
-                card = await asyncio.wait_for(
-                    _generate_analysis_card_async(session_id),
-                    timeout=CFG.ANALYSIS_CARD_TIMEOUT,
-                )
-            except Exception as e:
-                logger.exception(
-                    "analysis card generation failed after close | session_id=%s | %s",
-                    session_id,
-                    _safe_str(e),
-                )
-                await _ws_send_safe(
-                    websocket,
-                    {
-                        "type": "analysis_card_failed",
-                        "session_id": session_id,
-                        "message": "analysis_card_generation_failed",
-                    },
-                )
-            else:
-                await _ws_send_safe(
-                    websocket,
-                    {
-                        "type": "analysis_card_ready",
-                        "session_id": session_id,
-                        "card": card,
-                    },
-                )
-        return True
+        return await post_action_finalize_close(
+            session_id=session_id,
+            payload=payload,
+            trigger_analysis_card=trigger_analysis_card,
+            close_session_record=_close_session_record_async,
+            flush_outbound_messages=flush_outbound_messages,
+            send_immediate=lambda data: _ws_send_safe(websocket, data),
+            generate_analysis_card=_generate_analysis_card_async,
+            analysis_card_timeout=CFG.ANALYSIS_CARD_TIMEOUT,
+            logger=logger,
+        )
 
     async def enter_close_cooldown(*, send_ack: bool) -> bool:
-        try:
-            await _with_db(_append_step_marker, session_id, CANCEL_CLOSE_STEP_TYPE)
-        except Exception as e:
-            logger.warning("WS cancel_close marker failed | %s", _safe_str(e))
-            if send_ack:
-                await guard_send({"type": "error", "message": "cancel_close_failed"})
-            return False
+        return await post_action_enter_close_cooldown(
+            session_id=session_id,
+            cancel_close_step_type=CANCEL_CLOSE_STEP_TYPE,
+            append_step_marker=_append_step_marker_async,
+            send_ack=send_ack,
+            guard_send=guard_send,
+            build_cancel_close_ok_message=build_cancel_close_ok_message,
+            logger=logger,
+        )
 
-        if send_ack:
-            await guard_send(build_cancel_close_ok_message())
-        return True
-
-    send_task = asyncio.create_task(sender())
+    send_task = asyncio.create_task(outbound.sender())
 
     # ── 연결 직후 인증된 사용자 기준으로 세션 자동 오픈
     async def _bootstrap_open_if_possible():
@@ -647,7 +270,7 @@ async def ws_emotion(websocket: WebSocket):
             try:
                 session = await _with_db(_create_emotion_session, uid)
             except IntegrityError as ie:
-                logger.warning("bootstrap commit FK failed; retrying as anonymous | %s", _safe_str(ie))
+                logger.warning("bootstrap commit FK failed; retrying as anonymous | %s", safe_str(ie))
                 session = await _with_db(_create_emotion_session, None)
 
             session_id = session.session_id  # ← 세션 아이디 보관
@@ -684,18 +307,23 @@ async def ws_emotion(websocket: WebSocket):
         while not shutdown.is_set():
             # 수신을 먼저 기다림
             try:
-                msg = await _ws_recv_safe(websocket, timeout=CFG.WS_IDLE_TIMEOUT, raise_on_timeout=True, strict_json=True)
-            except IdleTimeout:
+                msg = await protocol_ws_recv_safe(
+                    websocket,
+                    timeout=CFG.WS_IDLE_TIMEOUT,
+                    raise_on_timeout=True,
+                    strict_json=True,
+                )
+            except ProtocolIdleTimeout:
                 await guard_send({"type": "error", "message": "idle_timeout"})
                 break
             except WebSocketDisconnect:
                 break
-            except InvalidPayload as e:
+            except ProtocolInvalidPayload as e:
                 await guard_send({"type": "error", "message": str(e)})
                 await close_ws(code=1007, reason=str(e))
                 break
             except Exception as e:
-                logger.warning("WS recv failed | %s", _safe_str(e))
+                logger.warning("WS recv failed | %s", safe_str(e))
                 await guard_send({"type": "error", "message": "recv_failed"})
                 break
             if msg is None or shutdown.is_set():
@@ -706,9 +334,6 @@ async def ws_emotion(websocket: WebSocket):
                 logger.warning("WS PARSED | %s", msg.get("type"))
             except Exception:
                 pass
-
-            # 활동 시각 갱신
-            last_active = loop.time()
 
             typ = msg.get("type")
 
@@ -741,7 +366,7 @@ async def ws_emotion(websocket: WebSocket):
                 try:
                     session = await _with_db(_create_emotion_session, uid)
                 except IntegrityError as ie:
-                    logger.warning("open commit FK failed; retrying anonymous | %s", _safe_str(ie))
+                    logger.warning("open commit FK failed; retrying anonymous | %s", safe_str(ie))
                     session = await _with_db(_create_emotion_session, None)
 
                 session_id = session.session_id
@@ -771,7 +396,7 @@ async def ws_emotion(websocket: WebSocket):
                 if len(user_text.encode("utf-8")) > CFG.WS_MAX_USER_TEXT_LEN:
                     await guard_send({"type": "error", "message": "message_too_large"})
                     continue
-                logger.info("WS recv user | %s", _mask_preview(user_text, 100))
+                logger.info("WS recv user | %s", mask_preview(user_text, 100))
 
                 # MARK A: DB 조회 직전
                 logger.warning("WS MARK A | before DB fetch")
@@ -788,7 +413,7 @@ async def ws_emotion(websocket: WebSocket):
                     continue
                 except Exception as e:
                     logger.exception("WS DB fetch failed")
-                    await guard_send({"type": "error", "message": f"db_failed: {_safe_str(e)}"})
+                    await guard_send({"type": "error", "message": f"db_failed: {safe_str(e)}"})
                     continue
 
                 # MARK B: DB 조회 통과
@@ -800,13 +425,13 @@ async def ws_emotion(websocket: WebSocket):
                     task_prompt = get_task_prompt() if want_activity else None
                 except Exception as e:
                     logger.exception("WS prompt load failed")
-                    await guard_send({"type": "error", "message": f"prompt_failed: {_safe_str(e)}"})
+                    await guard_send({"type": "error", "message": f"prompt_failed: {safe_str(e)}"})
                     continue
 
                 logger.warning("WS MARK C | after prompt load, before stream")
 
                 # 스트리밍 호출 + 누적 버퍼
-                assistant_chunks: List[str] = []
+                assistant_chunks: list[str] = []
                 token_tail_buffer = ""
                 token_holdback = max(0, len(RESERVED_CONFIRM_CLOSE_TOKEN) - 1)
                 stream_piece_count = 0
@@ -839,7 +464,7 @@ async def ws_emotion(websocket: WebSocket):
                         if not safe_piece:
                             continue
                         assistant_chunks.append(safe_piece)
-                        logger.debug("WS delta | %s", _mask_preview(safe_piece))
+                        logger.debug("WS delta | %s", mask_preview(safe_piece))
                         await guard_send(EmotionMessageResponse(type="message_delta", delta=safe_piece).model_dump())
 
                     final_piece, end_by_token = extract_end_session_marker(token_tail_buffer)
@@ -847,7 +472,7 @@ async def ws_emotion(websocket: WebSocket):
                     if not safe_final_piece:
                         return
                     assistant_chunks.append(safe_final_piece)
-                    logger.debug("WS delta | %s", _mask_preview(safe_final_piece))
+                    logger.debug("WS delta | %s", mask_preview(safe_final_piece))
                     await guard_send(
                         EmotionMessageResponse(type="message_delta", delta=safe_final_piece).model_dump()
                     )
@@ -859,7 +484,7 @@ async def ws_emotion(websocket: WebSocket):
                 except asyncio.TimeoutError:
                     stream_failed_reason = "stream_timeout"
                 except Exception as e:
-                    stream_failed_reason = f"stream_failed:{_safe_str(e)}"
+                    stream_failed_reason = f"stream_failed:{safe_str(e)}"
                 finally:
                     await guard_send(EmotionMessageResponse(type="message_end").model_dump())
 
@@ -916,7 +541,7 @@ async def ws_emotion(websocket: WebSocket):
                             )
                         except Exception as e:
                             recommend_fuse_tripped = True
-                            logger.warning("task recommend failed | %s", _safe_str(e))
+                            logger.warning("task recommend failed | %s", safe_str(e))
                             await guard_send({"type": "error", "message": "recommend_unavailable"})
                         else:
                             if items:
@@ -992,8 +617,8 @@ async def ws_emotion(websocket: WebSocket):
                     )
                 except Exception as e:
                     recommend_fuse_tripped = True
-                    logger.error("task recommend failed | %s", _safe_str(e))
-                    await guard_send({"type": "error", "message": f"recommend failed: {_safe_str(e)}"})
+                    logger.error("task recommend failed | %s", safe_str(e))
+                    await guard_send({"type": "error", "message": f"recommend failed: {safe_str(e)}"})
                     continue
 
                 await guard_send(TaskRecommendResponse(

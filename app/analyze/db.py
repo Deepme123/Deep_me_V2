@@ -1,4 +1,4 @@
-from app.db.session import engine, get_session as _get_session
+from app.db.session import get_session as _get_session
 
 
 def get_db():
