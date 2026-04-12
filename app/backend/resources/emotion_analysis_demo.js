@@ -275,8 +275,17 @@
 
     function clearNode(node, emptyHtml) {
       node.innerHTML = "";
+      node.classList.remove("scroll-region");
       if (emptyHtml) {
         node.innerHTML = emptyHtml;
+      }
+    }
+
+    function syncScrollRegion(node, itemSelector) {
+      const count = node.querySelectorAll(itemSelector).length;
+      node.classList.toggle("scroll-region", count > 5);
+      if (count > 5) {
+        node.scrollTop = node.scrollHeight;
       }
     }
 
@@ -298,6 +307,7 @@
       `;
       item.querySelector(".bubble-text").textContent = text;
       els.conversationFeed.appendChild(item);
+      syncScrollRegion(els.conversationFeed, ".bubble");
     }
 
     function appendEvent(payload) {
@@ -324,6 +334,7 @@
       item.querySelector(".event-description").textContent = eventMeta.description;
       item.querySelector("pre").textContent = JSON.stringify(payload, null, 2);
       els.eventTimeline.appendChild(item);
+      syncScrollRegion(els.eventTimeline, ".event");
     }
 
     function renderAnalysisCard(card) {

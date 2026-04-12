@@ -434,6 +434,13 @@
       gap: 12px;
     }
 
+    .scroll-region {
+      max-height: 35rem;
+      overflow-y: auto;
+      padding-right: 6px;
+      scrollbar-gutter: stable;
+    }
+
     .bubble, .event, .saved-card {
       border: 1px solid var(--line);
       border-radius: var(--radius-md);
