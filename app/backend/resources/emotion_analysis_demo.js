@@ -110,7 +110,8 @@
       disconnectBtn: $("disconnectBtn"),
       resetBtn: $("resetBtn"),
       sendBtn: $("sendBtn"),
-      closeBtn: $("closeBtn"),
+      closeOnlyBtn: $("closeOnlyBtn"),
+      confirmCloseBtn: $("confirmCloseBtn"),
       loadCardsBtn: $("loadCardsBtn"),
       messageInput: $("messageInput"),
       copyConversationBtn: $("copyConversationBtn"),
@@ -267,7 +268,8 @@
       els.connectBtn.disabled = connected;
       els.disconnectBtn.disabled = !connected;
       els.sendBtn.disabled = !connected;
-      els.closeBtn.disabled = !connected;
+      els.closeOnlyBtn.disabled = !connected;
+      els.confirmCloseBtn.disabled = !connected;
       els.loadCardsBtn.disabled = !state.sessionId;
     }
 
@@ -590,7 +592,8 @@
       event.preventDefault();
       submitMessage();
     });
-    els.closeBtn.addEventListener("click", () => sendJson({ type: "close" }));
+    els.closeOnlyBtn.addEventListener("click", () => sendJson({ type: "close" }));
+    els.confirmCloseBtn.addEventListener("click", () => sendJson({ type: "confirm_close" }));
     els.loadCardsBtn.addEventListener("click", loadCards);
     document.querySelectorAll(".preset-btn").forEach((button) => {
       button.addEventListener("click", () => {

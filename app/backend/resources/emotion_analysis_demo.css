@@ -204,6 +204,7 @@
       grid-template-columns: minmax(300px, 360px) minmax(0, 1.3fr) minmax(320px, 1fr);
       grid-template-areas:
         "controls conversation analysis"
+        "controls composer analysis"
         "controls events saved";
       gap: 18px;
       align-items: start;
@@ -223,6 +224,10 @@
 
     .analysis-panel {
       grid-area: analysis;
+    }
+
+    .composer-panel {
+      grid-area: composer;
     }
 
     .events-panel {
@@ -274,6 +279,10 @@
       padding: 16px 20px 20px;
     }
 
+    .composer-panel .panel-body {
+      padding: 0;
+    }
+
     .stack {
       display: grid;
       gap: 12px;
@@ -294,6 +303,18 @@
       display: flex;
       flex-wrap: wrap;
       gap: 10px;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }
 
     .primary {
@@ -358,6 +379,54 @@
       color: var(--muted);
       font-size: 0.9rem;
       line-height: 1.6;
+    }
+
+    .composer-shell {
+      display: grid;
+      gap: 0;
+    }
+
+    .composer-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(17, 38, 70, 0.92);
+    }
+
+    :root[data-theme="dark"] .composer-actions {
+      background: rgba(8, 20, 35, 0.98);
+    }
+
+    .composer-actions .secondary,
+    .composer-actions .ghost {
+      color: #edf5ff;
+    }
+
+    .composer-actions .ghost {
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .composer-input {
+      padding: 0;
+      background: var(--panel-strong);
+      border-bottom-left-radius: var(--radius-lg);
+      border-bottom-right-radius: var(--radius-lg);
+    }
+
+    .composer-input textarea {
+      min-height: 148px;
+      padding: 20px 18px;
+      border: 0;
+      border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+      background: transparent;
+      resize: vertical;
+      box-shadow: none;
+    }
+
+    .composer-input textarea::placeholder {
+      color: var(--muted);
     }
 
     .feed, .timeline, .card-shell {
@@ -538,6 +607,7 @@
         grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
         grid-template-areas:
           "controls conversation"
+          "controls composer"
           "analysis events"
           "saved saved";
       }
@@ -553,6 +623,7 @@
         grid-template-areas:
           "controls"
           "conversation"
+          "composer"
           "analysis"
           "events"
           "saved";
@@ -578,6 +649,11 @@
         padding-right: 16px;
       }
 
+      .composer-panel .panel-body {
+        padding-left: 0;
+        padding-right: 0;
+      }
+
       .card-grid {
         grid-template-columns: 1fr;
       }
@@ -590,5 +666,9 @@
       .panel-actions {
         width: 100%;
         justify-content: flex-start;
+      }
+
+      .composer-actions {
+        padding: 12px;
       }
     }
