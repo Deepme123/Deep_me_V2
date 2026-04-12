@@ -92,6 +92,10 @@
         title: "대화 복사 실패",
         describe: (payload) => payload.message || "대화 복사 중 문제가 발생했습니다.",
       },
+      ws_closed: {
+        title: "웹소켓 연결 종료",
+        describe: (payload) => payload.message || "서버가 웹소켓 연결을 종료했습니다.",
+      },
     };
 
     const HIDDEN_EVENT_TYPES = new Set([
@@ -330,17 +334,14 @@
       if (els.eventTimeline.querySelector(".empty")) {
         clearNode(els.eventTimeline);
       }
-    }
-
-    function createEventItem(title, subLabel) {
-      ensureEventTimelineReady();
+      const eventMeta = getEventMeta(payload);
       const item = document.createElement("article");
       item.className = "event";
       item.innerHTML = `
         <div class="event-head">
           <div>
-            <p class="event-title"></p>
-            <p class="event-sub"></p>
+            <p class="event-title">${eventMeta.title}</p>
+            <p class="event-sub">${payload.type || "unknown"}</p>
           </div>
           <span class="event-time">${nowStamp()}</span>
         </div>
@@ -350,8 +351,8 @@
           <pre></pre>
         </details>
       `;
-      item.querySelector(".event-title").textContent = title;
-      item.querySelector(".event-sub").textContent = subLabel;
+      item.querySelector(".event-description").textContent = eventMeta.description;
+      item.querySelector("pre").textContent = JSON.stringify(payload, null, 2);
       els.eventTimeline.appendChild(item);
       syncScrollRegion(els.eventTimeline, ".event");
     }
@@ -581,6 +582,17 @@
         setInteractiveState(false);
         state.ws = null;
         resetEventAggregation();
+        if (event.code !== 1000) {
+          appendEvent({
+            type: "ws_closed",
+            code: event.code,
+            reason: event.reason || null,
+            wasClean: event.wasClean,
+            message: event.code === 4401
+              ? "인증이 필요합니다. 액세스 토큰을 입력하거나 로그인 쿠키가 있는지 확인하세요."
+              : `서버가 연결을 종료했습니다. code=${event.code}`,
+          });
+        }
         if (!state.sessionId) {
           setConnectionState(`연결 종료 (${event.code})`, "closed");
         }

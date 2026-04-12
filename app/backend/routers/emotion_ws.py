@@ -36,6 +36,7 @@ from app.backend.services.ws_protocol import (
     InvalidPayload as ProtocolInvalidPayload,
     decode_user_id_from_token as protocol_decode_user_id_from_token,
     extract_bearer_token as protocol_extract_bearer_token,
+    extract_cookie_token as protocol_extract_cookie_token,
     extract_token_fallback as protocol_extract_token_fallback,
     ws_recv_safe as protocol_ws_recv_safe,
 )
@@ -162,7 +163,11 @@ async def _generate_analysis_card_async(session_id: UUID) -> dict:
 @router.websocket("/ws/emotion")
 async def ws_emotion(websocket: WebSocket):
     # Pre-accept JWT validation (header/query)
-    raw_token = protocol_extract_bearer_token(websocket) or protocol_extract_token_fallback(websocket)
+    raw_token = (
+        protocol_extract_bearer_token(websocket)
+        or protocol_extract_token_fallback(websocket)
+        or protocol_extract_cookie_token(websocket)
+    )
     auth_user_id = protocol_decode_user_id_from_token(raw_token)
     if raw_token and not auth_user_id:
         await websocket.close(code=4401, reason="invalid_token")
