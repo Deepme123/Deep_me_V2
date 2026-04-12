@@ -94,6 +94,13 @@
       },
     };
 
+    const HIDDEN_EVENT_TYPES = new Set([
+      "message_start",
+      "message_delta",
+      "message_end",
+      "message",
+    ]);
+
     const state = {
       ws: null,
       sessionId: null,
@@ -258,6 +265,10 @@
       };
     }
 
+    function shouldDisplayEvent(payload) {
+      return !HIDDEN_EVENT_TYPES.has(payload.type);
+    }
+
     function setConnectionState(label, stateName) {
       els.connectionState.textContent = label;
       els.connectionState.dataset.state = stateName;
@@ -311,6 +322,9 @@
     }
 
     function appendEvent(payload) {
+      if (!shouldDisplayEvent(payload)) {
+        return;
+      }
       if (els.eventTimeline.querySelector(".empty")) {
         clearNode(els.eventTimeline);
       }
