@@ -37,4 +37,5 @@ Thumbs.db
 .vscode/
 
 
-docs/**/*.md
+docs/
+!docs/API.md
