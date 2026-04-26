@@ -35,7 +35,10 @@ class LLMCardTests(unittest.TestCase):
         provider = _FakeProvider(
             payload={
                 "summary": "The user feels overwhelmed by work pressure.",
-                "core_emotions": ["anxiety", "fatigue"],
+                "core_emotions": [
+                    {"primary": "불안", "sub": ["긴장한", "걱정되는"]},
+                    {"primary": "피곤", "sub": ["지친"]},
+                ],
                 "situation": "Heavy workload and pressure.",
                 "emotion": "The user feels tense and exhausted.",
                 "thoughts": "They feel they might fall behind.",
@@ -51,9 +54,17 @@ class LLMCardTests(unittest.TestCase):
             card = llm_card.analyze_dialogue_to_card(_build_turns(), title_hint="work stress")
 
         self.assertEqual(card.summary, "The user feels overwhelmed by work pressure.")
-        self.assertEqual(card.core_emotions, ["anxiety", "fatigue"])
+        self.assertEqual(
+            card.core_emotions,
+            [
+                sc.EmotionEntry(primary="불안", sub=["긴장한", "걱정되는"]),
+                sc.EmotionEntry(primary="피곤", sub=["지친"]),
+            ],
+        )
         messages, schema, _options = provider.calls[0]
         self.assertEqual(messages[0].role, "system")
+        self.assertIn("[감정 분류 체계", messages[0].content)
+        self.assertIn("불안", messages[0].content)
         self.assertIn("work stress", messages[1].content)
         self.assertEqual(schema.name, "emotion_card")
 

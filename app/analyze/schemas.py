@@ -22,9 +22,14 @@ class SessionOut(BaseModel):
 
 # ===== Card (수동 생성/조회용) =====
 
+class EmotionEntry(BaseModel):
+    primary: str
+    sub: List[str]
+
+
 class CardCreate(BaseModel):
     summary: Optional[str] = None
-    core_emotions: Optional[List[str]] = None
+    core_emotions: Optional[List[EmotionEntry]] = None
     situation: Optional[str] = None
     emotion: Optional[str] = None
     thoughts: Optional[str] = None
@@ -41,7 +46,7 @@ class CardOut(BaseModel):
     created_at: datetime
 
     summary: Optional[str] = None
-    core_emotions: Optional[List[str]] = None
+    core_emotions: Optional[List[EmotionEntry]] = None
     situation: Optional[str] = None
     emotion: Optional[str] = None
     thoughts: Optional[str] = None
@@ -57,7 +62,7 @@ class CardOut(BaseModel):
 
 class SummaryOut(BaseModel):
     summary: Optional[str] = None
-    core_emotions: Optional[List[str]] = None
+    core_emotions: Optional[List[EmotionEntry]] = None
     tags: Optional[List[str]] = None
     created_at: datetime
     risk_level: Optional[str] = None
