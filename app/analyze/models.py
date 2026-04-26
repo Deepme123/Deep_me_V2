@@ -1,7 +1,7 @@
 # app/models.py
 from __future__ import annotations
 
-from typing import Optional, List
+from typing import Any, Optional, List
 from uuid import UUID, uuid4
 from datetime import datetime
 
@@ -26,7 +26,7 @@ class EmotionCard(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     summary: Optional[str] = None
-    core_emotions: Optional[List[str]] = Field(
+    core_emotions: Optional[List[Any]] = Field(
         default=None,
         sa_column=Column(JSONB),
     )
