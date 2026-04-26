@@ -183,6 +183,7 @@ def analyze_dialogue_to_card(
     hint_block = f"Title hint: {title_hint}\n\n" if title_hint else ""
     user_prompt = (
         "Analyze the counseling conversation below and return only JSON that matches the schema.\n\n"
+        "Output rule: keep schema keys in English, but write every summary, label, sentence, and list item in Korean.\n\n"
         f"{hint_block}"
         "[Conversation Start]\n"
         f"{dialogue_text}\n"

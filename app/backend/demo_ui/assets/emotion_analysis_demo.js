@@ -92,7 +92,18 @@
         title: "대화 복사 실패",
         describe: (payload) => payload.message || "대화 복사 중 문제가 발생했습니다.",
       },
+      ws_closed: {
+        title: "웹소켓 연결 종료",
+        describe: (payload) => payload.message || "서버가 웹소켓 연결을 종료했습니다.",
+      },
     };
+
+    const HIDDEN_EVENT_TYPES = new Set([
+      "message_start",
+      "message_delta",
+      "message_end",
+      "message",
+    ]);
 
     const state = {
       ws: null,
@@ -101,6 +112,7 @@
       conversationHistory: [],
       copyFeedbackTimer: null,
       closeIntent: null,
+      streamEvent: null,
     };
 
     const $ = (id) => document.getElementById(id);
@@ -259,6 +271,10 @@
       };
     }
 
+    function shouldDisplayEvent(payload) {
+      return !HIDDEN_EVENT_TYPES.has(payload.type);
+    }
+
     function setConnectionState(label, stateName) {
       els.connectionState.textContent = label;
       els.connectionState.dataset.state = stateName;
@@ -276,9 +292,14 @@
 
     function clearNode(node, emptyHtml) {
       node.innerHTML = "";
+      node.classList.remove("scroll-region");
       if (emptyHtml) {
         node.innerHTML = emptyHtml;
       }
+    }
+
+    function resetEventAggregation() {
+      state.streamEvent = null;
     }
 
     function resetAnalysisPanels() {
@@ -286,20 +307,11 @@
       clearNode(els.savedCards, '<div class="empty">세션이 끝나면 저장 카드 조회 버튼으로 결과를 확인할 수 있습니다.</div>');
     }
 
-    function sendCloseRequest(payload, intent, pendingMessage) {
-      state.closeIntent = intent;
-      if (pendingMessage) {
-        clearNode(els.analysisCard, `<div class="empty">${pendingMessage}</div>`);
-      }
-      try {
-        sendJson(payload);
-      } catch (error) {
-        state.closeIntent = null;
-        appendEvent({
-          type: "send_failed",
-          message: String(error.message || error),
-          text: JSON.stringify(payload),
-        });
+    function syncScrollRegion(node, itemSelector) {
+      const count = node.querySelectorAll(itemSelector).length;
+      node.classList.toggle("scroll-region", count > 5);
+      if (count > 5) {
+        node.scrollTop = node.scrollHeight;
       }
     }
 
@@ -321,9 +333,13 @@
       `;
       item.querySelector(".bubble-text").textContent = text;
       els.conversationFeed.appendChild(item);
+      syncScrollRegion(els.conversationFeed, ".bubble");
     }
 
     function appendEvent(payload) {
+      if (!shouldDisplayEvent(payload)) {
+        return;
+      }
       if (els.eventTimeline.querySelector(".empty")) {
         clearNode(els.eventTimeline);
       }
@@ -347,6 +363,7 @@
       item.querySelector(".event-description").textContent = eventMeta.description;
       item.querySelector("pre").textContent = JSON.stringify(payload, null, 2);
       els.eventTimeline.appendChild(item);
+      syncScrollRegion(els.eventTimeline, ".event");
     }
 
     function renderAnalysisCard(card) {
@@ -541,6 +558,7 @@
       if (state.ws) {
         state.ws.close();
       }
+      resetEventAggregation();
       const token = els.accessToken.value.trim();
       const url = new URL(els.wsUrl.value.trim() || defaultWsUrl(), window.location.href);
       if (token) {
@@ -572,6 +590,18 @@
       ws.onclose = (event) => {
         setInteractiveState(false);
         state.ws = null;
+        resetEventAggregation();
+        if (event.code !== 1000) {
+          appendEvent({
+            type: "ws_closed",
+            code: event.code,
+            reason: event.reason || null,
+            wasClean: event.wasClean,
+            message: event.code === 4401
+              ? "인증이 필요합니다. 액세스 토큰을 입력하거나 로그인 쿠키가 있는지 확인하세요."
+              : `서버가 연결을 종료했습니다. code=${event.code}`,
+          });
+        }
         if (!state.sessionId) {
           setConnectionState(`연결 종료 (${event.code})`, "closed");
         }
@@ -582,6 +612,7 @@
       if (state.ws) {
         state.ws.close(1000, "manual_disconnect");
       }
+      resetEventAggregation();
       setInteractiveState(false);
       setConnectionState("연결 종료", "closed");
     }
@@ -630,16 +661,8 @@
       event.preventDefault();
       submitMessage();
     });
-    els.closeOnlyBtn.addEventListener("click", () => {
-      sendCloseRequest({ type: "close" }, "close_only");
-    });
-    els.confirmCloseBtn.addEventListener("click", () => {
-      sendCloseRequest(
-        { type: "confirm_close" },
-        "close_and_analyze",
-        "세션을 종료하고 분석 카드를 생성하는 중입니다.",
-      );
-    });
+    els.closeOnlyBtn.addEventListener("click", () => sendJson({ type: "close" }));
+    els.confirmCloseBtn.addEventListener("click", () => sendJson({ type: "confirm_close" }));
     els.loadCardsBtn.addEventListener("click", loadCards);
     document.querySelectorAll(".preset-btn").forEach((button) => {
       button.addEventListener("click", () => {

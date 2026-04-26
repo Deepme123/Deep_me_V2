@@ -50,6 +50,11 @@ def extract_token_fallback(websocket: WebSocket) -> str | None:
     return None
 
 
+def extract_cookie_token(websocket: WebSocket) -> str | None:
+    cookies = getattr(websocket, "cookies", None) or {}
+    return cookies.get("access_token")
+
+
 def decode_user_id_from_token(token: str | None) -> UUID | None:
     if not token:
         return None
