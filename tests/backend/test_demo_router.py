@@ -27,15 +27,10 @@ def test_emotion_analysis_demo_page_serves_html():
     assert '<div class="shell">' in response.text
     assert '/demo/assets/emotion-analysis-demo.css' in response.text
     assert '/demo/assets/emotion-analysis-demo.js' in response.text
-    assert response.text.count('id="messageInput"') == 1
-    assert response.text.count('id="sendBtn"') == 1
+    assert '<article class="panel composer-panel">' in response.text
     assert 'id="closeOnlyBtn"' in response.text
     assert 'id="confirmCloseBtn"' in response.text
-    assert 'id="closeBtn"' not in response.text
-    assert "그냥 종료" in response.text
-    assert "분석 후 종료" in response.text
-    assert "자동 종료는 모델이 STEP 12 마무리 응답 끝에" in response.text
-    assert "[[CONFIRM_CLOSE]]" in response.text
+    assert "메시지 보내기" not in response.text
 
 
 def test_emotion_analysis_demo_assets_serve_static_files():
@@ -49,11 +44,11 @@ def test_emotion_analysis_demo_assets_serve_static_files():
     assert css_response.status_code == 200
     assert "text/css" in css_response.headers["content-type"]
     assert ".hero-card" in css_response.text
+    assert ".composer-panel" in css_response.text
+    assert ".scroll-region" in css_response.text
 
     assert js_response.status_code == 200
     assert "application/javascript" in js_response.headers["content-type"]
     assert "function connect()" in js_response.text
-    assert 'sendCloseRequest({ type: "close" }, "close_only")' in js_response.text
-    assert '{ type: "confirm_close" }' in js_response.text
-    assert '"close_and_analyze"' in js_response.text
-    assert "세션이 종료되었습니다. 이번 종료에서는 분석 카드를 생성하지 않았습니다." in js_response.text
+    assert "const HIDDEN_EVENT_TYPES" in js_response.text
+    assert '"confirm_close"' in js_response.text

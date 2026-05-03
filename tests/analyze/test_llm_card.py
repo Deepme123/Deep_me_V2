@@ -66,6 +66,10 @@ class LLMCardTests(unittest.TestCase):
         self.assertIn("[감정 분류 체계", messages[0].content)
         self.assertIn("불안", messages[0].content)
         self.assertIn("work stress", messages[1].content)
+        self.assertIn(
+            "keep schema keys in English, but write every summary, label, sentence, and list item in Korean.",
+            messages[1].content,
+        )
         self.assertEqual(schema.name, "emotion_card")
 
     def test_analyze_dialogue_to_card_falls_back_on_json_generation_failure(self) -> None:
