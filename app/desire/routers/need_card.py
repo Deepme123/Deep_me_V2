@@ -1,5 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlmodel import Session
 
+from app.db.session import get_session
 from app.desire.schemas.need_card import (
     NeedCardRequest,
     NeedCardResponse,
@@ -15,23 +17,11 @@ router = APIRouter(
 
 
 @router.post("/analyze", response_model=NeedCardResponse)
-async def analyze_need_cards(payload: NeedCardRequest) -> NeedCardResponse:
-    """
-    대화 한 세션(요약 포함)을 받아서
-    8개 욕구 점수 + 상위 4개를 반환하는 API.
-
-    요청:
-    {
-      "conversation_text": "..."
-    }
-
-    응답:
-    {
-      "needs": [...8개...],
-      "top4":  [...4개...]
-    }
-    """
-    return await analyze_needs(payload.conversation_text)
+async def analyze_need_cards(
+    payload: NeedCardRequest,
+    db: Session = Depends(get_session),
+) -> NeedCardResponse:
+    return await analyze_needs(payload.conversation_text, payload.session_id, db)
 
 
 @router.post("/selection", response_model=NeedSelectionResponse)
