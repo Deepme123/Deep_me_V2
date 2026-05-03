@@ -34,7 +34,7 @@ def _has_meaningful_card_content(payload: sc.CardCreate) -> bool:
 def _store_card(db: Session, session_id: UUID, payload: sc.CardCreate) -> sc.CardOut:
     risk_flag, risk_level = risk_service.risk_from_payload(payload.model_dump())
 
-    card = m.EmotionCard(
+    card = m.AnalysisCard(
         session_id=session_id,
         summary=payload.summary,
         core_emotions=payload.core_emotions,
@@ -165,9 +165,9 @@ def create_card_auto_from_session(
 @router.get("/sessions/{session_id}/cards", response_model=list[sc.CardOut])
 def list_cards(session_id: UUID, db: Session = Depends(get_db)):
     stmt = (
-        select(m.EmotionCard)
-        .where(m.EmotionCard.session_id == session_id)
-        .order_by(m.EmotionCard.created_at.desc())
+        select(m.AnalysisCard)
+        .where(m.AnalysisCard.session_id == session_id)
+        .order_by(m.AnalysisCard.created_at.desc())
     )
     rows = db.exec(stmt).all()
     return [sc.CardOut.model_validate(row, from_attributes=True) for row in rows]
@@ -175,7 +175,7 @@ def list_cards(session_id: UUID, db: Session = Depends(get_db)):
 
 @router.get("/cards/{card_id}", response_model=sc.CardOut)
 def get_card(card_id: UUID, db: Session = Depends(get_db)):
-    card = db.get(m.EmotionCard, card_id)
+    card = db.get(m.AnalysisCard, card_id)
     if not card:
         raise HTTPException(status_code=404, detail="card not found")
     return sc.CardOut.model_validate(card, from_attributes=True)
