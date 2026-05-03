@@ -40,3 +40,4 @@ Thumbs.db
 docs/**/*.md
 !docs/
 !docs/API.md
+.claude/
