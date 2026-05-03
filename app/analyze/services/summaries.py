@@ -14,13 +14,13 @@ def list_summaries(
     session_id: Optional[UUID] = None,
     limit: Optional[int] = None,
     offset: Optional[int] = None,
-) -> list[m.EmotionCard]:
+) -> list[m.AnalysisCard]:
     stmt = (
-        select(m.EmotionCard)
-        .order_by(m.EmotionCard.created_at.desc())
+        select(m.AnalysisCard)
+        .order_by(m.AnalysisCard.created_at.desc())
     )
     if session_id is not None:
-        stmt = stmt.where(m.EmotionCard.session_id == session_id)
+        stmt = stmt.where(m.AnalysisCard.session_id == session_id)
     if offset is not None:
         stmt = stmt.offset(offset)
     if limit is not None:
