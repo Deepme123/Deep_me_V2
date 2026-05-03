@@ -1,4 +1,5 @@
 from typing import List
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -8,6 +9,7 @@ from app.desire.core.needs_definitions import NEEDS_METADATA, NeedCode
 class NeedCardRequest(BaseModel):
     """User conversation payload for need analysis."""
 
+    session_id: UUID = Field(..., description="EmotionSession ID to link results to")
     conversation_text: str = Field(..., description="Full conversation text to analyze")
 
 

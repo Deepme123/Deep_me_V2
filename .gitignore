@@ -35,6 +35,7 @@ htmlcov/
 .DS_Store
 Thumbs.db
 .vscode/
+.claude/
 
 # Frontend
 node_modules/
