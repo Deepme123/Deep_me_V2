@@ -39,6 +39,7 @@ Thumbs.db
 .vscode/
 .claude/
 CLAUDE.md
+.claudeignore
 
 docs/**/*.md
 !docs/
