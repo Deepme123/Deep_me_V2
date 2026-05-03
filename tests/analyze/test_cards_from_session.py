@@ -307,7 +307,7 @@ def test_auto_from_session_ignores_marker_text_when_building_transcript(monkeypa
             situation="team meeting",
             emotion="anxiety",
             thoughts="I would freeze",
-            physical_reactions="tight chest",
+            physical_reactions=["tight chest"],
             behaviors="avoided eye contact",
         )
 

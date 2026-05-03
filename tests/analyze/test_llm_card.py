@@ -42,7 +42,7 @@ class LLMCardTests(unittest.TestCase):
                 "situation": "Heavy workload and pressure.",
                 "emotion": "The user feels tense and exhausted.",
                 "thoughts": "They feel they might fall behind.",
-                "physical_reactions": "Tight chest and shallow breathing.",
+                "physical_reactions": ["Tight chest", "Shallow breathing"],
                 "behaviors": "They avoid resting and keep pushing.",
                 "coping_actions": ["took a short walk"],
                 "tags": ["work", "stress"],
@@ -96,7 +96,7 @@ class LLMCardTests(unittest.TestCase):
                 "situation": "A team meeting at work.",
                 "emotion": "Anxious and afraid.",
                 "thoughts": "They thought they would freeze.",
-                "physical_reactions": "Tight chest.",
+                "physical_reactions": ["Tight chest"],
                 "behaviors": "Avoided eye contact.",
             }
         )
@@ -124,7 +124,7 @@ class LLMCardTests(unittest.TestCase):
         self.assertEqual(card.situation, "A team meeting at work.")
         self.assertEqual(card.emotion, "Anxious and afraid.")
         self.assertEqual(card.thoughts, "They thought they would freeze.")
-        self.assertEqual(card.physical_reactions, "Tight chest.")
+        self.assertEqual(card.physical_reactions, ["Tight chest"])
         self.assertEqual(card.behaviors, "Avoided eye contact.")
         messages, _schema, _options = provider.calls[0]
         user_prompt = messages[1].content
