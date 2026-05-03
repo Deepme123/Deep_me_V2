@@ -33,7 +33,10 @@ class EmotionCard(SQLModel, table=True):
     situation: Optional[str] = None
     emotion: Optional[str] = None
     thoughts: Optional[str] = None
-    physical_reactions: Optional[str] = None
+    physical_reactions: Optional[List[str]] = Field(
+        default=None,
+        sa_column=Column(JSONB),
+    )
     behaviors: Optional[str] = None
     coping_actions: Optional[List[str]] = Field(
         default=None,

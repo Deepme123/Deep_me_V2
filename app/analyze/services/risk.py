@@ -13,8 +13,13 @@ def score(text: str) -> str:
     return "NONE"
 
 def risk_from_payload(payload: dict) -> tuple[bool, str]:
+    def _to_str(v):
+        if isinstance(v, list):
+            return " ".join(str(i) for i in v)
+        return str(v or "")
+
     bag = " ".join(
-        str(payload.get(k) or "") for k in
+        _to_str(payload.get(k)) for k in
         ("summary","emotion","thoughts","physical_reactions","behaviors")
     )
     level = score(bag)
