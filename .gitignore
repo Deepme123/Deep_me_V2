@@ -17,6 +17,8 @@ env/
 
 # Tests/coverage
 .pytest_cache/
+.pytest-tmp/
+pytest-cache-files-*/
 .mypy_cache/
 .ruff_cache/
 .coverage
