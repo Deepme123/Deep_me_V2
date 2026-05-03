@@ -23,6 +23,7 @@ config.set_main_option("sqlalchemy.url", get_database_url())
 # Import all models so SQLModel.metadata is populated.
 from app.backend.models import user, task, refresh_token, emotion  # noqa: F401,E402
 from app.analyze import models as analyze_models  # noqa: F401,E402
+from app.desire import models as desire_models  # noqa: F401,E402
 
 target_metadata = SQLModel.metadata
 
