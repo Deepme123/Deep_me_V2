@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional
+from uuid import UUID
 
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from sqlmodel import Session
 
 from app.core.llm import LLMJsonSchema, LLMMessage
 from app.desire.core.needs_definitions import NEEDS_METADATA, NeedCode
+from app.desire.crud.need_card import save_need_card_result
 from app.desire.schemas.need_card import NeedCardResponse, NeedScore
 from app.desire.services.llm_client import get_llm_provider
 
@@ -172,12 +175,18 @@ def _fallback_need_scores() -> List[NeedScore]:
     return fallback_items
 
 
-async def analyze_needs(conversation_text: str) -> NeedCardResponse:
+async def analyze_needs(
+    conversation_text: str,
+    session_id: UUID,
+    db: Session,
+) -> NeedCardResponse:
     try:
         need_scores = await run_in_threadpool(_call_llm, conversation_text)
     except Exception as exc:
         logger.error("Using fallback need scores because analysis failed: %s", exc)
         need_scores = _fallback_need_scores()
+
+    await run_in_threadpool(save_need_card_result, db, session_id, need_scores)
 
     top4 = need_scores[:4]
     return NeedCardResponse(needs=need_scores, top4=top4)
