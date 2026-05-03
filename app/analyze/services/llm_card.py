@@ -95,7 +95,7 @@ Field definitions:
 - situation: 사용자의 주변 상황 또는 촉발 요인
 - emotion: 자연어로 표현한 감정 상태 (자유 형식)
 - thoughts: 주요 생각 또는 자동적 사고
-- physical_reactions: 신체 반응 또는 감각
+- physical_reactions: 신체 반응 또는 감각을 항목별로 나열 (최소 1개, 최대 4개). 4개를 초과할 경우 가장 두드러진 반응 4개만 추려서 출력.
 - behaviors: 행동 경향 또는 관찰된 행동
 - coping_actions: 시도했거나 가능한 대처 행동
 - tags: 짧은 주제 키워드
