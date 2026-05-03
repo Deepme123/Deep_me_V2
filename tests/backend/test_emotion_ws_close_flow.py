@@ -96,7 +96,7 @@ def ws_harness(monkeypatch):
         )
         return store.session
 
-    def fake_prepare_message_context(_db, session_id, user_text):
+    def fake_prepare_message_context(_db, session_id, user_text, **kwargs):
         assert store.session is not None
         assert store.session.session_id == session_id
 
