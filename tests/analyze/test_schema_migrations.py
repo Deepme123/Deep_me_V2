@@ -79,11 +79,13 @@ def test_head_migration_includes_emotioncard():
             "emotioncard",
             "emotionsession",
             "emotionstep",
+            "need_card_result",
+            "need_card_score",
             "refreshtoken",
             "task",
             "user",
         ]
-        assert _alembic_version(tmp_db) == "0002_add_emotioncard"
+        assert _alembic_version(tmp_db) == "0004_add_needcard_tables"
     finally:
         if tmp_db.exists():
             tmp_db.unlink()
