@@ -84,9 +84,9 @@ __all__ = ["ws_router", "router"]
 
 class WSConfig:
     SESSION_MAX_TURNS: int = int(os.getenv("SESSION_MAX_TURNS", "20"))
-    WS_IDLE_TIMEOUT: float = float(os.getenv("WS_IDLE_TIMEOUT", "120"))
+    WS_IDLE_TIMEOUT: float = float(os.getenv("WS_IDLE_TIMEOUT", "600"))
     WS_SEND_BUFFER: int = int(os.getenv("WS_SEND_BUFFER", "20"))
-    WS_HEARTBEAT_SEC: float = float(os.getenv("WS_HEARTBEAT_SEC", "15"))
+    WS_HEARTBEAT_SEC: float = float(os.getenv("WS_HEARTBEAT_SEC", "30"))
     LLM_STREAM_TIMEOUT: float = float(os.getenv("LLM_STREAM_TIMEOUT", "75"))
     RECOMMEND_TIMEOUT: float = float(os.getenv("RECOMMEND_TIMEOUT", "15"))
     ANALYSIS_CARD_TIMEOUT: float = float(os.getenv("ANALYSIS_CARD_TIMEOUT", "45"))
