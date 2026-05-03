@@ -33,7 +33,7 @@ class CardCreate(BaseModel):
     situation: Optional[str] = None
     emotion: Optional[str] = None
     thoughts: Optional[str] = None
-    physical_reactions: Optional[str] = None
+    physical_reactions: Optional[List[str]] = None
     behaviors: Optional[str] = None
     coping_actions: Optional[List[str]] = None
     tags: Optional[List[str]] = None
@@ -50,7 +50,7 @@ class CardOut(BaseModel):
     situation: Optional[str] = None
     emotion: Optional[str] = None
     thoughts: Optional[str] = None
-    physical_reactions: Optional[str] = None
+    physical_reactions: Optional[List[str]] = None
     behaviors: Optional[str] = None
     coping_actions: Optional[List[str]] = None
     risk_flag: bool

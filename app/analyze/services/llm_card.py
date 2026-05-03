@@ -66,7 +66,12 @@ _CARD_SCHEMA = LLMJsonSchema(
             "situation": {"type": "string"},
             "emotion": {"type": "string"},
             "thoughts": {"type": "string"},
-            "physical_reactions": {"type": "string"},
+            "physical_reactions": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "maxItems": 4,
+            },
             "behaviors": {"type": "string"},
             "coping_actions": {
                 "type": "array",
@@ -137,7 +142,7 @@ class _LLMCardPayload(BaseModel):
     situation: str | None = None
     emotion: str | None = None
     thoughts: str | None = None
-    physical_reactions: str | None = None
+    physical_reactions: list[str] | None = None
     behaviors: str | None = None
     coping_actions: list[str] | None = None
     tags: list[str] | None = None
