@@ -44,7 +44,7 @@ class FakeDB:
         return FakeExecResult(self.steps_by_session.get(self._active_session_id, []))
 
     def add(self, obj):
-        if getattr(obj, "__class__", type(obj)).__name__ == "EmotionCard":
+        if getattr(obj, "__class__", type(obj)).__name__ == "AnalysisCard":
             self.cards.append(obj)
 
     def commit(self):
