@@ -45,7 +45,7 @@ def _build_taxonomy_block() -> str:
 _TAXONOMY_BLOCK: str = _build_taxonomy_block()
 
 _CARD_SCHEMA = LLMJsonSchema(
-    name="emotion_card",
+    name="analysis_card",
     schema={
         "type": "object",
         "additionalProperties": False,

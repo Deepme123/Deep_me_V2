@@ -45,3 +45,4 @@ frontend/**/.vite/
 
 docs/
 !docs/API.md
+CLAUDE.md

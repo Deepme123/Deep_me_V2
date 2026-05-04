@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from app.backend.models.emotion import EmotionSession
 
-class EmotionCard(SQLModel, table=True):
+class AnalysisCard(SQLModel, table=True):
     __tablename__ = "emotioncard"
 
     card_id: UUID = Field(
