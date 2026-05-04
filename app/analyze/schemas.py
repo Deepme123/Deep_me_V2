@@ -25,6 +25,13 @@ class SessionOut(BaseModel):
 class EmotionEntry(BaseModel):
     primary: str
     sub: List[str]
+    quote: Optional[str] = None
+    reasoning: Optional[List[str]] = None
+
+
+class BehaviorPattern(BaseModel):
+    title: str
+    items: List[str]
 
 
 class CardCreate(BaseModel):
@@ -35,6 +42,7 @@ class CardCreate(BaseModel):
     thoughts: Optional[str] = None
     physical_reactions: Optional[List[str]] = None
     behaviors: Optional[str] = None
+    behavior_patterns: Optional[List[BehaviorPattern]] = None
     coping_actions: Optional[List[str]] = None
     tags: Optional[List[str]] = None
     insight: Optional[str] = None
@@ -52,6 +60,7 @@ class CardOut(BaseModel):
     thoughts: Optional[str] = None
     physical_reactions: Optional[List[str]] = None
     behaviors: Optional[str] = None
+    behavior_patterns: Optional[List[BehaviorPattern]] = None
     coping_actions: Optional[List[str]] = None
     risk_flag: bool
     risk_level: Optional[str] = None

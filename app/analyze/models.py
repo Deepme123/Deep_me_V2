@@ -38,6 +38,10 @@ class AnalysisCard(SQLModel, table=True):
         sa_column=Column(JSONB),
     )
     behaviors: Optional[str] = None
+    behavior_patterns: Optional[List[Any]] = Field(
+        default=None,
+        sa_column=Column(JSONB),
+    )
     coping_actions: Optional[List[str]] = Field(
         default=None,
         sa_column=Column(JSONB),
