@@ -25,6 +25,8 @@ class SessionOut(BaseModel):
 class EmotionEntry(BaseModel):
     primary: str
     sub: List[str]
+    quote: Optional[str] = None
+    reasoning: Optional[List[str]] = None
 
 
 class CardCreate(BaseModel):

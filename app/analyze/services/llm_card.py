@@ -59,8 +59,15 @@ _CARD_SCHEMA = LLMJsonSchema(
                     "properties": {
                         "primary": {"type": "string"},
                         "sub": {"type": "array", "items": {"type": "string"}},
+                        "quote": {"type": "string"},
+                        "reasoning": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 1,
+                            "maxItems": 3,
+                        },
                     },
-                    "required": ["primary", "sub"],
+                    "required": ["primary", "sub", "quote", "reasoning"],
                 },
             },
             "situation": {"type": "string"},
@@ -96,6 +103,8 @@ Field definitions:
 - core_emotions: 1~3개의 감정 항목. 각 항목은 반드시:
     * "primary": 위 목록의 상위감정 레이블 중 정확히 하나
     * "sub": 해당 상위감정 하위 목록에서만 고른 1개 이상의 감정 레이블
+    * "quote": 해당 감정이 가장 잘 드러난 사용자 발화를 원문 그대로 인용 (사용자가 실제로 한 말)
+    * "reasoning": 그 감정으로 판단한 이유를 1~3개 항목으로 서술. 각 항목은 한 문장으로 간결하게.
   목록에 없는 레이블은 절대 사용하지 말 것.
 - situation: 사용자의 주변 상황 또는 촉발 요인
 - emotion: 자연어로 표현한 감정 상태 (자유 형식)
@@ -112,6 +121,8 @@ class _EmotionEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
     primary: str
     sub: list[str]
+    quote: str | None = None
+    reasoning: list[str] | None = None
 
 
 def _validate_emotion_entries(
@@ -130,7 +141,12 @@ def _validate_emotion_entries(
             continue
         if len(clean_subs) != len(entry.sub):
             logger.warning("Invalid sub-emotions stripped for %r", entry.primary)
-        valid.append(_EmotionEntry(primary=entry.primary, sub=clean_subs))
+        valid.append(_EmotionEntry(
+            primary=entry.primary,
+            sub=clean_subs,
+            quote=entry.quote,
+            reasoning=entry.reasoning,
+        ))
     return valid or None
 
 
