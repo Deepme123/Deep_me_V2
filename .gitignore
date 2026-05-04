@@ -17,8 +17,6 @@ env/
 
 # Tests/coverage
 .pytest_cache/
-.pytest-tmp/
-pytest-cache-files-*/
 .mypy_cache/
 .ruff_cache/
 .coverage
@@ -38,10 +36,13 @@ htmlcov/
 Thumbs.db
 .vscode/
 .claude/
-CLAUDE.md
-.claudeignore
 
-docs/**/*.md
-!docs/
+# Frontend
+node_modules/
+frontend/**/node_modules/
+frontend/**/dist/
+frontend/**/.vite/
+
+docs/
 !docs/API.md
-.claude/
+CLAUDE.md
