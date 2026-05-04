@@ -85,7 +85,7 @@ def test_head_migration_includes_emotioncard():
             "task",
             "user",
         ]
-        assert _alembic_version(tmp_db) == "0004_add_needcard_tables"
+        assert _alembic_version(tmp_db) == "0005_behavior_patterns"
     finally:
         if tmp_db.exists():
             tmp_db.unlink()
