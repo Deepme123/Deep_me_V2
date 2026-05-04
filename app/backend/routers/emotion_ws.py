@@ -117,12 +117,19 @@ async def _ws_send_safe(websocket: WebSocket, data: dict, *, timeout: float | No
 def _create_emotion_session(db: Session, uid_val: UUID | None) -> object:
     return session_create_emotion_session(db, uid_val)
 
-def _prepare_message_context(db: Session, session_id: UUID, user_text: str) -> dict:
+def _prepare_message_context(
+    db: Session,
+    session_id: UUID,
+    user_text: str,
+    *,
+    already_fired: bool | None = None,
+) -> dict:
     return session_prepare_message_context(
         db,
         session_id,
         user_text,
         ws_history_turns=CFG.WS_HISTORY_TURNS,
+        already_fired=already_fired,
     )
 
 def _commit_full_turn(
@@ -190,6 +197,7 @@ async def ws_emotion(websocket: WebSocket):
     sys_fp: set[int] = set()
     shutdown = asyncio.Event()
     recommend_fuse_tripped = False
+    activity_fired: bool = False
 
     async def close_ws(code: int = 1000, reason: str = "") -> None:
         if shutdown.is_set():
@@ -407,7 +415,12 @@ async def ws_emotion(websocket: WebSocket):
                 logger.warning("WS MARK A | before DB fetch")
 
                 try:
-                    prep = await _with_db(_prepare_message_context, session_id, user_text)
+                    prep = await _with_db(
+                        _prepare_message_context,
+                        session_id,
+                        user_text,
+                        already_fired=activity_fired,
+                    )
                     transcript_rows = prep.get("transcript_rows") or prep.get("steps") or []
                     want_activity = bool(prep.get("want_activity"))
                     user_order = int(prep.get("user_order") or 0)
@@ -441,9 +454,19 @@ async def ws_emotion(websocket: WebSocket):
                 token_holdback = max(0, len(RESERVED_CONFIRM_CLOSE_TOKEN) - 1)
                 stream_piece_count = 0
                 end_by_token = False
+                _BATCH_CHARS = 60  # 이 크기를 넘으면 WebSocket으로 즉시 flush
+
+                async def _flush_batch(buf: str) -> None:
+                    safe = leak_guard.sanitize_out(buf, sys_fp)
+                    if not safe:
+                        return
+                    assistant_chunks.append(safe)
+                    logger.debug("WS delta | %s", mask_preview(safe))
+                    await guard_send(EmotionMessageResponse(type="message_delta", delta=safe).model_dump())
 
                 async def _consume_stream():
                     nonlocal token_tail_buffer, stream_piece_count, end_by_token
+                    batch_buf = ""
                     async for piece in iter_chunks_async(
                         stream_noa_response(
                             system_prompt=system_prompt,
@@ -465,12 +488,14 @@ async def ws_emotion(websocket: WebSocket):
                             token_tail_buffer = ""
                         if not emit_raw:
                             continue
-                        safe_piece = leak_guard.sanitize_out(emit_raw, sys_fp)
-                        if not safe_piece:
-                            continue
-                        assistant_chunks.append(safe_piece)
-                        logger.debug("WS delta | %s", mask_preview(safe_piece))
-                        await guard_send(EmotionMessageResponse(type="message_delta", delta=safe_piece).model_dump())
+                        batch_buf += emit_raw
+                        if len(batch_buf) >= _BATCH_CHARS:
+                            await _flush_batch(batch_buf)
+                            batch_buf = ""
+
+                    # 루프 종료 후 배치 잔여분 flush
+                    if batch_buf:
+                        await _flush_batch(batch_buf)
 
                     final_piece, end_by_token = extract_end_session_marker(token_tail_buffer)
                     safe_final_piece = leak_guard.sanitize_out(final_piece, sys_fp)
@@ -521,6 +546,9 @@ async def ws_emotion(websocket: WebSocket):
                     logger.exception("WS assistant-step commit failed")
                     await guard_send({"type": "error", "message": "server_error:assistant_step_commit"})
                     continue
+
+                if want_activity:
+                    activity_fired = True
 
                 await guard_send(
                     EmotionMessageResponse(
