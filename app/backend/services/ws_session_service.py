@@ -46,32 +46,36 @@ def prepare_message_context(
     user_text: str,
     *,
     ws_history_turns: int,
+    already_fired: bool | None = None,
 ) -> dict:
-    transcript_rows: list[EmotionStep] = list(
+    max_entries = ws_history_turns * 2
+    # (session_id, step_order) 복합 인덱스를 역순으로 타서 LIMIT 적용 후 뒤집음.
+    # ORDER BY created_at은 인덱스가 없어 풀스캔+정렬이 발생하므로 step_order 사용.
+    rows: list[EmotionStep] = list(
         db.exec(
             select(EmotionStep)
             .where(EmotionStep.session_id == session_id)
-            .order_by(EmotionStep.created_at.asc())
+            .order_by(EmotionStep.step_order.desc())
+            .limit(max_entries)
         )
     )
-    max_entries = ws_history_turns * 2
-    recent_transcript_rows = (
-        transcript_rows[-max_entries:] if len(transcript_rows) > max_entries else transcript_rows
-    )
+    rows.reverse()
+
+    last_order = rows[-1].step_order if rows else 0
 
     want_activity = is_activity_turn(
         user_text=user_text,
         db=db,
         session_id=session_id,
-        steps=transcript_rows,
+        steps=rows,
+        already_fired=already_fired,
     )
 
-    last_order = transcript_rows[-1].step_order if transcript_rows else 0
     user_order = last_order + 1
     assistant_order = user_order + 1
-    conversation = transcript_rows_to_conversation(recent_transcript_rows) + [("user", user_text)]
+    conversation = transcript_rows_to_conversation(rows) + [("user", user_text)]
     return {
-        "transcript_rows": transcript_rows,
+        "transcript_rows": rows,
         "want_activity": want_activity,
         "user_order": user_order,
         "assistant_order": assistant_order,

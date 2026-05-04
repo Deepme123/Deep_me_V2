@@ -97,6 +97,8 @@ def is_activity_turn(
     db: Session,
     session_id: UUID,
     steps: List[EmotionStep],
+    *,
+    already_fired: bool | None = None,
 ) -> bool:
     """
     이번 턴에 액티비티 제안을 할지 정책 판단.
@@ -107,8 +109,11 @@ def is_activity_turn(
         4) 텍스트 트리거(간단 키워드): 우울/힘들/지치/무기력 등 → True
         5) 그 외는 False
     필요에 따라 프로젝트 규칙에 맞춰 확장하면 됨.
+    already_fired가 None이면 DB를 직접 조회한다 (하위 호환 폴백).
     """
-    if _already_fired(db, session_id):
+    if already_fired is None:
+        already_fired = _already_fired(db, session_id)
+    if already_fired:
         return False
 
     if not steps:
