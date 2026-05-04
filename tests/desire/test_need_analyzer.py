@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 from app.desire.services import need_analyzer
 
@@ -39,8 +40,11 @@ class NeedAnalyzerTests(unittest.TestCase):
     def test_analyze_needs_uses_common_generate_json_contract(self) -> None:
         provider = _FakeProvider(payload=_valid_need_payload())
 
-        with patch.object(need_analyzer, "get_llm_provider", return_value=provider):
-            result = asyncio.run(need_analyzer.analyze_needs("I need more stability in my life."))
+        with patch.object(need_analyzer, "get_llm_provider", return_value=provider), \
+             patch.object(need_analyzer, "save_need_card_result"):
+            result = asyncio.run(need_analyzer.analyze_needs(
+                "I need more stability in my life.", uuid4(), MagicMock()
+            ))
 
         self.assertEqual(len(result.needs), 8)
         self.assertEqual(len(result.top4), 4)
@@ -53,8 +57,9 @@ class NeedAnalyzerTests(unittest.TestCase):
     def test_analyze_needs_falls_back_on_json_generation_failure(self) -> None:
         provider = _FakeProvider(error=RuntimeError("LLM response was not valid JSON."))
 
-        with patch.object(need_analyzer, "get_llm_provider", return_value=provider):
-            result = asyncio.run(need_analyzer.analyze_needs("Conversation text"))
+        with patch.object(need_analyzer, "get_llm_provider", return_value=provider), \
+             patch.object(need_analyzer, "save_need_card_result"):
+            result = asyncio.run(need_analyzer.analyze_needs("Conversation text", uuid4(), MagicMock()))
 
         self.assertEqual(
             [item.score for item in result.needs],
@@ -66,8 +71,9 @@ class NeedAnalyzerTests(unittest.TestCase):
     def test_analyze_needs_falls_back_on_schema_validation_failure(self) -> None:
         provider = _FakeProvider(payload={"needs": [{"code": "Choice"}]})
 
-        with patch.object(need_analyzer, "get_llm_provider", return_value=provider):
-            result = asyncio.run(need_analyzer.analyze_needs("Conversation text"))
+        with patch.object(need_analyzer, "get_llm_provider", return_value=provider), \
+             patch.object(need_analyzer, "save_need_card_result"):
+            result = asyncio.run(need_analyzer.analyze_needs("Conversation text", uuid4(), MagicMock()))
 
         self.assertEqual(
             [item.score for item in result.needs],
