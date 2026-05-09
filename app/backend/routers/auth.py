@@ -9,7 +9,6 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response, Request, status
 from fastapi.responses import RedirectResponse, JSONResponse
-from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -330,44 +329,6 @@ def logout(
     clear_refresh_cookie(response)
     response.delete_cookie("access_token", path="/")
     return {"ok": True}
-
-# ──────────────────────────────────────────────────────────────────────────────
-# (디버그) Swagger 테스트용 비밀번호 로그인
-# ──────────────────────────────────────────────────────────────────────────────
-FAKE_USERS_DB = {
-    "test@example.com": {"user_id": "2d151bd3-cb6c-4837-a575-a796cc3425c5", "password": "1234"}
-}
-
-@auth_router.post("/auth/token", tags=["auth"])
-def login_for_access_token(
-    response: Response,
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: Session = Depends(get_session),
-):
-    user_row = FAKE_USERS_DB.get(form_data.username)
-    if not user_row or user_row["password"] != form_data.password:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="잘못된 사용자 이름 또는 비밀번호",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    # 실제 DB 사용자 동기화(없으면 생성)
-    user = db.exec(select(User).where(User.email == form_data.username)).first()
-    if not user:
-        user = User(name="Tester", email=form_data.username)
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-
-    meta = issue_tokens_for_user(
-        db,
-        user,
-        response,
-        user_agent=None,
-        ip=None,
-    )
-    _set_access_cookie_if_enabled(response, meta["access_token"])
-    return _build_auth_response(user, meta["access_token"])
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Refresh Token rotation (POST /auth/refresh)
