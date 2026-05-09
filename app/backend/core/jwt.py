@@ -8,7 +8,9 @@ from typing import Dict, Any
 from jose import jwt, JWTError
 
 # ── 설정 값 ─────────────────────────────────────
-SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "deepme-secret-key")
+SECRET_KEY: str | None = os.getenv("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("JWT_SECRET_KEY 환경변수가 설정되지 않았습니다.")
 ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
 EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 # ───────────────────────────────────────────────
