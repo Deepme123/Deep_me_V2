@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from app.analyze import models as m
@@ -10,15 +10,22 @@ from app.analyze import schemas as sc
 from app.analyze.db import get_db
 from app.analyze.services import risk as risk_service
 from app.analyze.services.llm_card import analyze_dialogue_to_card
+from app.backend.dependencies.auth import get_current_user
 from app.backend.models.emotion import EmotionStep
 
 router = APIRouter(prefix="/api", tags=["cards"])
 
 
-def _get_session_or_404(db: Session, session_id: UUID) -> m.EmotionSession:
+def _get_session_or_404(
+    db: Session,
+    session_id: UUID,
+    current_user_id: str | None = None,
+) -> m.EmotionSession:
     session = db.get(m.EmotionSession, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="session not found")
+    if current_user_id is not None and str(session.user_id) != current_user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
     return session
 
 
@@ -113,8 +120,11 @@ def _load_session_conversation_turns(
 
 
 @router.post("/sessions", response_model=sc.SessionOut)
-def create_session(body: sc.SessionCreate, db: Session = Depends(get_db)):
-    session = m.EmotionSession(user_id=body.user_id)
+def create_session(
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user),
+):
+    session = m.EmotionSession(user_id=UUID(current_user_id))
     db.add(session)
     db.commit()
     db.refresh(session)
@@ -126,8 +136,9 @@ def create_card(
     session_id: UUID,
     body: sc.CardCreate,
     db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user),
 ):
-    _get_session_or_404(db, session_id)
+    _get_session_or_404(db, session_id, current_user_id)
     return _store_card(db=db, session_id=session_id, payload=body)
 
 
@@ -136,8 +147,9 @@ def create_card_auto(
     session_id: UUID,
     body: sc.AutoCardCreate,
     db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user),
 ):
-    _get_session_or_404(db, session_id)
+    _get_session_or_404(db, session_id, current_user_id)
     return _analyze_and_store_card(
         db=db,
         session_id=session_id,
@@ -151,8 +163,9 @@ def create_card_auto_from_session(
     session_id: UUID,
     body: sc.AutoCardRequestBase | None = None,
     db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user),
 ):
-    _get_session_or_404(db, session_id)
+    _get_session_or_404(db, session_id, current_user_id)
     turns = _load_session_conversation_turns(db, session_id)
     title_hint = body.title_hint if body else None
     return _analyze_and_store_card(
@@ -164,7 +177,12 @@ def create_card_auto_from_session(
 
 
 @router.get("/sessions/{session_id}/cards", response_model=list[sc.CardOut])
-def list_cards(session_id: UUID, db: Session = Depends(get_db)):
+def list_cards(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user),
+):
+    _get_session_or_404(db, session_id, current_user_id)
     stmt = (
         select(m.AnalysisCard)
         .where(m.AnalysisCard.session_id == session_id)
@@ -175,8 +193,13 @@ def list_cards(session_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.get("/cards/{card_id}", response_model=sc.CardOut)
-def get_card(card_id: UUID, db: Session = Depends(get_db)):
+def get_card(
+    card_id: UUID,
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user),
+):
     card = db.get(m.AnalysisCard, card_id)
     if not card:
         raise HTTPException(status_code=404, detail="card not found")
+    _get_session_or_404(db, card.session_id, current_user_id)
     return sc.CardOut.model_validate(card, from_attributes=True)
