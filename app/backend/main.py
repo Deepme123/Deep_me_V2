@@ -3,11 +3,13 @@ import os
 import logging
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi.errors import RateLimitExceeded
 from sqlmodel import text
 
 from app.backend.core.logging_config import setup_logging
 from app.backend.db.session import get_engine
 from app.db.session import CORE_REQUIRED_TABLES, ensure_required_tables
+from app.backend.core.rate_limit import limiter as rate_limiter, RATELIMIT_ENABLED
 
 # 모델 모듈 임포트(테이블 등록 보장용)
 from app.backend.models import emotion as _m_emotion  # noqa: F401
@@ -26,6 +28,11 @@ app = FastAPI(
     title="DEEPME Backend",
     version=os.getenv("APP_VERSION", "0.1.0"),
 )
+
+# Rate Limiting
+app.state.limiter = rate_limiter
+if RATELIMIT_ENABLED:
+    app.add_exception_handler(RateLimitExceeded, lambda request, exc: HTTPException(status_code=429, detail="rate_limit_exceeded"))
 
 # CORS
 _default_origins = "https://deep-me-v1.onrender.com,http://localhost:3000,http://localhost:5173"

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
 from app.backend.services.llm_service import generate_noa_response, stream_noa_response
 from app.backend.services.stream_bridge import iter_chunks_async
+from app.backend.core.rate_limit import limiter
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -16,8 +18,9 @@ HEALTHCHECK_QUERY_DESCRIPTION = (
 
 
 @router.get("/llm")
+@limiter.limit("5/minute")
 def health_llm(
-    q: Optional[str] = Query(None, description=HEALTHCHECK_QUERY_DESCRIPTION),
+    q: Optional[str] = Query(None, max_length=500, description=HEALTHCHECK_QUERY_DESCRIPTION),
 ):
     text = generate_noa_response(
         system_prompt="(healthcheck)",
@@ -36,8 +39,9 @@ def health_llm(
 
 
 @router.get("/llm/stream")
+@limiter.limit("5/minute")
 async def health_llm_stream(
-    q: Optional[str] = Query(None, description=HEALTHCHECK_QUERY_DESCRIPTION),
+    q: Optional[str] = Query(None, max_length=500, description=HEALTHCHECK_QUERY_DESCRIPTION),
 ):
     tokens: list[str] = []
     try:
