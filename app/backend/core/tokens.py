@@ -20,10 +20,14 @@ def _env_bool(key: str, default: bool) -> bool:
 # ---- 설정 ----
 ALG = os.getenv("JWT_ALGORITHM", "HS256")
 
-ACCESS_SECRET = os.getenv("JWT_SECRET_KEY", "deepme-secret-key")
+ACCESS_SECRET = os.getenv("JWT_SECRET_KEY")
+if not ACCESS_SECRET:
+    raise RuntimeError("JWT_SECRET_KEY 환경변수가 설정되지 않았습니다.")
 ACCESS_MIN = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "120"))
 
-REFRESH_SECRET = os.getenv("JWT_REFRESH_SECRET", "dev_refresh_secret_change_me")
+REFRESH_SECRET = os.getenv("JWT_REFRESH_SECRET")
+if not REFRESH_SECRET:
+    raise RuntimeError("JWT_REFRESH_SECRET 환경변수가 설정되지 않았습니다.")
 REFRESH_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "21"))
 
 REFRESH_COOKIE_NAME = os.getenv("REFRESH_COOKIE_NAME", "__Host-deepme_rtok")
