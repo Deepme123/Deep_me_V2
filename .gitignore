@@ -44,5 +44,6 @@ frontend/**/dist/
 frontend/**/.vite/
 
 docs/
+docs/handover
 !docs/API.md
 CLAUDE.md

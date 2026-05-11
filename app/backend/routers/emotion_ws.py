@@ -344,7 +344,7 @@ async def ws_emotion(websocket: WebSocket):
 
             # 파싱된 메시지 타입 로깅
             try:
-                logger.warning("WS PARSED | %s", msg.get("type"))
+                logger.debug("WS PARSED | %s", msg.get("type"))
             except Exception:
                 pass
 
@@ -411,9 +411,6 @@ async def ws_emotion(websocket: WebSocket):
                     continue
                 logger.info("WS recv user | %s", mask_preview(user_text, 100))
 
-                # MARK A: DB 조회 직전
-                logger.warning("WS MARK A | before DB fetch")
-
                 try:
                     prep = await _with_db(
                         _prepare_message_context,
@@ -434,10 +431,7 @@ async def ws_emotion(websocket: WebSocket):
                     await guard_send({"type": "error", "message": f"db_failed: {safe_str(e)}"})
                     continue
 
-                # MARK B: DB 조회 통과
-                logger.warning("WS MARK B | after DB fetch, before prompt")
-
-                # 프롬프트 로딩 + MARK C
+                # 프롬프트 로딩
                 try:
                     system_prompt = get_system_prompt()
                     task_prompt = get_task_prompt() if want_activity else None
@@ -445,8 +439,6 @@ async def ws_emotion(websocket: WebSocket):
                     logger.exception("WS prompt load failed")
                     await guard_send({"type": "error", "message": f"prompt_failed: {safe_str(e)}"})
                     continue
-
-                logger.warning("WS MARK C | after prompt load, before stream")
 
                 # 스트리밍 호출 + 누적 버퍼
                 assistant_chunks: list[str] = []
