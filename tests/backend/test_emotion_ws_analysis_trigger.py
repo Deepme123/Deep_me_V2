@@ -324,6 +324,112 @@ def test_analysis_card_generation_sees_transcript_committed_before_ready_event(
     assert store.generated_card_session_ids == [store.session.session_id]
 
 
+def _collect_until_close_ok(ws) -> list[dict]:
+    events: list[dict] = []
+    while True:
+        event = ws.receive_json()
+        if event["type"] == "step":
+            continue
+        events.append(event)
+        if event["type"] == "close_ok":
+            return events
+
+
+def test_reserved_token_split_across_chunks_never_leaks_in_delta(ws_harness, monkeypatch):
+    store, client = ws_harness
+    store.current_steps = [12]
+
+    chunks = [
+        "오늘은 여기까지 ",
+        "해도 괜찮겠어. ",
+        "[[CONF",
+        "IRM_CLO",
+        "SE]]",
+    ]
+
+    def chunked_stream(**_kwargs):
+        for chunk in chunks:
+            yield chunk
+
+    monkeypatch.setattr(emotion_ws, "stream_noa_response", chunked_stream)
+
+    with _open_ws(client) as ws:
+        ws.send_json({"type": "message", "text": "이제 정리됐어."})
+        events = _collect_until_close_ok(ws)
+        card_event = ws.receive_json()
+
+    deltas = [event["delta"] for event in events if event["type"] == "message_delta"]
+    messages = [event["message"] for event in events if event["type"] == "message"]
+
+    full_visible = "".join(deltas) + "".join(messages)
+    assert emotion_ws.RESERVED_CONFIRM_CLOSE_TOKEN not in full_visible
+    for piece in ("[[CONFIRM", "CONFIRM_CLOSE", "CLOSE]]", "[[CONF"):
+        assert piece not in full_visible
+    assert "오늘은 여기까지 해도 괜찮겠어." in "".join(deltas)
+    assert messages[0] == "오늘은 여기까지 해도 괜찮겠어."
+
+    assert events[-1]["type"] == "close_ok"
+    assert card_event["type"] == "analysis_card_ready"
+    assert store.session is not None
+    assert store.session.ended_at is not None
+    assert store.generated_card_session_ids == [store.session.session_id]
+
+
+def test_reserved_token_in_single_chunk_never_leaks_first_bracket(ws_harness, monkeypatch):
+    store, client = ws_harness
+    store.current_steps = [12]
+
+    full_response = f"마무리 멘트. {emotion_ws.RESERVED_CONFIRM_CLOSE_TOKEN}"
+
+    def single_chunk_stream(**_kwargs):
+        yield full_response
+
+    monkeypatch.setattr(emotion_ws, "stream_noa_response", single_chunk_stream)
+
+    with _open_ws(client) as ws:
+        ws.send_json({"type": "message", "text": "이제 정리됐어."})
+        events = _collect_until_close_ok(ws)
+        card_event = ws.receive_json()
+
+    deltas = [event["delta"] for event in events if event["type"] == "message_delta"]
+    messages = [event["message"] for event in events if event["type"] == "message"]
+    full_visible = "".join(deltas) + "".join(messages)
+
+    assert emotion_ws.RESERVED_CONFIRM_CLOSE_TOKEN not in full_visible
+    assert "[[" not in full_visible
+    assert "CLOSE]]" not in full_visible
+    assert messages[0] == "마무리 멘트."
+    assert card_event["type"] == "analysis_card_ready"
+
+
+def test_reserved_token_split_one_char_per_chunk_never_leaks(ws_harness, monkeypatch):
+    store, client = ws_harness
+    store.current_steps = [12]
+
+    prefix = "오늘은 여기까지 "
+    pieces = [prefix] + list(emotion_ws.RESERVED_CONFIRM_CLOSE_TOKEN)
+
+    def char_stream(**_kwargs):
+        for piece in pieces:
+            yield piece
+
+    monkeypatch.setattr(emotion_ws, "stream_noa_response", char_stream)
+
+    with _open_ws(client) as ws:
+        ws.send_json({"type": "message", "text": "이제 정리됐어."})
+        events = _collect_until_close_ok(ws)
+        ws.receive_json()  # analysis_card_ready
+
+    deltas = [event["delta"] for event in events if event["type"] == "message_delta"]
+    messages = [event["message"] for event in events if event["type"] == "message"]
+    full_visible = "".join(deltas) + "".join(messages)
+
+    assert emotion_ws.RESERVED_CONFIRM_CLOSE_TOKEN not in full_visible
+    for piece in ("[[", "CONFIRM_CLOSE", "CLOSE]]"):
+        assert piece not in full_visible
+    assert messages[0] == prefix.rstrip()
+
+
 def test_confirm_close_reports_analysis_card_failure_without_rolling_back_close(
     ws_harness,
     monkeypatch,

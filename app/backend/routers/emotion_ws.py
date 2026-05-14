@@ -70,8 +70,8 @@ from app.backend.services.convo_policy import is_activity_turn  # test patch poi
 from app.backend.services.close_policy import (
     CANCEL_CLOSE_STEP_TYPE,
     RESERVED_CONFIRM_CLOSE_TOKEN,
+    StreamingConfirmCloseFilter,
     build_cancel_close_ok_message,
-    extract_end_session_marker,
 )
 
 logger = logging.getLogger(__name__)
@@ -442,9 +442,7 @@ async def ws_emotion(websocket: WebSocket):
 
                 # 스트리밍 호출 + 누적 버퍼
                 assistant_chunks: list[str] = []
-                token_tail_buffer = ""
-                token_holdback = max(0, len(RESERVED_CONFIRM_CLOSE_TOKEN) - 1)
-                stream_piece_count = 0
+                close_filter = StreamingConfirmCloseFilter()
                 end_by_token = False
                 _BATCH_CHARS = 60  # 이 크기를 넘으면 WebSocket으로 즉시 flush
 
@@ -457,7 +455,7 @@ async def ws_emotion(websocket: WebSocket):
                     await guard_send(EmotionMessageResponse(type="message_delta", delta=safe).model_dump())
 
                 async def _consume_stream():
-                    nonlocal token_tail_buffer, stream_piece_count, end_by_token
+                    nonlocal end_by_token
                     batch_buf = ""
                     async for piece in iter_chunks_async(
                         stream_noa_response(
@@ -468,36 +466,21 @@ async def ws_emotion(websocket: WebSocket):
                             max_tokens=800,
                         )
                     ):
-                        stream_piece_count += 1
-                        token_tail_buffer += piece
-                        if stream_piece_count == 1:
-                            continue
-                        emit_raw = token_tail_buffer
-                        if token_holdback:
-                            emit_raw = token_tail_buffer[:-token_holdback]
-                            token_tail_buffer = token_tail_buffer[-token_holdback:]
-                        else:
-                            token_tail_buffer = ""
-                        if not emit_raw:
-                            continue
-                        batch_buf += emit_raw
-                        if len(batch_buf) >= _BATCH_CHARS:
-                            await _flush_batch(batch_buf)
-                            batch_buf = ""
+                        emit_raw = close_filter.feed(piece)
+                        if emit_raw:
+                            batch_buf += emit_raw
+                            if len(batch_buf) >= _BATCH_CHARS:
+                                await _flush_batch(batch_buf)
+                                batch_buf = ""
+                        if close_filter.end_detected:
+                            break
 
-                    # 루프 종료 후 배치 잔여분 flush
+                    tail = close_filter.flush()
+                    if tail:
+                        batch_buf += tail
                     if batch_buf:
                         await _flush_batch(batch_buf)
-
-                    final_piece, end_by_token = extract_end_session_marker(token_tail_buffer)
-                    safe_final_piece = leak_guard.sanitize_out(final_piece, sys_fp)
-                    if not safe_final_piece:
-                        return
-                    assistant_chunks.append(safe_final_piece)
-                    logger.debug("WS delta | %s", mask_preview(safe_final_piece))
-                    await guard_send(
-                        EmotionMessageResponse(type="message_delta", delta=safe_final_piece).model_dump()
-                    )
+                    end_by_token = close_filter.end_detected
 
                 stream_failed_reason: str | None = None
                 await guard_send(EmotionMessageResponse(type="message_start").model_dump())
