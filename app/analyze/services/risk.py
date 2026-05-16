@@ -20,7 +20,7 @@ def risk_from_payload(payload: dict) -> tuple[bool, str]:
 
     bag = " ".join(
         _to_str(payload.get(k)) for k in
-        ("summary","emotion","thoughts","physical_reactions","behaviors")
+        ("summary","situation","core_emotions","physical_reactions","coping_actions")
     )
     level = score(bag)
     return (level in {"LOW","MEDIUM","HIGH"}, level if level!="NONE" else None)
