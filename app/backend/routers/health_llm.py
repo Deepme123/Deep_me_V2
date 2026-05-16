@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.backend.services.llm_service import generate_noa_response, stream_noa_response
 from app.backend.services.stream_bridge import iter_chunks_async
@@ -20,6 +20,7 @@ HEALTHCHECK_QUERY_DESCRIPTION = (
 @router.get("/llm")
 @limiter.limit("5/minute")
 def health_llm(
+    request: Request,
     q: Optional[str] = Query(None, max_length=500, description=HEALTHCHECK_QUERY_DESCRIPTION),
 ):
     text = generate_noa_response(
@@ -41,6 +42,7 @@ def health_llm(
 @router.get("/llm/stream")
 @limiter.limit("5/minute")
 async def health_llm_stream(
+    request: Request,
     q: Optional[str] = Query(None, max_length=500, description=HEALTHCHECK_QUERY_DESCRIPTION),
 ):
     tokens: list[str] = []
