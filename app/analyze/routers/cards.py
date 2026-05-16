@@ -46,6 +46,7 @@ def _store_card(db: Session, session_id: UUID, payload: sc.CardCreate) -> sc.Car
         summary=payload.summary,
         core_emotions=payload.core_emotions,
         situation=payload.situation,
+        situation_steps=payload.situation_steps,
         physical_reactions=payload.physical_reactions,
         behavior_patterns=payload.behavior_patterns,
         coping_actions=payload.coping_actions,

@@ -53,6 +53,7 @@ _CARD_SCHEMA = LLMJsonSchema(
             "summary",
             "core_emotions",
             "situation",
+            "situation_steps",
             "physical_reactions",
             "behavior_patterns",
             "tags",
@@ -80,6 +81,20 @@ _CARD_SCHEMA = LLMJsonSchema(
                 },
             },
             "situation": {"type": "string"},
+            "situation_steps": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "title": {"type": "string"},
+                        "description": {"type": "string"},
+                    },
+                    "required": ["title", "description"],
+                },
+                "minItems": 1,
+                "maxItems": 4,
+            },
             "physical_reactions": {
                 "type": "array",
                 "items": {
@@ -148,6 +163,9 @@ Field definitions:
     * "reasoning": 그 감정 상태를 구체적으로 묘사하는 문장 1~3개. 사용자 발화를 살려 서술하며, 평가나 조언 없이 경험을 그대로 담을 것.
   목록에 없는 레이블은 절대 사용하지 말 것.
 - situation: 감정을 촉발한 구체적인 상황을 1~2문장으로. 사용자가 실제로 처한 맥락을 구체적으로 담을 것.
+- situation_steps: 대화에서 드러난 구체적인 상황 요소를 1~4개 카드로 구성. 각 항목은:
+    * "title": 해당 상황을 한 줄로 요약 (명사형 또는 짧은 절). 사용자 발화에서 직접 따올 것. (예: "애인의 답이 늦고 더 이상 찾지 않음")
+    * "description": 그 상황에서 사용자가 어떻게 느끼고 반응했는지 1문장. 사용자 말투를 살려 1인칭 서술체로. (예: "마음이 멀어진 것 같아, 나만 애쓰고 있는 기분이 들었어")
 - physical_reactions: 신체 반응을 최소 1개, 최대 4개. 각 항목은:
     * "title": 신체 반응 이름 (예: "가슴이 조여옴")
     * "description": 그 반응이 나타난 맥락을 사용자 경험 기준으로 1문장. (예: "전하고 싶은 말이 막혀서 가슴이 답답했어")
@@ -211,12 +229,19 @@ class _BehaviorPattern(BaseModel):
     items: list[str]
 
 
+class _SituationStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str
+    description: str
+
+
 class _LLMCardPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     summary: str | None = None
     core_emotions: list[_EmotionEntry] | None = None
     situation: str | None = None
+    situation_steps: list[_SituationStep] | None = None
     physical_reactions: list[_PhysicalReactionItem] | None = None
     behavior_patterns: list[_BehaviorPattern] | None = None
     coping_actions: list[str] | None = None
