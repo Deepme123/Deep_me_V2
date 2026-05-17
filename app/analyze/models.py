@@ -6,8 +6,7 @@ from uuid import UUID, uuid4
 from datetime import datetime
 
 from sqlmodel import SQLModel, Field
-from sqlalchemy import Column
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Column, JSON
 
 from app.backend.models.emotion import EmotionSession
 
@@ -28,27 +27,27 @@ class AnalysisCard(SQLModel, table=True):
     summary: Optional[str] = None
     core_emotions: Optional[List[Any]] = Field(
         default=None,
-        sa_column=Column(JSONB),
+        sa_column=Column(JSON),
     )
     situation: Optional[str] = None
     situation_steps: Optional[List[Any]] = Field(
         default=None,
-        sa_column=Column(JSONB),
+        sa_column=Column(JSON),
     )
     emotion: Optional[str] = None
     thoughts: Optional[str] = None
     physical_reactions: Optional[List[str]] = Field(
         default=None,
-        sa_column=Column(JSONB),
+        sa_column=Column(JSON),
     )
     behaviors: Optional[str] = None
     behavior_patterns: Optional[List[Any]] = Field(
         default=None,
-        sa_column=Column(JSONB),
+        sa_column=Column(JSON),
     )
     coping_actions: Optional[List[str]] = Field(
         default=None,
-        sa_column=Column(JSONB),
+        sa_column=Column(JSON),
     )
     risk_flag: bool = Field(default=False)
     risk_level: Optional[str] = Field(
@@ -57,7 +56,7 @@ class AnalysisCard(SQLModel, table=True):
     )
     tags: Optional[List[str]] = Field(
         default=None,
-        sa_column=Column(JSONB),
+        sa_column=Column(JSON),
     )
     insight: Optional[str] = None
     exportable: bool = Field(default=True)
