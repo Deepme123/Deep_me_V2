@@ -82,18 +82,16 @@ class AnthropicProvider(LLMProvider):
                 **params,
             ) as stream:
                 emitted = False
-                for piece in getattr(stream, "text_stream", ()) or ():
+                for piece in getattr(stream, "text_stream", None) or ():
                     if piece:
                         emitted = True
                         yield piece
 
-                if emitted:
-                    return
-
-                final_message = stream.get_final_message()
-                final_text = self._extract_text_response(final_message)
-                if final_text:
-                    yield final_text
+                if not emitted:
+                    final_message = stream.get_final_message()
+                    final_text = self._extract_text_response(final_message)
+                    if final_text:
+                        yield final_text
         except Exception as exc:
             raise RuntimeError(
                 f"Anthropic text streaming failed for model={resolved.model}: {exc}"
