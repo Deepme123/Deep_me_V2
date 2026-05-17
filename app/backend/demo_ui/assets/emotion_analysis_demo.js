@@ -3,10 +3,12 @@
       summary: "요약",
       core_emotions: "핵심 감정",
       situation: "상황",
+      situation_steps: "상황 단계",
       emotion: "감정",
       thoughts: "생각",
       physical_reactions: "신체 반응",
       behaviors: "행동",
+      behavior_patterns: "행동 패턴",
       coping_actions: "대처 행동",
       insight: "통찰",
       tags: "태그",
@@ -206,9 +208,28 @@
       return role;
     }
 
+    function formatObjectItem(obj) {
+      if (typeof obj !== "object" || obj === null) return String(obj);
+      if (obj.primary && obj.sub) {
+        const sub = Array.isArray(obj.sub) ? obj.sub.join(", ") : obj.sub;
+        return obj.quote ? `${obj.primary} (${sub}) — "${obj.quote}"` : `${obj.primary} (${sub})`;
+      }
+      if (obj.title && obj.description) return `${obj.title}: ${obj.description}`;
+      if (obj.title && obj.items) {
+        const items = Array.isArray(obj.items) ? obj.items.join(", ") : obj.items;
+        return `${obj.title}: ${items}`;
+      }
+      if (obj.title) return obj.title;
+      if (obj.primary) return obj.primary;
+      return JSON.stringify(obj);
+    }
+
     function formatDisplayValue(value) {
       if (Array.isArray(value)) {
-        return value.length ? value.join(", ") : "";
+        if (!value.length) return "";
+        return value.map((item) =>
+          typeof item === "object" && item !== null ? formatObjectItem(item) : String(item)
+        ).join("\n");
       }
       if (typeof value === "boolean") {
         return value ? "예" : "아니오";
