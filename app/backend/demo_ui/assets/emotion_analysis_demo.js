@@ -549,8 +549,9 @@
       }
       if (payload.type === "analysis_card_ready") {
         state.closeIntent = null;
-        renderAnalysisCard(payload.card || {});
-        void loadCards();
+        const card = payload.card || {};
+        renderAnalysisCard(card);
+        renderSavedCards(Object.keys(card).length ? [card] : []);
       }
       if (payload.type === "analysis_card_failed") {
         state.closeIntent = null;
