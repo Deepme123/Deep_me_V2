@@ -5,6 +5,7 @@ from app.db.session import get_session
 from app.desire.schemas.need_card import (
     NeedCardRequest,
     NeedCardResponse,
+    NeedListResponse,
     NeedSelectionRequest,
     NeedSelectionResponse,
 )
@@ -14,6 +15,11 @@ router = APIRouter(
     prefix="/need-cards",
     tags=["need-cards"],
 )
+
+
+@router.get("/list", response_model=NeedListResponse)
+async def list_needs() -> NeedListResponse:
+    return NeedListResponse.all()
 
 
 @router.post("/analyze", response_model=NeedCardResponse)
