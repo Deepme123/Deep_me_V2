@@ -85,13 +85,17 @@ __all__ = ["ws_router", "router"]
 class WSConfig:
     SESSION_MAX_TURNS: int = int(os.getenv("SESSION_MAX_TURNS", "20"))
     WS_IDLE_TIMEOUT: float = float(os.getenv("WS_IDLE_TIMEOUT", "600"))
-    WS_SEND_BUFFER: int = int(os.getenv("WS_SEND_BUFFER", "20"))
+    WS_SEND_BUFFER: int = int(os.getenv("WS_SEND_BUFFER", "50"))
     WS_HEARTBEAT_SEC: float = float(os.getenv("WS_HEARTBEAT_SEC", "30"))
-    LLM_STREAM_TIMEOUT: float = float(os.getenv("LLM_STREAM_TIMEOUT", "75"))
+    LLM_STREAM_TIMEOUT: float = float(os.getenv("LLM_STREAM_TIMEOUT", "120"))
     RECOMMEND_TIMEOUT: float = float(os.getenv("RECOMMEND_TIMEOUT", "15"))
     ANALYSIS_CARD_TIMEOUT: float = float(os.getenv("ANALYSIS_CARD_TIMEOUT", "45"))
     WS_HISTORY_TURNS: int = max(5, min(10, int(os.getenv("WS_HISTORY_TURNS", "8"))))
     WS_MAX_USER_TEXT_LEN: int = int(os.getenv("WS_MAX_USER_TEXT_LEN", str(8 * 1024)))  # bytes/ASCII-ish
+    # [[CONFIRM_CLOSE]] 토큰은 STEP 12(마무리)에서만 나와야 함.
+    # user_order가 이 값 미만이면 토큰이 감지돼도 세션 종료를 억제한다.
+    # 12단계 대화 기준 최소 user_order ≈ 23 이므로 16을 기본값으로 사용.
+    MIN_CLOSE_ORDER: int = int(os.getenv("MIN_CLOSE_ORDER", "16"))
 
 CFG = WSConfig()
 
@@ -463,7 +467,7 @@ async def ws_emotion(websocket: WebSocket):
                             task_prompt=task_prompt,
                             conversation=convo,
                             temperature=0.7,
-                            max_tokens=800,
+                            max_tokens=1500,
                         )
                     ):
                         emit_raw = close_filter.feed(piece)
@@ -496,6 +500,16 @@ async def ws_emotion(websocket: WebSocket):
                 if stream_failed_reason:
                     await guard_send({"type": "error", "message": stream_failed_reason, "turn_dropped": True})
                     continue
+
+                # [[CONFIRM_CLOSE]]는 STEP 12(마무리)에서만 유효.
+                # 너무 이른 단계에서 감지되면 LLM 오발생으로 판단해 세션 종료를 억제한다.
+                if end_by_token and user_order < CFG.MIN_CLOSE_ORDER:
+                    logger.warning(
+                        "WS [[CONFIRM_CLOSE]] suppressed at early turn | user_order=%s min=%s",
+                        user_order,
+                        CFG.MIN_CLOSE_ORDER,
+                    )
+                    end_by_token = False
 
                 assistant_text = "".join(assistant_chunks).strip()
                 if not assistant_text:
