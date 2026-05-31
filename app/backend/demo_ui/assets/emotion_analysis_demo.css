@@ -205,7 +205,8 @@
       grid-template-areas:
         "controls conversation analysis"
         "controls composer analysis"
-        "controls events saved";
+        "controls events saved"
+        "need-cards need-cards need-cards";
       gap: 18px;
       align-items: start;
     }
@@ -236,6 +237,10 @@
 
     .saved-panel {
       grid-area: saved;
+    }
+
+    .need-cards-panel {
+      grid-area: need-cards;
     }
 
     .panel {
@@ -639,6 +644,84 @@
       line-height: 1.6;
     }
 
+    .need-cards-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .need-card-item {
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      padding: 18px 14px;
+      background: var(--metric-bg);
+      display: grid;
+      gap: 6px;
+      text-align: center;
+      transition: transform 120ms ease, box-shadow 120ms ease;
+    }
+
+    .need-card-item:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 8px 24px rgba(47, 111, 228, 0.14);
+    }
+
+    .need-card-item.top-need {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .need-card-emoji {
+      font-size: 2.4rem;
+      line-height: 1.2;
+    }
+
+    .need-card-name {
+      margin: 0;
+      font-weight: 800;
+      font-size: 1rem;
+      color: var(--ink);
+    }
+
+    .need-card-creature {
+      margin: 0;
+      color: var(--accent-strong);
+      font-size: 0.84rem;
+      font-weight: 700;
+    }
+
+    .need-card-score-bar {
+      height: 6px;
+      border-radius: 999px;
+      background: var(--line);
+      overflow: hidden;
+      margin: 4px 0 0;
+    }
+
+    .need-card-score-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: var(--accent);
+      transition: width 600ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    .top-need .need-card-score-fill {
+      background: var(--accent-strong);
+    }
+
+    .need-card-score-label {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    .need-card-description {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.82rem;
+      line-height: 1.5;
+    }
+
     @media (max-width: 1360px) {
       .dashboard {
         grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
@@ -646,7 +729,8 @@
           "controls conversation"
           "controls composer"
           "analysis events"
-          "saved saved";
+          "saved saved"
+          "need-cards need-cards";
       }
 
       .controls-column {
@@ -663,11 +747,16 @@
           "composer"
           "analysis"
           "events"
-          "saved";
+          "saved"
+          "need-cards";
       }
     }
 
     @media (max-width: 720px) {
+      .need-cards-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
       body {
         padding: 16px 12px 28px;
       }

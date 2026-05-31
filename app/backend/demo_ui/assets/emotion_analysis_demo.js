@@ -137,6 +137,7 @@
       eventTimeline: $("eventTimeline"),
       analysisCard: $("analysisCard"),
       savedCards: $("savedCards"),
+      needCardsGrid: $("needCardsGrid"),
     };
 
     function defaultWsUrl() {
@@ -326,6 +327,7 @@
     function resetAnalysisPanels() {
       clearNode(els.analysisCard, '<div class="empty">아직 분석 카드가 생성되지 않았습니다.</div>');
       clearNode(els.savedCards, '<div class="empty">세션이 끝나면 저장 카드 조회 버튼으로 결과를 확인할 수 있습니다.</div>');
+      clearNode(els.needCardsGrid, '<div class="empty">분석 카드가 생성되면 욕구 카드가 자동으로 표시됩니다.</div>');
     }
 
     function syncScrollRegion(node, itemSelector) {
@@ -453,6 +455,53 @@
       });
     }
 
+    function renderNeedCards(needs) {
+      if (!els.needCardsGrid) return;
+      clearNode(els.needCardsGrid);
+      if (!Array.isArray(needs) || !needs.length) {
+        els.needCardsGrid.innerHTML = '<div class="empty">욕구 분석 결과가 없습니다.</div>';
+        return;
+      }
+      needs.forEach((need) => {
+        const isTop = need.rank <= 4;
+        const item = document.createElement("article");
+        item.className = "need-card-item" + (isTop ? " top-need" : "");
+        const scoreWidth = Math.max(0, Math.min(100, need.score || 0));
+        item.innerHTML = `
+          <div class="need-card-emoji">${need.creature_emoji || "🌊"}</div>
+          <p class="need-card-name">${need.label_ko}</p>
+          <p class="need-card-creature">${need.creature_name_ko || ""}</p>
+          <div class="need-card-score-bar">
+            <div class="need-card-score-fill" style="width:${scoreWidth}%"></div>
+          </div>
+          <p class="need-card-score-label">${need.score}점 · ${need.rank}위</p>
+          <p class="need-card-description">${need.creature_description || ""}</p>
+        `;
+        els.needCardsGrid.appendChild(item);
+      });
+    }
+
+    async function fetchAndRenderNeedCards() {
+      if (!state.sessionId || !state.conversationHistory.length) return;
+      const conversationText = state.conversationHistory
+        .map(({ role, text }) => `${role === "user" ? "사용자" : "AI"}: ${text}`)
+        .join("\n\n");
+      try {
+        const response = await fetch("/desire/need-cards/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: state.sessionId, conversation_text: conversationText }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        renderNeedCards(data.needs || []);
+      } catch (error) {
+        if (els.needCardsGrid) {
+          els.needCardsGrid.innerHTML = `<div class="empty">욕구 카드 분석 실패: ${String(error.message || error)}</div>`;
+        }
+      }
+    }
+
     function rememberSession(sessionId) {
       if (!sessionId) return;
       if (state.sessionId !== sessionId) {
@@ -552,6 +601,7 @@
         const card = payload.card || {};
         renderAnalysisCard(card);
         renderSavedCards(Object.keys(card).length ? [card] : []);
+        void fetchAndRenderNeedCards();
       }
       if (payload.type === "analysis_card_failed") {
         state.closeIntent = null;
