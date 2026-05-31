@@ -35,13 +35,17 @@ async def recommend_tasks_async(session_id: UUID, max_items: int) -> list[dict]:
 
 async def generate_analysis_card_async(session_id: UUID) -> dict:
     def _work() -> dict:
-        from app.analyze.routers.cards import create_card_auto_from_session
+        from app.analyze.routers.cards import (
+            _load_session_conversation_turns,
+            _analyze_and_store_card,
+        )
 
         with session_scope() as db:
-            card = create_card_auto_from_session(
-                session_id=session_id,
-                body=None,
+            turns = _load_session_conversation_turns(db, session_id)
+            card = _analyze_and_store_card(
                 db=db,
+                session_id=session_id,
+                turns=turns,
             )
         return jsonable_encoder(card, exclude_none=True)
 

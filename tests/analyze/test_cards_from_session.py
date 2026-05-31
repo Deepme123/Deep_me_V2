@@ -305,10 +305,9 @@ def test_auto_from_session_ignores_marker_text_when_building_transcript(monkeypa
         return sc.CardCreate(
             summary="Meeting anxiety summary",
             situation="team meeting",
-            emotion="anxiety",
-            thoughts="I would freeze",
-            physical_reactions=["tight chest"],
-            behaviors="avoided eye contact",
+            physical_reactions=[
+                sc.PhysicalReactionItem(title="tight chest", description="Chest tightened under pressure.", primary="불안")
+            ],
         )
 
     monkeypatch.setattr(cards, "analyze_dialogue_to_card", fake_analyze_dialogue_to_card)

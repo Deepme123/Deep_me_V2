@@ -40,10 +40,10 @@ class LLMCardTests(unittest.TestCase):
                     {"primary": "피곤", "sub": ["지친"]},
                 ],
                 "situation": "Heavy workload and pressure.",
-                "emotion": "The user feels tense and exhausted.",
-                "thoughts": "They feel they might fall behind.",
-                "physical_reactions": ["Tight chest", "Shallow breathing"],
-                "behaviors": "They avoid resting and keep pushing.",
+                "physical_reactions": [
+                    {"title": "Tight chest", "description": "Chest tightened from pressure.", "primary": "불안"},
+                    {"title": "Shallow breathing", "description": "Breath shortened when stressed.", "primary": "불안"},
+                ],
                 "coping_actions": ["took a short walk"],
                 "tags": ["work", "stress"],
                 "insight": "Rest and clearer boundaries may help.",
@@ -98,10 +98,9 @@ class LLMCardTests(unittest.TestCase):
             payload={
                 "summary": "The user felt anxious in a team meeting.",
                 "situation": "A team meeting at work.",
-                "emotion": "Anxious and afraid.",
-                "thoughts": "They thought they would freeze.",
-                "physical_reactions": ["Tight chest"],
-                "behaviors": "Avoided eye contact.",
+                "physical_reactions": [
+                    {"title": "Tight chest", "description": "Chest tightened during the meeting.", "primary": "불안"},
+                ],
             }
         )
         turns = [
@@ -126,10 +125,7 @@ class LLMCardTests(unittest.TestCase):
             card = llm_card.analyze_dialogue_to_card(turns)
 
         self.assertEqual(card.situation, "A team meeting at work.")
-        self.assertEqual(card.emotion, "Anxious and afraid.")
-        self.assertEqual(card.thoughts, "They thought they would freeze.")
-        self.assertEqual(card.physical_reactions, ["Tight chest"])
-        self.assertEqual(card.behaviors, "Avoided eye contact.")
+        self.assertEqual(card.physical_reactions[0].title, "Tight chest")
         messages, _schema, _options = provider.calls[0]
         user_prompt = messages[1].content
         self.assertIn("team meeting", user_prompt)

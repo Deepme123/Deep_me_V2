@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     llm_model: str = "gpt-4o-mini"
     llm_temperature: float = 0.7
-    llm_max_tokens: int = 800
+    llm_max_tokens: int = 1500
     llm_timeout_sec: float = 60.0
 
     class Config:

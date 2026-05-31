@@ -90,11 +90,9 @@ async def ws_recv_safe(
         return None
 
     try:
-        logger.warning(
-            "WS RAW EVENT | keys=%s txt=%r bin=%s",
+        logger.debug(
+            "WS RAW EVENT | keys=%s",
             list(event.keys()),
-            (event.get("text") or "")[:80],
-            bool(event.get("bytes")),
         )
     except Exception:
         pass

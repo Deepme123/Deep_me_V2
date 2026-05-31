@@ -3,10 +3,12 @@
       summary: "요약",
       core_emotions: "핵심 감정",
       situation: "상황",
+      situation_steps: "상황 단계",
       emotion: "감정",
       thoughts: "생각",
       physical_reactions: "신체 반응",
       behaviors: "행동",
+      behavior_patterns: "행동 패턴",
       coping_actions: "대처 행동",
       insight: "통찰",
       tags: "태그",
@@ -135,6 +137,7 @@
       eventTimeline: $("eventTimeline"),
       analysisCard: $("analysisCard"),
       savedCards: $("savedCards"),
+      needCardsGrid: $("needCardsGrid"),
     };
 
     function defaultWsUrl() {
@@ -206,9 +209,28 @@
       return role;
     }
 
+    function formatObjectItem(obj) {
+      if (typeof obj !== "object" || obj === null) return String(obj);
+      if (obj.primary && obj.sub) {
+        const sub = Array.isArray(obj.sub) ? obj.sub.join(", ") : obj.sub;
+        return obj.quote ? `${obj.primary} (${sub}) — "${obj.quote}"` : `${obj.primary} (${sub})`;
+      }
+      if (obj.title && obj.description) return `${obj.title}: ${obj.description}`;
+      if (obj.title && obj.items) {
+        const items = Array.isArray(obj.items) ? obj.items.join(", ") : obj.items;
+        return `${obj.title}: ${items}`;
+      }
+      if (obj.title) return obj.title;
+      if (obj.primary) return obj.primary;
+      return JSON.stringify(obj);
+    }
+
     function formatDisplayValue(value) {
       if (Array.isArray(value)) {
-        return value.length ? value.join(", ") : "";
+        if (!value.length) return "";
+        return value.map((item) =>
+          typeof item === "object" && item !== null ? formatObjectItem(item) : String(item)
+        ).join("\n");
       }
       if (typeof value === "boolean") {
         return value ? "예" : "아니오";
@@ -305,6 +327,7 @@
     function resetAnalysisPanels() {
       clearNode(els.analysisCard, '<div class="empty">아직 분석 카드가 생성되지 않았습니다.</div>');
       clearNode(els.savedCards, '<div class="empty">세션이 끝나면 저장 카드 조회 버튼으로 결과를 확인할 수 있습니다.</div>');
+      clearNode(els.needCardsGrid, '<div class="empty">분석 카드가 생성되면 욕구 카드가 자동으로 표시됩니다.</div>');
     }
 
     function syncScrollRegion(node, itemSelector) {
@@ -432,6 +455,53 @@
       });
     }
 
+    function renderNeedCards(needs) {
+      if (!els.needCardsGrid) return;
+      clearNode(els.needCardsGrid);
+      if (!Array.isArray(needs) || !needs.length) {
+        els.needCardsGrid.innerHTML = '<div class="empty">욕구 분석 결과가 없습니다.</div>';
+        return;
+      }
+      needs.forEach((need) => {
+        const isTop = need.rank <= 4;
+        const item = document.createElement("article");
+        item.className = "need-card-item" + (isTop ? " top-need" : "");
+        const scoreWidth = Math.max(0, Math.min(100, need.score || 0));
+        item.innerHTML = `
+          <div class="need-card-emoji">${need.creature_emoji || "🌊"}</div>
+          <p class="need-card-name">${need.label_ko}</p>
+          <p class="need-card-creature">${need.creature_name_ko || ""}</p>
+          <div class="need-card-score-bar">
+            <div class="need-card-score-fill" style="width:${scoreWidth}%"></div>
+          </div>
+          <p class="need-card-score-label">${need.score}점 · ${need.rank}위</p>
+          <p class="need-card-description">${need.creature_description || ""}</p>
+        `;
+        els.needCardsGrid.appendChild(item);
+      });
+    }
+
+    async function fetchAndRenderNeedCards() {
+      if (!state.sessionId || !state.conversationHistory.length) return;
+      const conversationText = state.conversationHistory
+        .map(({ role, text }) => `${role === "user" ? "사용자" : "AI"}: ${text}`)
+        .join("\n\n");
+      try {
+        const response = await fetch("/desire/need-cards/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: state.sessionId, conversation_text: conversationText }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        renderNeedCards(data.needs || []);
+      } catch (error) {
+        if (els.needCardsGrid) {
+          els.needCardsGrid.innerHTML = `<div class="empty">욕구 카드 분석 실패: ${String(error.message || error)}</div>`;
+        }
+      }
+    }
+
     function rememberSession(sessionId) {
       if (!sessionId) return;
       if (state.sessionId !== sessionId) {
@@ -528,8 +598,10 @@
       }
       if (payload.type === "analysis_card_ready") {
         state.closeIntent = null;
-        renderAnalysisCard(payload.card || {});
-        void loadCards();
+        const card = payload.card || {};
+        renderAnalysisCard(card);
+        renderSavedCards(Object.keys(card).length ? [card] : []);
+        void fetchAndRenderNeedCards();
       }
       if (payload.type === "analysis_card_failed") {
         state.closeIntent = null;

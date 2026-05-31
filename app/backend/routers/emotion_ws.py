@@ -70,8 +70,8 @@ from app.backend.services.convo_policy import is_activity_turn  # test patch poi
 from app.backend.services.close_policy import (
     CANCEL_CLOSE_STEP_TYPE,
     RESERVED_CONFIRM_CLOSE_TOKEN,
+    StreamingConfirmCloseFilter,
     build_cancel_close_ok_message,
-    extract_end_session_marker,
 )
 
 logger = logging.getLogger(__name__)
@@ -85,13 +85,17 @@ __all__ = ["ws_router", "router"]
 class WSConfig:
     SESSION_MAX_TURNS: int = int(os.getenv("SESSION_MAX_TURNS", "20"))
     WS_IDLE_TIMEOUT: float = float(os.getenv("WS_IDLE_TIMEOUT", "600"))
-    WS_SEND_BUFFER: int = int(os.getenv("WS_SEND_BUFFER", "20"))
+    WS_SEND_BUFFER: int = int(os.getenv("WS_SEND_BUFFER", "50"))
     WS_HEARTBEAT_SEC: float = float(os.getenv("WS_HEARTBEAT_SEC", "30"))
-    LLM_STREAM_TIMEOUT: float = float(os.getenv("LLM_STREAM_TIMEOUT", "75"))
+    LLM_STREAM_TIMEOUT: float = float(os.getenv("LLM_STREAM_TIMEOUT", "120"))
     RECOMMEND_TIMEOUT: float = float(os.getenv("RECOMMEND_TIMEOUT", "15"))
     ANALYSIS_CARD_TIMEOUT: float = float(os.getenv("ANALYSIS_CARD_TIMEOUT", "45"))
     WS_HISTORY_TURNS: int = max(5, min(10, int(os.getenv("WS_HISTORY_TURNS", "8"))))
     WS_MAX_USER_TEXT_LEN: int = int(os.getenv("WS_MAX_USER_TEXT_LEN", str(8 * 1024)))  # bytes/ASCII-ish
+    # [[CONFIRM_CLOSE]] 토큰은 STEP 12(마무리)에서만 나와야 함.
+    # user_order가 이 값 미만이면 토큰이 감지돼도 세션 종료를 억제한다.
+    # 12단계 대화 기준 최소 user_order ≈ 23 이므로 16을 기본값으로 사용.
+    MIN_CLOSE_ORDER: int = int(os.getenv("MIN_CLOSE_ORDER", "16"))
 
 CFG = WSConfig()
 
@@ -344,7 +348,7 @@ async def ws_emotion(websocket: WebSocket):
 
             # 파싱된 메시지 타입 로깅
             try:
-                logger.warning("WS PARSED | %s", msg.get("type"))
+                logger.debug("WS PARSED | %s", msg.get("type"))
             except Exception:
                 pass
 
@@ -411,9 +415,6 @@ async def ws_emotion(websocket: WebSocket):
                     continue
                 logger.info("WS recv user | %s", mask_preview(user_text, 100))
 
-                # MARK A: DB 조회 직전
-                logger.warning("WS MARK A | before DB fetch")
-
                 try:
                     prep = await _with_db(
                         _prepare_message_context,
@@ -434,10 +435,7 @@ async def ws_emotion(websocket: WebSocket):
                     await guard_send({"type": "error", "message": f"db_failed: {safe_str(e)}"})
                     continue
 
-                # MARK B: DB 조회 통과
-                logger.warning("WS MARK B | after DB fetch, before prompt")
-
-                # 프롬프트 로딩 + MARK C
+                # 프롬프트 로딩
                 try:
                     system_prompt = get_system_prompt()
                     task_prompt = get_task_prompt() if want_activity else None
@@ -446,13 +444,9 @@ async def ws_emotion(websocket: WebSocket):
                     await guard_send({"type": "error", "message": f"prompt_failed: {safe_str(e)}"})
                     continue
 
-                logger.warning("WS MARK C | after prompt load, before stream")
-
                 # 스트리밍 호출 + 누적 버퍼
                 assistant_chunks: list[str] = []
-                token_tail_buffer = ""
-                token_holdback = max(0, len(RESERVED_CONFIRM_CLOSE_TOKEN) - 1)
-                stream_piece_count = 0
+                close_filter = StreamingConfirmCloseFilter()
                 end_by_token = False
                 _BATCH_CHARS = 60  # 이 크기를 넘으면 WebSocket으로 즉시 flush
 
@@ -465,7 +459,7 @@ async def ws_emotion(websocket: WebSocket):
                     await guard_send(EmotionMessageResponse(type="message_delta", delta=safe).model_dump())
 
                 async def _consume_stream():
-                    nonlocal token_tail_buffer, stream_piece_count, end_by_token
+                    nonlocal end_by_token
                     batch_buf = ""
                     async for piece in iter_chunks_async(
                         stream_noa_response(
@@ -473,39 +467,24 @@ async def ws_emotion(websocket: WebSocket):
                             task_prompt=task_prompt,
                             conversation=convo,
                             temperature=0.7,
-                            max_tokens=800,
+                            max_tokens=1500,
                         )
                     ):
-                        stream_piece_count += 1
-                        token_tail_buffer += piece
-                        if stream_piece_count == 1:
-                            continue
-                        emit_raw = token_tail_buffer
-                        if token_holdback:
-                            emit_raw = token_tail_buffer[:-token_holdback]
-                            token_tail_buffer = token_tail_buffer[-token_holdback:]
-                        else:
-                            token_tail_buffer = ""
-                        if not emit_raw:
-                            continue
-                        batch_buf += emit_raw
-                        if len(batch_buf) >= _BATCH_CHARS:
-                            await _flush_batch(batch_buf)
-                            batch_buf = ""
+                        emit_raw = close_filter.feed(piece)
+                        if emit_raw:
+                            batch_buf += emit_raw
+                            if len(batch_buf) >= _BATCH_CHARS:
+                                await _flush_batch(batch_buf)
+                                batch_buf = ""
+                        if close_filter.end_detected:
+                            break
 
-                    # 루프 종료 후 배치 잔여분 flush
+                    tail = close_filter.flush()
+                    if tail:
+                        batch_buf += tail
                     if batch_buf:
                         await _flush_batch(batch_buf)
-
-                    final_piece, end_by_token = extract_end_session_marker(token_tail_buffer)
-                    safe_final_piece = leak_guard.sanitize_out(final_piece, sys_fp)
-                    if not safe_final_piece:
-                        return
-                    assistant_chunks.append(safe_final_piece)
-                    logger.debug("WS delta | %s", mask_preview(safe_final_piece))
-                    await guard_send(
-                        EmotionMessageResponse(type="message_delta", delta=safe_final_piece).model_dump()
-                    )
+                    end_by_token = close_filter.end_detected
 
                 stream_failed_reason: str | None = None
                 await guard_send(EmotionMessageResponse(type="message_start").model_dump())
@@ -521,6 +500,16 @@ async def ws_emotion(websocket: WebSocket):
                 if stream_failed_reason:
                     await guard_send({"type": "error", "message": stream_failed_reason, "turn_dropped": True})
                     continue
+
+                # [[CONFIRM_CLOSE]]는 STEP 12(마무리)에서만 유효.
+                # 너무 이른 단계에서 감지되면 LLM 오발생으로 판단해 세션 종료를 억제한다.
+                if end_by_token and user_order < CFG.MIN_CLOSE_ORDER:
+                    logger.warning(
+                        "WS [[CONFIRM_CLOSE]] suppressed at early turn | user_order=%s min=%s",
+                        user_order,
+                        CFG.MIN_CLOSE_ORDER,
+                    )
+                    end_by_token = False
 
                 assistant_text = "".join(assistant_chunks).strip()
                 if not assistant_text:
