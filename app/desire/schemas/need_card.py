@@ -19,6 +19,9 @@ class NeedScore(BaseModel):
     label_en: str
     score: int = Field(..., ge=0, le=100, description="Score between 0 and 100")
     rank: int = Field(..., ge=1, le=8, description="1=highest priority need, 8=lowest")
+    creature_name_ko: str = ""
+    creature_emoji: str = ""
+    creature_description: str = ""
 
     class Config:
         use_enum_values = True
@@ -49,6 +52,9 @@ class NeedCardResponse(BaseModel):
                     label_en=meta["label_en"],
                     score=int(scores_by_code[code_str]),
                     rank=idx,
+                    creature_name_ko=meta.get("creature_name_ko", ""),
+                    creature_emoji=meta.get("creature_emoji", ""),
+                    creature_description=meta.get("creature_description", ""),
                 )
             )
 
@@ -62,6 +68,9 @@ class NeedDetail(BaseModel):
     label_en: str
     description: str
     icon: str
+    creature_name_ko: str = ""
+    creature_emoji: str = ""
+    creature_description: str = ""
 
     class Config:
         use_enum_values = True
@@ -98,6 +107,9 @@ class NeedSelectionResponse(BaseModel):
                     label_en=meta["label_en"],
                     description=meta["description"],
                     icon=meta.get("icon", ""),
+                    creature_name_ko=meta.get("creature_name_ko", ""),
+                    creature_emoji=meta.get("creature_emoji", ""),
+                    creature_description=meta.get("creature_description", ""),
                 )
             )
         return cls(needs=needs)
