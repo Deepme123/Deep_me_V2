@@ -214,6 +214,7 @@ async def _run_pipeline(payload: dict[str, Any], signature: str, raw_body: bytes
             resp = await client.post(RENDER_DEPLOY_HOOK_URL)
             resp.raise_for_status()
             data = resp.json() if resp.content else {}
+            logger.info(f"Render 응답: {data}") 
             deploy_id = data.get("id", "") if isinstance(data, dict) else ""
             logger.info(f"Render 배포 트리거 완료 — deploy_id: {deploy_id}")
     except Exception as e:
