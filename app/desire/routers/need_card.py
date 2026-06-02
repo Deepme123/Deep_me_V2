@@ -1,11 +1,17 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 
 from app.db.session import get_session
+from app.desire.crud.need_card import get_need_card_result_by_session
+from app.desire.core.needs_definitions import NEEDS_METADATA, NeedCode
 from app.desire.schemas.need_card import (
     NeedCardRequest,
     NeedCardResponse,
+    NeedCardResultResponse,
     NeedListResponse,
+    NeedScore,
     NeedSelectionRequest,
     NeedSelectionResponse,
 )
@@ -28,6 +34,42 @@ async def analyze_need_cards(
     db: Session = Depends(get_session),
 ) -> NeedCardResponse:
     return await analyze_needs(payload.conversation_text, payload.session_id, db)
+
+
+@router.get("/results/{session_id}", response_model=NeedCardResultResponse)
+async def get_need_card_result(
+    session_id: UUID,
+    db: Session = Depends(get_session),
+) -> NeedCardResultResponse:
+    """세션에 저장된 욕구 분석 결과를 조회합니다. 홈 화면에서 선택한 욕구카드 표시에 사용."""
+    result = get_need_card_result_by_session(db, session_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="해당 세션의 욕구 분석 결과가 없습니다.")
+
+    needs: list[NeedScore] = []
+    for score_row in sorted(result.scores, key=lambda s: s.rank):
+        code = NeedCode(score_row.code)
+        meta = NEEDS_METADATA[code]
+        needs.append(
+            NeedScore(
+                code=code,
+                label_ko=meta["label_ko"],
+                label_en=meta["label_en"],
+                score=score_row.score,
+                rank=score_row.rank,
+                creature_name_ko=meta.get("creature_name_ko", ""),
+                creature_emoji=meta.get("creature_emoji", ""),
+                creature_description=meta.get("creature_description", ""),
+            )
+        )
+
+    return NeedCardResultResponse(
+        result_id=result.result_id,
+        session_id=result.session_id,
+        created_at=result.created_at,
+        needs=needs,
+        top4=needs[:4],
+    )
 
 
 @router.post("/selection", response_model=NeedSelectionResponse)

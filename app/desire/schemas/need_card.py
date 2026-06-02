@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List
 from uuid import UUID
 
@@ -92,6 +93,16 @@ class NeedListResponse(BaseModel):
             for code, meta in NEEDS_METADATA.items()
         ]
         return cls(needs=needs)
+
+
+class NeedCardResultResponse(BaseModel):
+    """세션에 저장된 욕구 분석 결과 조회 응답."""
+
+    result_id: UUID
+    session_id: UUID
+    created_at: datetime
+    needs: List[NeedScore]
+    top4: List[NeedScore]
 
 
 class NeedSelectionRequest(BaseModel):
