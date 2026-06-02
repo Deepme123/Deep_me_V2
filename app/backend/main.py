@@ -20,6 +20,7 @@ from app.backend.models import refresh_token as _m_refresh  # noqa: F401
 from app.backend.routers import emotion, auth, user, task, demo
 from app.backend.routers.emotion_ws import ws_router as emotion_ws_router
 from app.backend.routers import health_llm 
+from app.backend.routers import deploy_webhook
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ app.include_router(auth.auth_router)
 app.include_router(user.user_router)
 app.include_router(task.router)
 app.include_router(demo.router)
+app.include_router(deploy_webhook.router)
 
 
 @app.on_event("startup")
