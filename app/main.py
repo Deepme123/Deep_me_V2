@@ -13,3 +13,4 @@ from app.analyze.main import app as analyze_app  # noqa: E402
 
 app.mount("/desire", desire_app)
 app.mount("/analyze", analyze_app)
+
