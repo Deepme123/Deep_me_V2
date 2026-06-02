@@ -76,6 +76,24 @@ class NeedDetail(BaseModel):
         use_enum_values = True
 
 
+class NeedListResponse(BaseModel):
+    needs: List[NeedDetail]
+
+    @classmethod
+    def all(cls) -> "NeedListResponse":
+        needs = [
+            NeedDetail(
+                code=code,
+                label_ko=meta["label_ko"],
+                label_en=meta["label_en"],
+                description=meta["description"],
+                icon=meta.get("icon", ""),
+            )
+            for code, meta in NEEDS_METADATA.items()
+        ]
+        return cls(needs=needs)
+
+
 class NeedSelectionRequest(BaseModel):
     selected_needs: List[NeedCode] = Field(..., min_length=1, description="At least one selected need code")
 

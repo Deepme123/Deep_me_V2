@@ -8,12 +8,14 @@ from app.analyze.db import get_db
 from app.analyze.routers import cards as cards_router
 from app.analyze.routers import summaries as summaries_router
 from app.db.session import ANALYZE_REQUIRED_TABLES, ensure_required_tables, get_engine
+from app.backend.routers import deploy_webhook
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="DeepMe Analyze Card API")
 app.include_router(cards_router.router)
 app.include_router(summaries_router.router)
+app.include_router(deploy_webhook.router)  
 
 
 @app.on_event("startup")
