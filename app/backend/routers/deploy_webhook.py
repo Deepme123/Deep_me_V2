@@ -169,11 +169,10 @@ async def _send_discord(embed_payload: dict[str, Any]) -> None:
 # ──────────────────────────────────────────────
 # 파이프라인 (백그라운드 실행)
 # ──────────────────────────────────────────────
-async def _run_pipeline(payload: dict[str, Any], signature: str) -> None:
+async def _run_pipeline(payload: dict[str, Any], signature: str, raw_body: bytes) -> None:
     # 1. 서명 검증
     if signature and GITHUB_WEBHOOK_SECRET:
-        payload_bytes = json.dumps(payload, separators=(",", ":")).encode()
-        if not _verify_signature(payload_bytes, signature, GITHUB_WEBHOOK_SECRET):
+        if not _verify_signature(raw_body, signature, GITHUB_WEBHOOK_SECRET):
             logger.warning("GitHub 웹훅 서명 검증 실패 — 무시")
             return
 
@@ -215,7 +214,8 @@ async def _run_pipeline(payload: dict[str, Any], signature: str) -> None:
             resp = await client.post(RENDER_DEPLOY_HOOK_URL)
             resp.raise_for_status()
             data = resp.json() if resp.content else {}
-            deploy_id = data.get("id", "") if isinstance(data, dict) else ""
+            logger.info(f"Render 응답: {data}") 
+            deploy_id = data.get("deploy", {}).get("id", "") if isinstance(data, dict) else ""
             logger.info(f"Render 배포 트리거 완료 — deploy_id: {deploy_id}")
     except Exception as e:
         error_msg = _handle_http_error(e)
@@ -263,5 +263,5 @@ async def github_webhook(request: Request):
         raise HTTPException(status_code=400, detail="JSON 파싱 실패")
 
     # 즉시 200 반환 후 백그라운드에서 파이프라인 실행
-    asyncio.create_task(_run_pipeline(payload, signature))
+    asyncio.create_task(_run_pipeline(payload, signature, body))
     return {"message": "웹훅 수신 완료 — 파이프라인 실행 중"}
