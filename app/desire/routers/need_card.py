@@ -1,12 +1,14 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session
 
 from app.db.session import get_session
 from app.backend.dependencies.auth import get_current_user
-from app.desire.crud.need_card import get_last_need_card_result_by_user
+from app.desire.crud.need_card import get_last_need_card_result_by_user, get_need_card_history_by_user
 from app.desire.schemas.need_card import (
+    NeedCardHistoryItem,
+    NeedCardHistoryResponse,
     NeedCardRequest,
     NeedCardResponse,
     NeedListResponse,
@@ -32,6 +34,32 @@ async def analyze_need_cards(
     db: Session = Depends(get_session),
 ) -> NeedCardResponse:
     return await analyze_needs(payload.conversation_text, payload.session_id, db)
+
+
+@router.get("/history", response_model=NeedCardHistoryResponse)
+async def get_need_card_history(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user),
+) -> NeedCardHistoryResponse:
+    """로그인 유저의 욕구 분석 히스토리 목록을 반환합니다."""
+    rows, total = get_need_card_history_by_user(db, UUID(user_id), limit=limit, offset=offset)
+
+    items = []
+    for row in rows:
+        scores_by_code = {score.code: score.score for score in row.scores}
+        card_response = NeedCardResponse.from_scores(scores_by_code)
+        items.append(
+            NeedCardHistoryItem(
+                result_id=row.result_id,
+                session_id=row.session_id,
+                created_at=row.created_at,
+                top4=card_response.top4,
+            )
+        )
+
+    return NeedCardHistoryResponse(items=items, total=total)
 
 
 @router.get("/last-selection", response_model=NeedCardResponse)

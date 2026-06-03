@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List
 from uuid import UUID
 
@@ -92,6 +93,20 @@ class NeedListResponse(BaseModel):
             for code, meta in NEEDS_METADATA.items()
         ]
         return cls(needs=needs)
+
+
+class NeedCardHistoryItem(BaseModel):
+    result_id: UUID
+    session_id: UUID
+    created_at: datetime
+    top4: List[NeedScore]
+
+    model_config = {"from_attributes": True}
+
+
+class NeedCardHistoryResponse(BaseModel):
+    items: List[NeedCardHistoryItem]
+    total: int
 
 
 class NeedSelectionRequest(BaseModel):

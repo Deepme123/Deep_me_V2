@@ -23,6 +23,27 @@ def get_last_need_card_result_by_user(
     return session.exec(stmt).first()
 
 
+def get_need_card_history_by_user(
+    session: Session,
+    user_id: UUID,
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[list[NeedCardResult], int]:
+    from app.backend.models.emotion import EmotionSession
+    from sqlmodel import func
+
+    base = (
+        select(NeedCardResult)
+        .join(EmotionSession, NeedCardResult.session_id == EmotionSession.session_id)
+        .where(EmotionSession.user_id == user_id)
+    )
+    total = session.exec(select(func.count()).select_from(base.subquery())).one()
+    rows = session.exec(
+        base.order_by(NeedCardResult.created_at.desc()).limit(limit).offset(offset)
+    ).all()
+    return list(rows), total
+
+
 def save_need_card_result(
     session: Session,
     session_id: UUID,
