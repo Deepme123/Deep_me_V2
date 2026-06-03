@@ -11,9 +11,7 @@ from app.desire.schemas.need_card import (
     NeedCardHistoryResponse,
     NeedCardRequest,
     NeedCardResponse,
-    NeedCardResultResponse,
     NeedListResponse,
-    NeedScore,
     NeedSelectionRequest,
     NeedSelectionResponse,
 )
