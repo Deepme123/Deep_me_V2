@@ -1,12 +1,14 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session
 
 from app.db.session import get_session
-from app.desire.crud.need_card import get_need_card_result_by_session
-from app.desire.core.needs_definitions import NEEDS_METADATA, NeedCode
+from app.backend.dependencies.auth import get_current_user
+from app.desire.crud.need_card import get_last_need_card_result_by_user, get_need_card_history_by_user
 from app.desire.schemas.need_card import (
+    NeedCardHistoryItem,
+    NeedCardHistoryResponse,
     NeedCardRequest,
     NeedCardResponse,
     NeedCardResultResponse,
@@ -36,40 +38,44 @@ async def analyze_need_cards(
     return await analyze_needs(payload.conversation_text, payload.session_id, db)
 
 
-@router.get("/results/{session_id}", response_model=NeedCardResultResponse)
-async def get_need_card_result(
-    session_id: UUID,
+@router.get("/history", response_model=NeedCardHistoryResponse)
+async def get_need_card_history(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_session),
-) -> NeedCardResultResponse:
-    """세션에 저장된 욕구 분석 결과를 조회합니다. 홈 화면에서 선택한 욕구카드 표시에 사용."""
-    result = get_need_card_result_by_session(db, session_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail="해당 세션의 욕구 분석 결과가 없습니다.")
+    user_id: str = Depends(get_current_user),
+) -> NeedCardHistoryResponse:
+    """로그인 유저의 욕구 분석 히스토리 목록을 반환합니다."""
+    rows, total = get_need_card_history_by_user(db, UUID(user_id), limit=limit, offset=offset)
 
-    needs: list[NeedScore] = []
-    for score_row in sorted(result.scores, key=lambda s: s.rank):
-        code = NeedCode(score_row.code)
-        meta = NEEDS_METADATA[code]
-        needs.append(
-            NeedScore(
-                code=code,
-                label_ko=meta["label_ko"],
-                label_en=meta["label_en"],
-                score=score_row.score,
-                rank=score_row.rank,
-                creature_name_ko=meta.get("creature_name_ko", ""),
-                creature_emoji=meta.get("creature_emoji", ""),
-                creature_description=meta.get("creature_description", ""),
+    items = []
+    for row in rows:
+        scores_by_code = {score.code: score.score for score in row.scores}
+        card_response = NeedCardResponse.from_scores(scores_by_code)
+        items.append(
+            NeedCardHistoryItem(
+                result_id=row.result_id,
+                session_id=row.session_id,
+                created_at=row.created_at,
+                top4=card_response.top4,
             )
         )
 
-    return NeedCardResultResponse(
-        result_id=result.result_id,
-        session_id=result.session_id,
-        created_at=result.created_at,
-        needs=needs,
-        top4=needs[:4],
-    )
+    return NeedCardHistoryResponse(items=items, total=total)
+
+
+@router.get("/last-selection", response_model=NeedCardResponse)
+async def get_last_selection(
+    db: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user),
+) -> NeedCardResponse:
+    """로그인 유저의 가장 최근 욕구 분석 결과를 반환합니다."""
+    result = get_last_need_card_result_by_user(db, UUID(user_id))
+    if result is None:
+        raise HTTPException(status_code=404, detail="저장된 욕구 분석 결과가 없습니다.")
+
+    scores_by_code = {score.code: score.score for score in result.scores}
+    return NeedCardResponse.from_scores(scores_by_code)
 
 
 @router.post("/selection", response_model=NeedSelectionResponse)

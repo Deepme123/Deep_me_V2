@@ -95,14 +95,18 @@ class NeedListResponse(BaseModel):
         return cls(needs=needs)
 
 
-class NeedCardResultResponse(BaseModel):
-    """세션에 저장된 욕구 분석 결과 조회 응답."""
-
+class NeedCardHistoryItem(BaseModel):
     result_id: UUID
     session_id: UUID
     created_at: datetime
-    needs: List[NeedScore]
     top4: List[NeedScore]
+
+    model_config = {"from_attributes": True}
+
+
+class NeedCardHistoryResponse(BaseModel):
+    items: List[NeedCardHistoryItem]
+    total: int
 
 
 class NeedSelectionRequest(BaseModel):

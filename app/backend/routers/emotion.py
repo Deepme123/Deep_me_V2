@@ -13,6 +13,7 @@ from app.backend.services.close_policy import (
     extract_end_session_marker,
 )
 from app.backend.schemas.emotion import (
+    ActiveSessionResponse,
     EmotionSessionCreate,
     EmotionSessionRead,
     EmotionStepCreate,
@@ -36,6 +37,43 @@ def _emotion_user_id(
     current_user: str | None = Depends(get_current_user_optional),
 ) -> UUID:
     return resolve_emotion_user_id(db, current_user)
+
+
+@router.get("/sessions/active", response_model=ActiveSessionResponse)
+def get_active_session(
+    db: Session = Depends(get_session),
+    emotion_user_id: UUID = Depends(_emotion_user_id),
+):
+    """진행 중인 세션(ended_at IS NULL) 중 가장 최근 것과 대화 내역을 반환합니다."""
+    sess = db.exec(
+        select(EmotionSession)
+        .where(EmotionSession.user_id == emotion_user_id)
+        .where(EmotionSession.ended_at == None)  # noqa: E711
+        .order_by(EmotionSession.started_at.desc())
+        .limit(1)
+    ).first()
+    if not sess:
+        raise HTTPException(status_code=404, detail="active session not found")
+
+    steps = db.exec(
+        select(EmotionStep)
+        .where(EmotionStep.session_id == sess.session_id)
+        .order_by(EmotionStep.step_order)
+    ).all()
+
+    return ActiveSessionResponse(session=sess, steps=steps)
+
+
+@router.get("/sessions/{session_id}", response_model=EmotionSessionRead)
+def get_session(
+    session_id: UUID,
+    db: Session = Depends(get_session),
+    emotion_user_id: UUID = Depends(_emotion_user_id),
+):
+    sess = db.get(EmotionSession, session_id)
+    if not sess or sess.user_id != emotion_user_id:
+        raise HTTPException(status_code=404, detail="session not found")
+    return sess
 
 
 @router.get("/sessions", response_model=list[EmotionSessionRead])

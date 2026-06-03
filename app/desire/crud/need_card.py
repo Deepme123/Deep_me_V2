@@ -1,4 +1,5 @@
 from uuid import UUID
+from typing import Optional
 
 from sqlmodel import Session, select
 
@@ -6,12 +7,41 @@ from app.desire.models.need_card import NeedCardResult, NeedCardScore
 from app.desire.schemas.need_card import NeedScore
 
 
-def get_need_card_result_by_session(session: Session, session_id: UUID) -> NeedCardResult | None:
-    return session.exec(
+def get_last_need_card_result_by_user(
+    session: Session,
+    user_id: UUID,
+) -> Optional[NeedCardResult]:
+    from app.backend.models.emotion import EmotionSession
+
+    stmt = (
         select(NeedCardResult)
-        .where(NeedCardResult.session_id == session_id)
+        .join(EmotionSession, NeedCardResult.session_id == EmotionSession.session_id)
+        .where(EmotionSession.user_id == user_id)
         .order_by(NeedCardResult.created_at.desc())
-    ).first()
+        .limit(1)
+    )
+    return session.exec(stmt).first()
+
+
+def get_need_card_history_by_user(
+    session: Session,
+    user_id: UUID,
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[list[NeedCardResult], int]:
+    from app.backend.models.emotion import EmotionSession
+    from sqlmodel import func
+
+    base = (
+        select(NeedCardResult)
+        .join(EmotionSession, NeedCardResult.session_id == EmotionSession.session_id)
+        .where(EmotionSession.user_id == user_id)
+    )
+    total = session.exec(select(func.count()).select_from(base.subquery())).one()
+    rows = session.exec(
+        base.order_by(NeedCardResult.created_at.desc()).limit(limit).offset(offset)
+    ).all()
+    return list(rows), total
 
 
 def save_need_card_result(

@@ -63,6 +63,11 @@ class EmotionStepGenerateInput(BaseModel):
     system_prompt: Optional[str] = None
 
 
+class ActiveSessionResponse(BaseModel):
+    session: EmotionSessionRead
+    steps: List["EmotionStepRead"]
+
+
 class EmotionOpenRequest(BaseModel):
     type: Literal["open"] = "open"
     access_token: Optional[str] = None
