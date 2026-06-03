@@ -1,7 +1,11 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 
 from app.db.session import get_session
+from app.backend.dependencies.auth import get_current_user
+from app.desire.crud.need_card import get_last_need_card_result_by_user
 from app.desire.schemas.need_card import (
     NeedCardRequest,
     NeedCardResponse,
@@ -28,6 +32,20 @@ async def analyze_need_cards(
     db: Session = Depends(get_session),
 ) -> NeedCardResponse:
     return await analyze_needs(payload.conversation_text, payload.session_id, db)
+
+
+@router.get("/last-selection", response_model=NeedCardResponse)
+async def get_last_selection(
+    db: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user),
+) -> NeedCardResponse:
+    """로그인 유저의 가장 최근 욕구 분석 결과를 반환합니다."""
+    result = get_last_need_card_result_by_user(db, UUID(user_id))
+    if result is None:
+        raise HTTPException(status_code=404, detail="저장된 욕구 분석 결과가 없습니다.")
+
+    scores_by_code = {score.code: score.score for score in result.scores}
+    return NeedCardResponse.from_scores(scores_by_code)
 
 
 @router.post("/selection", response_model=NeedSelectionResponse)
