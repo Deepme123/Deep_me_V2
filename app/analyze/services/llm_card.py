@@ -60,7 +60,7 @@ _CARD_SCHEMA = LLMJsonSchema(
             "insight",
         ],
         "properties": {
-            "summary": {"type": "string"},
+            "summary": {"type": "string", "maxLength": 20},
             "core_emotions": {
                 "type": "array",
                 "items": {
@@ -155,7 +155,7 @@ Return JSON only. Keep the JSON field names exactly as provided in the schema. W
 {_TAXONOMY_BLOCK}
 
 Field definitions:
-- summary: 대화의 핵심을 사용자 경험 중심으로 요약한 1~2문장. 사용자가 직접 한 말의 뉘앙스를 살릴 것.
+- summary: 대화의 핵심을 사용자 경험 중심으로 요약한 짧은 제목. 반드시 20자 이내로 작성할 것. 사용자가 직접 한 말의 뉘앙스를 살릴 것.
 - core_emotions: 1~3개의 감정 항목. 각 항목은 반드시:
     * "primary": 위 목록의 상위감정 레이블 중 정확히 하나
     * "sub": 해당 상위감정 하위 목록에서만 고른 1개 이상의 감정 레이블

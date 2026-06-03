@@ -33,6 +33,44 @@ async def recommend_tasks_async(session_id: UUID, max_items: int) -> list[dict]:
     return await asyncio.to_thread(_work)
 
 
+async def generate_need_card_async(session_id: UUID) -> None:
+    def _work() -> None:
+        from sqlmodel import select
+
+        from app.backend.models.emotion import EmotionStep
+        from app.desire.crud.need_card import save_need_card_result
+        from app.desire.services.need_analyzer import _call_llm, _fallback_need_scores
+
+        with session_scope() as db:
+            rows = db.exec(
+                select(EmotionStep)
+                .where(EmotionStep.session_id == session_id)
+                .order_by(EmotionStep.step_order)
+            ).all()
+
+            lines: list[str] = []
+            for row in rows:
+                if row.step_type not in {"user", "assistant"}:
+                    continue
+                if row.user_input:
+                    lines.append(f"USER: {row.user_input}")
+                if row.gpt_response:
+                    lines.append(f"NOA: {row.gpt_response}")
+
+            conversation_text = "\n".join(lines)
+            if not conversation_text.strip():
+                return
+
+            try:
+                need_scores = _call_llm(conversation_text)
+            except Exception:
+                need_scores = _fallback_need_scores()
+
+            save_need_card_result(db, session_id, need_scores)
+
+    await asyncio.to_thread(_work)
+
+
 async def generate_analysis_card_async(session_id: UUID) -> dict:
     def _work() -> dict:
         from app.analyze.routers.cards import (
@@ -102,6 +140,18 @@ async def finalize_close(
                     "session_id": session_id,
                     "card": card,
                 }
+            )
+
+        try:
+            await asyncio.wait_for(
+                generate_need_card_async(session_id),
+                timeout=analysis_card_timeout,
+            )
+        except Exception as exc:
+            logger.exception(
+                "need card generation failed after close | session_id=%s | %s",
+                session_id,
+                safe_str(exc),
             )
     return True
 
