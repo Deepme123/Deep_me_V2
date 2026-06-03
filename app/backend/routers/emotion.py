@@ -38,6 +38,18 @@ def _emotion_user_id(
     return resolve_emotion_user_id(db, current_user)
 
 
+@router.get("/sessions/{session_id}", response_model=EmotionSessionRead)
+def get_session(
+    session_id: UUID,
+    db: Session = Depends(get_session),
+    emotion_user_id: UUID = Depends(_emotion_user_id),
+):
+    sess = db.get(EmotionSession, session_id)
+    if not sess or sess.user_id != emotion_user_id:
+        raise HTTPException(status_code=404, detail="session not found")
+    return sess
+
+
 @router.get("/sessions", response_model=list[EmotionSessionRead])
 def list_sessions(
     db: Session = Depends(get_session),
