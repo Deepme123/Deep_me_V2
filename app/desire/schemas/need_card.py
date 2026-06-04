@@ -110,39 +110,25 @@ class NeedCardHistoryResponse(BaseModel):
 
 
 class NeedSelectionRequest(BaseModel):
-    selected_needs: List[NeedCode] = Field(..., min_length=1, description="At least one selected need code")
-
-    @field_validator("selected_needs")
-    @classmethod
-    def ensure_unique(cls, values: List[NeedCode]) -> List[NeedCode]:
-        if len(values) != len(set(values)):
-            raise ValueError("Duplicated need codes are not allowed.")
-        return values
+    selected_need: NeedCode = Field(..., description="Selected need code")
 
     class Config:
         use_enum_values = True
 
 
-class NeedSelectionResponse(BaseModel):
-    needs: List[NeedDetail]
-
+class NeedSelectionResponse(NeedDetail):
     @classmethod
-    def from_codes(cls, codes: List[NeedCode]) -> "NeedSelectionResponse":
-        needs: List[NeedDetail] = []
-        for code in codes:
-            meta = NEEDS_METADATA.get(code)
-            if not meta:
-                continue
-            needs.append(
-                NeedDetail(
-                    code=code,
-                    label_ko=meta["label_ko"],
-                    label_en=meta["label_en"],
-                    description=meta["description"],
-                    icon=meta.get("icon", ""),
-                    creature_name_ko=meta.get("creature_name_ko", ""),
-                    creature_emoji=meta.get("creature_emoji", ""),
-                    creature_description=meta.get("creature_description", ""),
-                )
-            )
-        return cls(needs=needs)
+    def from_code(cls, code: str) -> "NeedSelectionResponse":
+        meta = NEEDS_METADATA.get(NeedCode(code))
+        if not meta:
+            raise ValueError(f"Unknown need code: {code}")
+        return cls(
+            code=NeedCode(code),
+            label_ko=meta["label_ko"],
+            label_en=meta["label_en"],
+            description=meta["description"],
+            icon=meta.get("icon", ""),
+            creature_name_ko=meta.get("creature_name_ko", ""),
+            creature_emoji=meta.get("creature_emoji", ""),
+            creature_description=meta.get("creature_description", ""),
+        )
