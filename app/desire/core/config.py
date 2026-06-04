@@ -7,7 +7,7 @@ class Settings(BaseModel):
     llm_provider: str = "openai"
     openai_api_key: str = "dummy-key"
     anthropic_api_key: str = ""
-    openai_model: str = "gpt-5"
+    openai_model: str = "gpt-5.4-mini-2026-03-17"
     llm_temperature: float = 0.7
     llm_max_tokens: int = 800
     llm_timeout_sec: float = 15.0
@@ -15,7 +15,7 @@ class Settings(BaseModel):
     @classmethod
     def from_env(cls) -> "Settings":
         llm = get_llm_settings(
-            model_default="gpt-4.1-mini",
+            model_default="gpt-5.4-mini-2026-03-17",
             model_legacy_names=("NEED_CARD_MODEL",),
             timeout_default=15.0,
         )
