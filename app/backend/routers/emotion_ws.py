@@ -197,6 +197,177 @@ async def ws_emotion(websocket: WebSocket):
             logger=logger,
         )
 
+    async def _handle_message(msg: dict) -> bool:
+        """MSG_MESSAGE 처리. True 반환 시 루프 종료."""
+        nonlocal activity_fired, recommend_fuse_tripped
+
+        if not session_id:
+            await guard_send({"type": "error", "message": "no session"})
+            return False
+
+        try:
+            payload = EmotionMessageRequest(**msg)
+        except Exception as e:
+            await guard_send({"type": "error", "message": f"bad message payload: {e}"})
+            return False
+
+        user_text = payload.text or ""
+        if len(user_text.encode("utf-8")) > CFG.WS_MAX_USER_TEXT_LEN:
+            await guard_send({"type": "error", "message": "message_too_large"})
+            return False
+        logger.info("WS recv user | %s", mask_preview(user_text, 100))
+
+        try:
+            prep = await session_with_db(
+                lambda db: session_prepare_message_context(
+                    db,
+                    session_id,
+                    user_text,
+                    ws_history_turns=CFG.WS_HISTORY_TURNS,
+                    already_fired=activity_fired,
+                )
+            )
+            want_activity = bool(prep.get("want_activity"))
+            user_order = int(prep.get("user_order") or 0)
+            assistant_order = int(prep.get("assistant_order") or 0)
+            convo = prep.get("conversation") or []
+        except TurnLimitReached:
+            await guard_send({"type": "limit", "message": "max turns reached"})
+            return False
+        except Exception as e:
+            logger.exception("WS DB fetch failed")
+            await guard_send({"type": "error", "message": f"db_failed: {safe_str(e)}"})
+            return False
+
+        try:
+            system_prompt = get_system_prompt()
+            task_prompt = get_task_prompt() if want_activity else None
+        except Exception as e:
+            logger.exception("WS prompt load failed")
+            await guard_send({"type": "error", "message": f"prompt_failed: {safe_str(e)}"})
+            return False
+
+        assistant_chunks: list[str] = []
+        close_filter = StreamingConfirmCloseFilter()
+        end_by_token = False
+        _BATCH_CHARS = 60
+
+        async def _flush_batch(buf: str) -> None:
+            safe = leak_guard.sanitize_out(buf, sys_fp)
+            if not safe:
+                return
+            assistant_chunks.append(safe)
+            logger.debug("WS delta | %s", mask_preview(safe))
+            await guard_send(EmotionMessageResponse(type="message_delta", delta=safe).model_dump())
+
+        async def _consume_stream():
+            nonlocal end_by_token
+            batch_buf = ""
+            async for piece in iter_chunks_async(
+                stream_noa_response(
+                    system_prompt=system_prompt,
+                    task_prompt=task_prompt,
+                    conversation=convo,
+                    temperature=0.7,
+                    max_tokens=1500,
+                )
+            ):
+                emit_raw = close_filter.feed(piece)
+                if emit_raw:
+                    batch_buf += emit_raw
+                    if len(batch_buf) >= _BATCH_CHARS:
+                        await _flush_batch(batch_buf)
+                        batch_buf = ""
+                if close_filter.end_detected:
+                    break
+
+            tail = close_filter.flush()
+            if tail:
+                batch_buf += tail
+            if batch_buf:
+                await _flush_batch(batch_buf)
+            end_by_token = close_filter.end_detected
+
+        stream_failed_reason: str | None = None
+        await guard_send(EmotionMessageResponse(type="message_start").model_dump())
+        try:
+            await asyncio.wait_for(_consume_stream(), timeout=CFG.LLM_STREAM_TIMEOUT)
+        except asyncio.TimeoutError:
+            stream_failed_reason = "stream_timeout"
+        except Exception as e:
+            stream_failed_reason = f"stream_failed:{safe_str(e)}"
+        finally:
+            await guard_send(EmotionMessageResponse(type="message_end").model_dump())
+
+        if stream_failed_reason:
+            await guard_send({"type": "error", "message": stream_failed_reason, "turn_dropped": True})
+            return False
+
+        # [[CONFIRM_CLOSE]]는 STEP 12(마무리)에서만 유효.
+        # 너무 이른 단계에서 감지되면 LLM 오발생으로 판단해 세션 종료를 억제한다.
+        if end_by_token and user_order < CFG.MIN_CLOSE_ORDER:
+            logger.warning(
+                "WS [[CONFIRM_CLOSE]] suppressed at early turn | user_order=%s min=%s",
+                user_order,
+                CFG.MIN_CLOSE_ORDER,
+            )
+            end_by_token = False
+
+        assistant_text = "".join(assistant_chunks).strip()
+        if not assistant_text:
+            await guard_send({"type": "error", "message": "empty_assistant_response", "turn_dropped": True})
+            return False
+
+        try:
+            await session_with_db(
+                session_commit_full_turn,
+                session_id,
+                user_text,
+                assistant_text,
+                user_order,
+                assistant_order,
+                add_activity_marker=want_activity,
+            )
+        except TurnLimitReached:
+            await guard_send({"type": "limit", "message": "max turns reached"})
+            return False
+        except Exception:
+            logger.exception("WS assistant-step commit failed")
+            await guard_send({"type": "error", "message": "server_error:assistant_step_commit"})
+            return False
+
+        if want_activity:
+            activity_fired = True
+
+        await guard_send(
+            EmotionMessageResponse(type="message", message=assistant_text).model_dump()
+        )
+
+        if end_by_token:
+            close_payload = EmotionCloseRequest()
+            return await finalize_close(close_payload, trigger_analysis_card=True)
+
+        if want_activity:
+            if recommend_fuse_tripped:
+                await guard_send({"type": "error", "message": "recommend_unavailable"})
+            else:
+                try:
+                    items = await asyncio.wait_for(
+                        post_action_recommend_tasks_async(session_id, 5),
+                        timeout=CFG.RECOMMEND_TIMEOUT,
+                    )
+                except Exception as e:
+                    recommend_fuse_tripped = True
+                    logger.warning("task recommend failed | %s", safe_str(e))
+                    await guard_send({"type": "error", "message": "recommend_unavailable"})
+                else:
+                    if items:
+                        await guard_send(
+                            TaskRecommendResponse(type="task_recommend_ok", items=items).model_dump()
+                        )
+
+        return False
+
     send_task = asyncio.create_task(outbound.sender())
 
     # ── 연결 직후 인증된 사용자 기준으로 세션 자동 오픈
@@ -335,183 +506,8 @@ async def ws_emotion(websocket: WebSocket):
 
             # ── 사용자 메시지 처리
             elif typ == MSG_MESSAGE:
-                if not session_id:
-                    await guard_send({"type": "error", "message": "no session"})
-                    continue
-
-                try:
-                    payload = EmotionMessageRequest(**msg)
-                except Exception as e:
-                    await guard_send({"type": "error", "message": f"bad message payload: {e}"})
-                    continue
-
-                user_text = payload.text or ""
-                if len(user_text.encode("utf-8")) > CFG.WS_MAX_USER_TEXT_LEN:
-                    await guard_send({"type": "error", "message": "message_too_large"})
-                    continue
-                logger.info("WS recv user | %s", mask_preview(user_text, 100))
-
-                try:
-                    prep = await session_with_db(
-                        lambda db: session_prepare_message_context(
-                            db,
-                            session_id,
-                            user_text,
-                            ws_history_turns=CFG.WS_HISTORY_TURNS,
-                            already_fired=activity_fired,
-                        )
-                    )
-                    transcript_rows = prep.get("transcript_rows") or prep.get("steps") or []
-                    want_activity = bool(prep.get("want_activity"))
-                    user_order = int(prep.get("user_order") or 0)
-                    assistant_order = int(prep.get("assistant_order") or 0)
-                    convo = prep.get("conversation") or []
-                except TurnLimitReached:
-                    await guard_send({"type": "limit", "message": "max turns reached"})
-                    continue
-                except Exception as e:
-                    logger.exception("WS DB fetch failed")
-                    await guard_send({"type": "error", "message": f"db_failed: {safe_str(e)}"})
-                    continue
-
-                # 프롬프트 로딩
-                try:
-                    system_prompt = get_system_prompt()
-                    task_prompt = get_task_prompt() if want_activity else None
-                except Exception as e:
-                    logger.exception("WS prompt load failed")
-                    await guard_send({"type": "error", "message": f"prompt_failed: {safe_str(e)}"})
-                    continue
-
-                # 스트리밍 호출 + 누적 버퍼
-                assistant_chunks: list[str] = []
-                close_filter = StreamingConfirmCloseFilter()
-                end_by_token = False
-                _BATCH_CHARS = 60  # 이 크기를 넘으면 WebSocket으로 즉시 flush
-
-                async def _flush_batch(buf: str) -> None:
-                    safe = leak_guard.sanitize_out(buf, sys_fp)
-                    if not safe:
-                        return
-                    assistant_chunks.append(safe)
-                    logger.debug("WS delta | %s", mask_preview(safe))
-                    await guard_send(EmotionMessageResponse(type="message_delta", delta=safe).model_dump())
-
-                async def _consume_stream():
-                    nonlocal end_by_token
-                    batch_buf = ""
-                    async for piece in iter_chunks_async(
-                        stream_noa_response(
-                            system_prompt=system_prompt,
-                            task_prompt=task_prompt,
-                            conversation=convo,
-                            temperature=0.7,
-                            max_tokens=1500,
-                        )
-                    ):
-                        emit_raw = close_filter.feed(piece)
-                        if emit_raw:
-                            batch_buf += emit_raw
-                            if len(batch_buf) >= _BATCH_CHARS:
-                                await _flush_batch(batch_buf)
-                                batch_buf = ""
-                        if close_filter.end_detected:
-                            break
-
-                    tail = close_filter.flush()
-                    if tail:
-                        batch_buf += tail
-                    if batch_buf:
-                        await _flush_batch(batch_buf)
-                    end_by_token = close_filter.end_detected
-
-                stream_failed_reason: str | None = None
-                await guard_send(EmotionMessageResponse(type="message_start").model_dump())
-                try:
-                    await asyncio.wait_for(_consume_stream(), timeout=CFG.LLM_STREAM_TIMEOUT)
-                except asyncio.TimeoutError:
-                    stream_failed_reason = "stream_timeout"
-                except Exception as e:
-                    stream_failed_reason = f"stream_failed:{safe_str(e)}"
-                finally:
-                    await guard_send(EmotionMessageResponse(type="message_end").model_dump())
-
-                if stream_failed_reason:
-                    await guard_send({"type": "error", "message": stream_failed_reason, "turn_dropped": True})
-                    continue
-
-                # [[CONFIRM_CLOSE]]는 STEP 12(마무리)에서만 유효.
-                # 너무 이른 단계에서 감지되면 LLM 오발생으로 판단해 세션 종료를 억제한다.
-                if end_by_token and user_order < CFG.MIN_CLOSE_ORDER:
-                    logger.warning(
-                        "WS [[CONFIRM_CLOSE]] suppressed at early turn | user_order=%s min=%s",
-                        user_order,
-                        CFG.MIN_CLOSE_ORDER,
-                    )
-                    end_by_token = False
-
-                assistant_text = "".join(assistant_chunks).strip()
-                if not assistant_text:
-                    # 내용이 비면 저장하지 않고 종료
-                    await guard_send({"type": "error", "message": "empty_assistant_response", "turn_dropped": True})
-                    continue
-
-                # ② 사용자/어시스턴트 스텝을 한 트랜잭션으로 커밋
-                try:
-                    await session_with_db(
-                        session_commit_full_turn,
-                        session_id,
-                        user_text,
-                        assistant_text,
-                        user_order,
-                        assistant_order,
-                        add_activity_marker=want_activity,
-                    )
-                except TurnLimitReached:
-                    await guard_send({"type": "limit", "message": "max turns reached"})
-                    continue
-                except Exception:
-                    logger.exception("WS assistant-step commit failed")
-                    await guard_send({"type": "error", "message": "server_error:assistant_step_commit"})
-                    continue
-
-                if want_activity:
-                    activity_fired = True
-
-                await guard_send(
-                    EmotionMessageResponse(
-                        type="message",
-                        message=assistant_text,
-                    ).model_dump()
-                )
-
-                if end_by_token:
-                    payload = EmotionCloseRequest()
-                    if await finalize_close(payload, trigger_analysis_card=True):
-                        break
-                    continue
-
-                if want_activity:
-                    if recommend_fuse_tripped:
-                        await guard_send({"type": "error", "message": "recommend_unavailable"})
-                    else:
-                        try:
-                            items = await asyncio.wait_for(
-                                post_action_recommend_tasks_async(session_id, 5),
-                                timeout=CFG.RECOMMEND_TIMEOUT,
-                            )
-                        except Exception as e:
-                            recommend_fuse_tripped = True
-                            logger.warning("task recommend failed | %s", safe_str(e))
-                            await guard_send({"type": "error", "message": "recommend_unavailable"})
-                        else:
-                            if items:
-                                await guard_send(
-                                    TaskRecommendResponse(
-                                        type="task_recommend_ok",
-                                        items=items,
-                                    ).model_dump()
-                                )
+                if await _handle_message(msg):
+                    break
 
             # ── 세션 종료
             elif typ == MSG_CLOSE:
