@@ -1,9 +1,9 @@
 from uuid import UUID
-from typing import Optional
+from typing import List, Optional
 
 from sqlmodel import Session, select
 
-from app.desire.models.need_card import NeedCardResult, NeedCardScore
+from app.desire.models.need_card import NeedCardResult, NeedCardScore, UserNeedSelection
 from app.desire.schemas.need_card import NeedScore
 
 
@@ -66,3 +66,28 @@ def save_need_card_result(
     session.commit()
     session.refresh(result)
     return result
+
+
+def save_user_need_selection(
+    session: Session,
+    user_id: UUID,
+    selected_codes: List[str],
+) -> UserNeedSelection:
+    selection = UserNeedSelection(user_id=user_id, selected_codes=selected_codes)
+    session.add(selection)
+    session.commit()
+    session.refresh(selection)
+    return selection
+
+
+def get_last_user_need_selection(
+    session: Session,
+    user_id: UUID,
+) -> Optional[UserNeedSelection]:
+    stmt = (
+        select(UserNeedSelection)
+        .where(UserNeedSelection.user_id == user_id)
+        .order_by(UserNeedSelection.created_at.desc())
+        .limit(1)
+    )
+    return session.exec(stmt).first()

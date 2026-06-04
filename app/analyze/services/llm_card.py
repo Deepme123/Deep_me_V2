@@ -58,6 +58,7 @@ _CARD_SCHEMA = LLMJsonSchema(
             "behavior_patterns",
             "tags",
             "insight",
+            "thoughts",
         ],
         "properties": {
             "summary": {"type": "string", "maxLength": 20},
@@ -89,11 +90,17 @@ _CARD_SCHEMA = LLMJsonSchema(
                     "properties": {
                         "title": {"type": "string"},
                         "description": {"type": "string"},
+                        "interpretations": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 3,
+                            "maxItems": 3,
+                        },
                     },
-                    "required": ["title", "description"],
+                    "required": ["title", "description", "interpretations"],
                 },
                 "minItems": 1,
-                "maxItems": 4,
+                "maxItems": 2,
             },
             "physical_reactions": {
                 "type": "array",
@@ -139,6 +146,7 @@ _CARD_SCHEMA = LLMJsonSchema(
                 "items": {"type": "string"},
             },
             "insight": {"type": "string"},
+            "thoughts": {"type": "string"},
         },
     },
 )
@@ -163,9 +171,10 @@ Field definitions:
     * "reasoning": 그 감정 상태를 구체적으로 묘사하는 문장 1~3개. 사용자 발화를 살려 서술하며, 평가나 조언 없이 경험을 그대로 담을 것.
   목록에 없는 레이블은 절대 사용하지 말 것.
 - situation: 감정을 촉발한 구체적인 상황을 1~2문장으로. 사용자가 실제로 처한 맥락을 구체적으로 담을 것.
-- situation_steps: 대화에서 드러난 구체적인 상황 요소를 1~4개 카드로 구성. 각 항목은:
+- situation_steps: 대화에서 드러난 구체적인 상황 요소를 1~2개 카드로 구성. 각 항목은:
     * "title": 해당 상황을 한 줄로 요약 (명사형 또는 짧은 절). 사용자 발화에서 직접 따올 것. (예: "애인의 답이 늦고 더 이상 찾지 않음")
     * "description": 그 상황에서 사용자가 어떻게 느끼고 반응했는지 1문장. 사용자 말투를 살려 1인칭 서술체로. (예: "마음이 멀어진 것 같아, 나만 애쓰고 있는 기분이 들었어")
+    * "interpretations": 해당 상황에 대한 AI 해석 문장 정확히 3개. 서로 다른 관점(감정적·인지적·관계적)에서 각각 1문장. 사용자 경험에 밀착해 서술하며 일반론 금지.
 - physical_reactions: 신체 반응을 최소 1개, 최대 4개. 각 항목은:
     * "title": 신체 반응 이름 (예: "가슴이 조여옴")
     * "description": 그 반응이 나타난 맥락을 사용자 경험 기준으로 1문장. (예: "전하고 싶은 말이 막혀서 가슴이 답답했어")
@@ -179,6 +188,7 @@ Field definitions:
 - coping_actions: 시도했거나 가능한 대처 행동
 - tags: 짧은 주제 키워드
 - insight: 사용자 경험에서 발견되는 패턴이나 강점을 1~2문장으로. 일반론 금지, 이 대화에서만 보이는 것을 담을 것.
+- thoughts: 이 감정 경험을 겪는 사용자의 내면 생각·인지 흐름을 1~2문장으로. 사용자가 스스로에게 어떤 말을 하고 있는지, 어떤 믿음이나 해석이 작동하는지를 담을 것. 일반론 금지.
 """
 
 
@@ -233,6 +243,7 @@ class _SituationStep(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str
     description: str
+    interpretations: list[str]
 
 
 class _LLMCardPayload(BaseModel):
@@ -247,6 +258,7 @@ class _LLMCardPayload(BaseModel):
     coping_actions: list[str] | None = None
     tags: list[str] | None = None
     insight: str | None = None
+    thoughts: str | None = None
 
 
 def _get_card_llm_provider():

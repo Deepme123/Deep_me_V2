@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from sqlmodel import SQLModel, Field, Relationship
-from sqlalchemy import Column, ForeignKey, Index
+from sqlalchemy import Column, ForeignKey, Index, JSON
 
 
 class NeedCardResult(SQLModel, table=True):
@@ -38,3 +38,18 @@ class NeedCardScore(SQLModel, table=True):
     rank: int = Field(nullable=False)
 
     result: Optional[NeedCardResult] = Relationship(back_populates="scores")
+
+
+class UserNeedSelection(SQLModel, table=True):
+    __tablename__ = "user_need_selection"
+
+    selection_id: UUID = Field(default_factory=uuid4, primary_key=True)
+    user_id: UUID = Field(
+        sa_column=Column(
+            ForeignKey("user.user_id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    selected_codes: List[str] = Field(sa_column=Column(JSON, nullable=False))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
