@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi.encoders import jsonable_encoder
 
-from app.backend.db.session import session_scope
+from app.db.session import session_scope
 from app.backend.models.emotion import EmotionSession
 from app.backend.schemas.emotion import EmotionCloseRequest, EmotionCloseResponse
 from app.backend.services.task_recommend import recommend_tasks_from_session_core
