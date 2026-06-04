@@ -16,7 +16,7 @@ CORE_REQUIRED_TABLES = (
     "emotionsession",
     "emotionstep",
 )
-ANALYZE_REQUIRED_TABLES = CORE_REQUIRED_TABLES + ("emotioncard",)
+ANALYZE_REQUIRED_TABLES = CORE_REQUIRED_TABLES + ("analysiscard",)
 
 
 def _mask(url: str) -> str:

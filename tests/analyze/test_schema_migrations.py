@@ -69,14 +69,14 @@ def test_base_schema_migration_excludes_emotioncard():
             tmp_db.unlink()
 
 
-def test_head_migration_includes_emotioncard():
+def test_head_migration_includes_analysiscard():
     tmp_db = _new_tmp_db("head")
     try:
         _run_alembic(tmp_db, "head")
 
         assert _table_names(tmp_db) == [
             "alembic_version",
-            "emotioncard",
+            "analysiscard",
             "emotionsession",
             "emotionstep",
             "need_card_result",
@@ -84,8 +84,9 @@ def test_head_migration_includes_emotioncard():
             "refreshtoken",
             "task",
             "user",
+            "user_need_selection",
         ]
-        assert _alembic_version(tmp_db) == "0005_behavior_patterns"
+        assert _alembic_version(tmp_db) == "0008_rename_emotioncard_to_analysiscard"
     finally:
         if tmp_db.exists():
             tmp_db.unlink()
