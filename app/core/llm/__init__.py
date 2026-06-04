@@ -38,4 +38,8 @@ __all__ = [
     "OpenAIProvider",
     "create_llm_provider",
     "create_llm_provider_from_settings",
+    "get_backend_provider",
+    "get_card_provider",
+    "get_task_provider",
+    "get_desire_provider",
 ]
