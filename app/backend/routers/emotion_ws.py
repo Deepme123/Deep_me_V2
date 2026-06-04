@@ -8,7 +8,6 @@ import asyncio
 import logging
 import os
 from contextlib import suppress
-from typing import Callable, TypeVar
 
 from sqlalchemy.exc import IntegrityError
 from app.backend.db.session import session_scope  # 컨텍스트 매니저 사용
@@ -99,74 +98,11 @@ class WSConfig:
 
 CFG = WSConfig()
 
-T = TypeVar("T")
-
 class TurnLimitReached(Exception):
     """Raised when a session has reached the configured turn limit."""
 
 class SendBackpressure(Exception):
     """Raised when websocket send queue is saturated."""
-
-async def _with_db(fn: Callable[[Session], T], *args, **kwargs) -> T:
-    return await session_with_db(fn, *args, **kwargs)
-
-async def _ws_send_safe(websocket: WebSocket, data: dict, *, timeout: float | None = None) -> None:
-    await streaming_ws_send_safe(
-        websocket,
-        data,
-        timeout=timeout,
-        logger=logger,
-    )
-
-def _create_emotion_session(db: Session, uid_val: UUID | None) -> object:
-    return session_create_emotion_session(db, uid_val)
-
-def _prepare_message_context(
-    db: Session,
-    session_id: UUID,
-    user_text: str,
-    *,
-    already_fired: bool | None = None,
-) -> dict:
-    return session_prepare_message_context(
-        db,
-        session_id,
-        user_text,
-        ws_history_turns=CFG.WS_HISTORY_TURNS,
-        already_fired=already_fired,
-    )
-
-def _commit_full_turn(
-    db: Session,
-    session_id: UUID,
-    user_text: str,
-    assistant_text: str,
-    user_order: int,
-    assistant_order: int,
-    *,
-    add_activity_marker: bool,
-) -> None:
-    session_commit_full_turn(
-        db,
-        session_id,
-        user_text,
-        assistant_text,
-        user_order,
-        assistant_order,
-        add_activity_marker=add_activity_marker,
-    )
-
-def _close_session_record(db: Session, session_id: UUID, payload: EmotionCloseRequest) -> None:
-    session_close_session_record(db, session_id, payload)
-
-def _append_step_marker(db: Session, session_id: UUID, step_type: str) -> None:
-    session_append_step_marker(db, session_id, step_type)
-
-async def _recommend_tasks_async(session_id: UUID, max_items: int) -> list[dict]:
-    return await post_action_recommend_tasks_async(session_id, max_items)
-
-async def _generate_analysis_card_async(session_id: UUID) -> dict:
-    return await post_action_generate_analysis_card_async(session_id)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 라우터
@@ -228,10 +164,10 @@ async def ws_emotion(websocket: WebSocket):
         await outbound.flush()
 
     async def _close_session_record_async(session_id_arg: UUID, payload: EmotionCloseRequest) -> None:
-        await _with_db(_close_session_record, session_id_arg, payload)
+        await session_with_db(session_close_session_record, session_id_arg, payload)
 
     async def _append_step_marker_async(session_id_arg: UUID, step_type: str) -> None:
-        await _with_db(_append_step_marker, session_id_arg, step_type)
+        await session_with_db(session_append_step_marker, session_id_arg, step_type)
 
     async def finalize_close(
         payload: EmotionCloseRequest,
@@ -244,8 +180,8 @@ async def ws_emotion(websocket: WebSocket):
             trigger_analysis_card=trigger_analysis_card,
             close_session_record=_close_session_record_async,
             flush_outbound_messages=flush_outbound_messages,
-            send_immediate=lambda data: _ws_send_safe(websocket, data),
-            generate_analysis_card=_generate_analysis_card_async,
+            send_immediate=lambda data: streaming_ws_send_safe(websocket, data, logger=logger),
+            generate_analysis_card=post_action_generate_analysis_card_async,
             analysis_card_timeout=CFG.ANALYSIS_CARD_TIMEOUT,
             logger=logger,
         )
@@ -278,17 +214,17 @@ async def ws_emotion(websocket: WebSocket):
                 User = None  # type: ignore
 
             if uid and User:
-                user_exists = await _with_db(lambda db: db.get(User, uid) is not None)
+                user_exists = await session_with_db(lambda db: db.get(User, uid) is not None)
                 if not user_exists:
                     logger.warning("bootstrap: user not found | user_id=%s", uid)
                     await websocket.close(code=4401, reason="user_not_found")
                     return
 
             try:
-                session = await _with_db(_create_emotion_session, uid)
+                session = await session_with_db(session_create_emotion_session, uid)
             except IntegrityError as ie:
                 logger.warning("bootstrap commit FK failed; retrying as anonymous | %s", safe_str(ie))
-                session = await _with_db(_create_emotion_session, None)
+                session = await session_with_db(session_create_emotion_session, None)
 
             session_id = session.session_id  # ← 세션 아이디 보관
 
@@ -381,10 +317,10 @@ async def ws_emotion(websocket: WebSocket):
                 uid = auth_user_id
 
                 try:
-                    session = await _with_db(_create_emotion_session, uid)
+                    session = await session_with_db(session_create_emotion_session, uid)
                 except IntegrityError as ie:
                     logger.warning("open commit FK failed; retrying anonymous | %s", safe_str(ie))
-                    session = await _with_db(_create_emotion_session, None)
+                    session = await session_with_db(session_create_emotion_session, None)
 
                 session_id = session.session_id
 
@@ -416,11 +352,14 @@ async def ws_emotion(websocket: WebSocket):
                 logger.info("WS recv user | %s", mask_preview(user_text, 100))
 
                 try:
-                    prep = await _with_db(
-                        _prepare_message_context,
-                        session_id,
-                        user_text,
-                        already_fired=activity_fired,
+                    prep = await session_with_db(
+                        lambda db: session_prepare_message_context(
+                            db,
+                            session_id,
+                            user_text,
+                            ws_history_turns=CFG.WS_HISTORY_TURNS,
+                            already_fired=activity_fired,
+                        )
                     )
                     transcript_rows = prep.get("transcript_rows") or prep.get("steps") or []
                     want_activity = bool(prep.get("want_activity"))
@@ -519,8 +458,8 @@ async def ws_emotion(websocket: WebSocket):
 
                 # ② 사용자/어시스턴트 스텝을 한 트랜잭션으로 커밋
                 try:
-                    await _with_db(
-                        _commit_full_turn,
+                    await session_with_db(
+                        session_commit_full_turn,
                         session_id,
                         user_text,
                         assistant_text,
@@ -558,7 +497,7 @@ async def ws_emotion(websocket: WebSocket):
                     else:
                         try:
                             items = await asyncio.wait_for(
-                                _recommend_tasks_async(session_id, 5),
+                                post_action_recommend_tasks_async(session_id, 5),
                                 timeout=CFG.RECOMMEND_TIMEOUT,
                             )
                         except Exception as e:
@@ -634,7 +573,7 @@ async def ws_emotion(websocket: WebSocket):
 
                 try:
                     recs = await asyncio.wait_for(
-                        _recommend_tasks_async(session_id, payload.max_items or 5),
+                        post_action_recommend_tasks_async(session_id, payload.max_items or 5),
                         timeout=CFG.RECOMMEND_TIMEOUT,
                     )
                 except Exception as e:
@@ -658,7 +597,7 @@ async def ws_emotion(websocket: WebSocket):
     except Exception:
         logger.exception("WS fatal error")
         with suppress(Exception):
-            await _ws_send_safe(websocket, {"type": "error", "message": "fatal"})
+            await streaming_ws_send_safe(websocket, {"type": "error", "message": "fatal"}, logger=logger)
     finally:
         shutdown.set()
         with suppress(Exception):
