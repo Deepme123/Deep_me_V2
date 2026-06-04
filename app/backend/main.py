@@ -6,8 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
 
 from app.backend.core.logging_config import setup_logging
-from app.backend.db.session import get_engine
-from app.db.session import CORE_REQUIRED_TABLES
+from app.db.session import get_engine, CORE_REQUIRED_TABLES
 from app.db.health import check_db_tables, health_db_response
 from app.backend.core.rate_limit import limiter as rate_limiter, RATELIMIT_ENABLED
 
