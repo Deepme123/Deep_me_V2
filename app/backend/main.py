@@ -4,11 +4,11 @@ import logging
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
-from sqlmodel import text
 
 from app.backend.core.logging_config import setup_logging
 from app.backend.db.session import get_engine
-from app.db.session import CORE_REQUIRED_TABLES, ensure_required_tables
+from app.db.session import CORE_REQUIRED_TABLES
+from app.db.health import check_db_tables, health_db_response
 from app.backend.core.rate_limit import limiter as rate_limiter, RATELIMIT_ENABLED
 
 # 모델 모듈 임포트(테이블 등록 보장용)
@@ -64,12 +64,7 @@ app.include_router(deploy_webhook.router)
 
 @app.on_event("startup")
 def validate_required_tables() -> None:
-    with get_engine().connect() as conn:
-        conn.execute(text("SELECT 1"))
-    ensure_required_tables(CORE_REQUIRED_TABLES, schema="public")
-    logger.info("Required core tables verified")
-
-
+    check_db_tables(get_engine(), CORE_REQUIRED_TABLES, "core")
 
 
 
@@ -80,13 +75,4 @@ def health_app():
 
 @app.get("/health/db")
 def health_db():
-    try:
-        with get_engine().connect() as conn:
-            conn.execute(text("SELECT 1"))
-        ensure_required_tables(CORE_REQUIRED_TABLES, schema="public")
-        return {"ok": True}
-    except RuntimeError as exc:
-        logger.exception("Required core table check failed")
-        raise HTTPException(status_code=500, detail=str(exc))
-    except Exception:
-        raise HTTPException(status_code=500, detail="Database connection failed")
+    return health_db_response(get_engine(), CORE_REQUIRED_TABLES, "core")

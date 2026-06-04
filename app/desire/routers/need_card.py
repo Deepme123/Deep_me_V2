@@ -72,12 +72,12 @@ async def get_last_selection(
     db: Session = Depends(get_session),
     user_id: str = Depends(get_current_user),
 ) -> NeedSelectionResponse:
-    """로그인 유저가 마지막으로 선택한 욕구 목록을 반환합니다."""
+    """로그인 유저가 마지막으로 선택한 욕구 하나를 반환합니다."""
     selection = get_last_user_need_selection(db, UUID(user_id))
     if selection is None:
         raise HTTPException(status_code=404, detail="선택한 욕구가 없습니다.")
 
-    return NeedSelectionResponse.from_codes(selection.selected_codes)
+    return NeedSelectionResponse.from_code(selection.selected_codes[0])
 
 
 @router.post("/selection", response_model=NeedSelectionResponse)
@@ -87,9 +87,9 @@ async def post_selected_need_cards(
     user_id: str = Depends(get_current_user),
 ) -> NeedSelectionResponse:
     """사용자가 선택한 욕구를 저장하고 메타데이터를 반환합니다."""
-    codes = [str(c) for c in payload.selected_needs]
-    save_user_need_selection(db, UUID(user_id), codes)
+    code = str(payload.selected_need)
+    save_user_need_selection(db, UUID(user_id), [code])
     try:
-        return NeedSelectionResponse.from_codes(payload.selected_needs)
+        return NeedSelectionResponse.from_code(code)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"선택한 욕구를 처리하는 중 오류가 발생했습니다: {exc}")
