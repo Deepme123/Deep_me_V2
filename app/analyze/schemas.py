@@ -57,6 +57,7 @@ class CardCreate(BaseModel):
     coping_actions: Optional[List[str]] = None
     tags: Optional[List[str]] = None
     insight: Optional[str] = None
+    thoughts: Optional[str] = None
 
 
 class CardOut(BaseModel):
@@ -75,6 +76,7 @@ class CardOut(BaseModel):
     risk_level: Optional[str] = None
     tags: Optional[List[str]] = None
     insight: Optional[str] = None
+    thoughts: Optional[str] = None
     exportable: bool = True
 
 

@@ -58,6 +58,7 @@ _CARD_SCHEMA = LLMJsonSchema(
             "behavior_patterns",
             "tags",
             "insight",
+            "thoughts",
         ],
         "properties": {
             "summary": {"type": "string", "maxLength": 20},
@@ -145,6 +146,7 @@ _CARD_SCHEMA = LLMJsonSchema(
                 "items": {"type": "string"},
             },
             "insight": {"type": "string"},
+            "thoughts": {"type": "string"},
         },
     },
 )
@@ -186,6 +188,7 @@ Field definitions:
 - coping_actions: 시도했거나 가능한 대처 행동
 - tags: 짧은 주제 키워드
 - insight: 사용자 경험에서 발견되는 패턴이나 강점을 1~2문장으로. 일반론 금지, 이 대화에서만 보이는 것을 담을 것.
+- thoughts: 이 감정 경험을 겪는 사용자의 내면 생각·인지 흐름을 1~2문장으로. 사용자가 스스로에게 어떤 말을 하고 있는지, 어떤 믿음이나 해석이 작동하는지를 담을 것. 일반론 금지.
 """
 
 
@@ -255,6 +258,7 @@ class _LLMCardPayload(BaseModel):
     coping_actions: list[str] | None = None
     tags: list[str] | None = None
     insight: str | None = None
+    thoughts: str | None = None
 
 
 def _get_card_llm_provider():
