@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     llm_provider: str = "openai"
     openai_api_key: str = ""
     anthropic_api_key: str = ""
-    llm_model: str = "gpt-4o-mini"
+    llm_model: str = "gpt-5.4-mini-2026-03-17"
     llm_temperature: float = 0.7
     llm_max_tokens: int = 1500
     llm_timeout_sec: float = 60.0

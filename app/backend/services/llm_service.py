@@ -62,7 +62,7 @@ def _build_request_options(
 
 
 def get_backend_llm_info(*, model: Optional[str] = None) -> BackendLLMInfo:
-    settings = get_llm_settings(model_default="gpt-4o-mini", timeout_default=60.0)
+    settings = get_llm_settings(model_default="gpt-5.4-mini-2026-03-17", timeout_default=60.0)
     resolved_model = (model or settings.model).strip() or settings.model
     return BackendLLMInfo(
         provider=settings.provider,
