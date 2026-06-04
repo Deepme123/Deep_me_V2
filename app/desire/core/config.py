@@ -7,7 +7,7 @@ class Settings(BaseModel):
     llm_provider: str = "openai"
     openai_api_key: str = "dummy-key"
     anthropic_api_key: str = ""
-    openai_model: str = "gpt-4.1-mini"
+    openai_model: str = "gpt-5"
     llm_temperature: float = 0.7
     llm_max_tokens: int = 800
     llm_timeout_sec: float = 15.0
