@@ -32,6 +32,7 @@ class EmotionEntry(BaseModel):
 class SituationStep(BaseModel):
     title: str
     description: str
+    interpretations: Optional[List[str]] = None
 
 
 class PhysicalReactionItem(BaseModel):
