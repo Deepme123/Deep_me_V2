@@ -11,7 +11,7 @@ from sqlalchemy import Column, JSON
 from app.backend.models.emotion import EmotionSession
 
 class AnalysisCard(SQLModel, table=True):
-    __tablename__ = "emotioncard"
+    __tablename__ = "analysiscard"
 
     card_id: UUID = Field(
         default_factory=uuid4,

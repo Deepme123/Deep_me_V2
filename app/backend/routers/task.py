@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from app.backend.db.session import get_session
+from app.db.session import get_session
 from app.backend.dependencies.auth import get_current_user
 from app.backend.models.task import Task
 from app.backend.models.user import User

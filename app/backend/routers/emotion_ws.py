@@ -10,7 +10,7 @@ import os
 from contextlib import suppress
 
 from sqlalchemy.exc import IntegrityError
-from app.backend.db.session import session_scope  # 컨텍스트 매니저 사용
+from app.db.session import session_scope  # 컨텍스트 매니저 사용
 from app.backend.schemas.emotion import (
     ConfirmCloseRequest,
     EmotionOpenRequest,

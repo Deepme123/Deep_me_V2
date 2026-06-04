@@ -12,7 +12,7 @@ from fastapi.responses import RedirectResponse, JSONResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from app.backend.db.session import get_session
+from app.db.session import get_session
 from app.backend.models.user import User
 from app.backend.models.refresh_token import RefreshToken
 from app.backend.services.auth_service import refresh_tokens

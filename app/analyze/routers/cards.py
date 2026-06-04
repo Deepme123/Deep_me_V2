@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 
 from app.analyze import models as m
 from app.analyze import schemas as sc
-from app.analyze.db import get_db
+from app.db.session import get_session as get_db
 from app.analyze.services import risk as risk_service
 from app.analyze.services.llm_card import analyze_dialogue_to_card
 from app.backend.dependencies.auth import get_current_user
