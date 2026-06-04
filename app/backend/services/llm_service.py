@@ -7,11 +7,10 @@ from typing import Optional
 
 from app.core.llm import (
     LLMMessage,
-    LLMProvider,
     LLMRequestOptions,
-    create_llm_provider_from_settings,
 )
-from app.core.llm_settings import LLMSettings, get_llm_settings
+from app.core.llm.providers import get_backend_provider
+from app.core.llm_settings import get_llm_settings
 
 logger = logging.getLogger(__name__)
 
@@ -62,20 +61,8 @@ def _build_request_options(
     )
 
 
-def _get_backend_llm_settings() -> LLMSettings:
-    return get_llm_settings(
-        model_default="gpt-4o-mini",
-        timeout_default=60.0,
-    )
-
-
-def _get_backend_llm_provider() -> LLMProvider:
-    settings = _get_backend_llm_settings()
-    return create_llm_provider_from_settings(settings)
-
-
 def get_backend_llm_info(*, model: Optional[str] = None) -> BackendLLMInfo:
-    settings = _get_backend_llm_settings()
+    settings = get_llm_settings(model_default="gpt-4o-mini", timeout_default=60.0)
     resolved_model = (model or settings.model).strip() or settings.model
     return BackendLLMInfo(
         provider=settings.provider,
@@ -92,7 +79,7 @@ def stream_noa_response(
     max_tokens: Optional[int] = 800,
     model: Optional[str] = None,
 ) -> Generator[str, None, None]:
-    provider = _get_backend_llm_provider()
+    provider = get_backend_provider()
     messages = _build_messages(system_prompt, task_prompt, conversation)
     options = _build_request_options(
         temperature=temperature,
@@ -112,7 +99,7 @@ def generate_noa_response(
     max_tokens: Optional[int] = 800,
     model: Optional[str] = None,
 ) -> str:
-    provider = _get_backend_llm_provider()
+    provider = get_backend_provider()
     messages = _build_messages(system_prompt, task_prompt, conversation)
     options = _build_request_options(
         temperature=temperature,
