@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session
 
-from app.analyze.db import get_db
+from app.db.session import get_session as get_db
 from app.analyze import schemas as sc
 from app.analyze.services import summaries as summary_service
 
