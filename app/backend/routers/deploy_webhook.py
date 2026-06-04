@@ -2,6 +2,7 @@
 app/backend/routers/deploy_webhook.py
 
 GitHub main 브랜치 커밋 감지 → Render 자동 배포 → Discord 알림 라우터.
+PR merge 감지 → 커밋 기록 txt 파일 → Discord 파일 첨부 알림.
 app/main.py에 include_router로 등록해서 사용.
 """
 
@@ -166,6 +167,133 @@ async def _send_discord(embed_payload: dict[str, Any]) -> None:
         logger.error(f"Discord 알림 실패: {_handle_http_error(e)}")
 
 
+async def _send_discord_file(
+    embed_payload: dict[str, Any],
+    filename: str,
+    file_content: str,
+) -> None:
+    if not DISCORD_WEBHOOK_URL:
+        logger.warning("DISCORD_WEBHOOK_URL 미설정 — 알림 건너뜀")
+        return
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                DISCORD_WEBHOOK_URL,
+                data={"payload_json": json.dumps(embed_payload)},
+                files={"file": (filename, file_content.encode("utf-8"), "text/plain")},
+            )
+            resp.raise_for_status()
+            logger.info(f"Discord 파일 첨부 알림 전송 완료: {filename}")
+    except Exception as e:
+        logger.error(f"Discord 파일 첨부 알림 실패: {_handle_http_error(e)}")
+
+
+# ──────────────────────────────────────────────
+# PR 커밋 기록
+# ──────────────────────────────────────────────
+async def _fetch_pr_commits(commits_url: str) -> list[dict[str, Any]]:
+    commits: list[dict[str, Any]] = []
+    url: Optional[str] = commits_url + "?per_page=100"
+    headers = {"Accept": "application/vnd.github+json"}
+    async with httpx.AsyncClient(timeout=30) as client:
+        while url:
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            commits.extend(resp.json())
+            url = None
+            for part in resp.headers.get("Link", "").split(","):
+                if 'rel="next"' in part:
+                    url = part.split(";")[0].strip().strip("<>")
+    return commits
+
+
+def _build_commit_history_txt(
+    pr_number: int,
+    pr_title: str,
+    head_branch: str,
+    base_branch: str,
+    merged_by: str,
+    commits: list[dict[str, Any]],
+) -> str:
+    lines = [
+        f"PR #{pr_number}: {head_branch} → {base_branch}",
+        f"제목: {pr_title}",
+        f"Merged by: {merged_by} | {_now_utc()}",
+        f"총 커밋 수: {len(commits)}",
+        "─" * 50,
+    ]
+    for i, c in enumerate(commits, 1):
+        sha = _short_sha(c.get("sha", ""))
+        msg = (c.get("commit", {}).get("message", "") or "").split("\n")[0]
+        author = (
+            (c.get("author") or {}).get("login")
+            or c.get("commit", {}).get("author", {}).get("name", "unknown")
+        )
+        date_raw = c.get("commit", {}).get("author", {}).get("date", "")
+        date = date_raw[:10] if date_raw else "unknown"
+        lines.append(f"[{i}] {sha} — {msg[:80]} ({author}, {date})")
+    return "\n".join(lines)
+
+
+async def _run_pr_pipeline(payload: dict[str, Any], signature: str, raw_body: bytes) -> None:
+    # 1. 서명 검증
+    if signature and GITHUB_WEBHOOK_SECRET:
+        if not _verify_signature(raw_body, signature, GITHUB_WEBHOOK_SECRET):
+            logger.warning("GitHub 웹훅 서명 검증 실패 — 무시")
+            return
+
+    # 2. main으로 merge된 PR인지 확인
+    action = payload.get("action", "")
+    pr = payload.get("pull_request", {})
+    if action != "closed" or not pr.get("merged"):
+        logger.info(f"PR 이벤트 action={action}, merged={pr.get('merged')} — 건너뜀")
+        return
+
+    base_branch = pr.get("base", {}).get("ref", "")
+    if base_branch != "main":
+        logger.info(f"PR base='{base_branch}' — main 아님, 건너뜀")
+        return
+
+    pr_number: int = pr.get("number", 0)
+    pr_title: str = pr.get("title", "")
+    head_branch: str = pr.get("head", {}).get("ref", "")
+    merged_by: str = (pr.get("merged_by") or {}).get("login", "unknown")
+    commits_url: str = pr.get("commits_url", "")
+    logger.info(f"PR #{pr_number} merged into main: {head_branch} by {merged_by}")
+
+    # 3. 커밋 목록 조회
+    try:
+        commits = await _fetch_pr_commits(commits_url)
+    except Exception as e:
+        error_msg = _handle_http_error(e)
+        logger.error(f"PR 커밋 목록 조회 실패: {error_msg}")
+        await _send_discord({"embeds": [{
+            "title": f"⚠️ PR #{pr_number} 커밋 기록 조회 실패",
+            "description": error_msg,
+            "color": 0xED4245,
+            "footer": {"text": "Deep Me Deploy Bot"},
+        }]})
+        return
+
+    # 4. txt 생성 + Discord 파일 첨부 전송
+    txt_content = _build_commit_history_txt(
+        pr_number, pr_title, head_branch, base_branch, merged_by, commits
+    )
+    embed = {"embeds": [{
+        "title": f"📋 PR #{pr_number} 커밋 기록",
+        "description": f"`{head_branch}` → `{base_branch}`",
+        "color": 0x5865F2,
+        "fields": [
+            {"name": "제목", "value": pr_title[:100], "inline": False},
+            {"name": "Merged by", "value": merged_by, "inline": True},
+            {"name": "커밋 수", "value": str(len(commits)), "inline": True},
+            {"name": "시각", "value": _now_utc(), "inline": True},
+        ],
+        "footer": {"text": "Deep Me Deploy Bot"},
+    }]}
+    await _send_discord_file(embed, f"pr_{pr_number}_commits.txt", txt_content)
+
+
 # ──────────────────────────────────────────────
 # 파이프라인 (백그라운드 실행)
 # ──────────────────────────────────────────────
@@ -254,14 +382,17 @@ async def github_webhook(request: Request):
 
     if event_type == "ping":
         return {"message": "pong — 웹훅 연결 확인 완료"}
-    if event_type and event_type != "push":
-        return {"message": f"'{event_type}' 이벤트는 처리 안 해 (push만 처리함)"}
+    if event_type not in ("push", "pull_request"):
+        return {"message": f"'{event_type}' 이벤트는 처리 안 해 (push, pull_request만 처리함)"}
 
     try:
         payload = json.loads(body)
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="JSON 파싱 실패")
 
-    # 즉시 200 반환 후 백그라운드에서 파이프라인 실행
-    asyncio.create_task(_run_pipeline(payload, signature, body))
-    return {"message": "웹훅 수신 완료 — 파이프라인 실행 중"}
+    if event_type == "push":
+        asyncio.create_task(_run_pipeline(payload, signature, body))
+        return {"message": "웹훅 수신 완료 — 배포 파이프라인 실행 중"}
+
+    asyncio.create_task(_run_pr_pipeline(payload, signature, body))
+    return {"message": "웹훅 수신 완료 — PR 커밋 기록 처리 중"}
