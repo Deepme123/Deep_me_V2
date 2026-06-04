@@ -4,7 +4,8 @@ from dataclasses import dataclass
 import re
 
 from app.backend.core.prompt_loader import get_task_prompt
-from app.core.llm import LLMJsonSchema, LLMMessage, LLMProvider, create_llm_provider
+from app.core.llm import LLMJsonSchema, LLMMessage
+from app.core.llm.providers import get_task_provider
 
 _JSON_POLICY = (
     '출력은 반드시 JSON 배열로만 해. 설명 문장/마크다운/코드블록 없이 [{"title": "...", "description": "..."}, ...] 형식만 반환해.'
@@ -44,13 +45,6 @@ class TaskRecommendationContext:
     topic: str | None = None
     history_snippet: str = ""
 
-
-def _get_task_llm_provider() -> LLMProvider:
-    return create_llm_provider(
-        model_default="gpt-3.5-turbo",
-        temperature_default=0.7,
-        max_tokens_default=800,
-    )
 
 
 def _clamp_recommendation_count(n: int) -> int:
@@ -106,7 +100,7 @@ def recommend_task_drafts_from_prompt(
     *,
     user_prompt: str = "지금 나에게 추천해줘.",
 ) -> list[TaskDraft]:
-    provider = _get_task_llm_provider()
+    provider = get_task_provider()
     text = provider.generate_text(
         messages=[
             LLMMessage(role="system", content=get_task_prompt()),
@@ -121,7 +115,7 @@ def recommend_task_drafts_from_session_context(
     context: TaskRecommendationContext,
     n: int = 3,
 ) -> list[TaskDraft]:
-    provider = _get_task_llm_provider()
+    provider = get_task_provider()
     clamped_n = _clamp_recommendation_count(n)
     context_block = _build_context_block(context)
     payload = provider.generate_json(

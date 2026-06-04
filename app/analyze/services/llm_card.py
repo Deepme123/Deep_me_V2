@@ -6,8 +6,8 @@ from typing import List
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.analyze import schemas as sc
-from app.analyze.config import get_settings
-from app.core.llm import LLMJsonSchema, LLMMessage, create_llm_provider
+from app.core.llm import LLMJsonSchema, LLMMessage
+from app.core.llm.providers import get_card_provider
 
 logger = logging.getLogger(__name__)
 
@@ -261,15 +261,6 @@ class _LLMCardPayload(BaseModel):
     thoughts: str | None = None
 
 
-def _get_card_llm_provider():
-    settings = get_settings()
-    return create_llm_provider(
-        model_default=settings.llm_model,
-        temperature_default=settings.llm_temperature,
-        max_tokens_default=settings.llm_max_tokens,
-        timeout_default=settings.llm_timeout_sec,
-    )
-
 
 def _format_dialogue(turns: List[sc.ConversationTurn]) -> str:
     lines: List[str] = []
@@ -308,7 +299,7 @@ def analyze_dialogue_to_card(
     )
 
     try:
-        provider = _get_card_llm_provider()
+        provider = get_card_provider()
         payload = provider.generate_json(
             messages=[
                 LLMMessage(role="system", content=_SYSTEM_PROMPT),
