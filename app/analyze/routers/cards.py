@@ -57,6 +57,17 @@ def _store_card(db: Session, session_id: UUID, payload: sc.CardCreate) -> sc.Car
         risk_level=risk_level,
     )
     db.add(card)
+
+    session = db.get(m.EmotionSession, session_id)
+    if session:
+        if payload.core_emotions:
+            session.emotion_label = payload.core_emotions[0].primary
+        topic_source = payload.situation or payload.summary
+        session.topic = topic_source[:100] if topic_source else None
+        session.trigger_summary = payload.situation
+        session.insight_summary = payload.insight
+        db.add(session)
+
     db.commit()
     db.refresh(card)
     return sc.CardOut.model_validate(card, from_attributes=True)
@@ -187,7 +198,18 @@ def list_cards(
         .order_by(m.AnalysisCard.created_at.desc())
     )
     rows = db.exec(stmt).all()
-    return [sc.CardOut.model_validate(row, from_attributes=True) for row in rows]
+    if rows:
+        return [sc.CardOut.model_validate(row, from_attributes=True) for row in rows]
+
+    turns = _load_session_conversation_turns(db, session_id)
+    if not turns:
+        return []
+
+    try:
+        card = _analyze_and_store_card(db=db, session_id=session_id, turns=turns)
+        return [card]
+    except HTTPException:
+        return []
 
 
 @router.get("/cards/{card_id}", response_model=sc.CardOut)
