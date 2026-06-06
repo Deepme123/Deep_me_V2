@@ -21,5 +21,5 @@ def _disable_rate_limit_by_default(monkeypatch):
 
 @pytest.fixture
 def client():
-    from app.backend.main import app
+    from app.main import app
     return TestClient(app)

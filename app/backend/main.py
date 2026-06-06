@@ -1,13 +1,12 @@
 # app/main.py
 import os
 import logging
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
 
 from app.backend.core.logging_config import setup_logging
-from app.backend.db.session import get_engine
-from app.db.session import CORE_REQUIRED_TABLES
+from app.db.session import get_engine, CORE_REQUIRED_TABLES
 from app.db.health import check_db_tables, health_db_response
 from app.backend.core.rate_limit import limiter as rate_limiter, RATELIMIT_ENABLED
 
@@ -60,6 +59,15 @@ app.include_router(user.user_router)
 app.include_router(task.router)
 app.include_router(demo.router)
 app.include_router(deploy_webhook.router)
+
+
+@app.middleware("http")
+async def add_charset_for_json(request: Request, call_next) -> Response:
+    resp = await call_next(request)
+    ct = resp.headers.get("content-type", "")
+    if ct.startswith("application/json") and "charset" not in ct.lower():
+        resp.headers["content-type"] = "application/json; charset=utf-8"
+    return resp
 
 
 @app.on_event("startup")

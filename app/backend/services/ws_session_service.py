@@ -7,7 +7,7 @@ from uuid import UUID
 
 from sqlmodel import Session, select
 
-from app.backend.db.session import session_scope
+from app.db.session import session_scope
 from app.backend.models.emotion import EmotionSession, EmotionStep
 from app.backend.schemas.emotion import EmotionCloseRequest
 from app.backend.services.convo_policy import ACTIVITY_STEP_TYPE, is_activity_turn
