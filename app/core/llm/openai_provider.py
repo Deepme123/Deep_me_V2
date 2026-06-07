@@ -141,6 +141,19 @@ class OpenAIProvider(LLMProvider):
             f"OpenAI JSON generation failed for model={resolved.model}; last={last_error}"
         )
 
+    def _chat_to_responses_format(self, response_format: dict[str, Any]) -> dict[str, Any]:
+        # chat.completions uses {"type": "json_schema", "json_schema": {"name": ..., "schema": ...}}
+        # responses API uses {"type": "json_schema", "name": ..., "schema": ...} (flattened)
+        if response_format.get("type") == "json_schema":
+            inner = response_format.get("json_schema", {})
+            return {
+                "type": "json_schema",
+                "name": inner.get("name", "output"),
+                "schema": inner.get("schema", {}),
+                "strict": inner.get("strict", True),
+            }
+        return response_format
+
     def _create_responses_json(
         self,
         *,
@@ -153,7 +166,7 @@ class OpenAIProvider(LLMProvider):
         params: dict[str, Any] = {
             "model": model,
             "input": self._to_responses_input(messages),
-            "text": {"format": response_format},
+            "text": {"format": self._chat_to_responses_format(response_format)},
         }
         if options.max_tokens > 0:
             params["max_output_tokens"] = options.max_tokens
