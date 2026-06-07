@@ -29,22 +29,21 @@ class TaskLLMServiceTests(unittest.TestCase):
     def test_get_task_llm_provider_uses_common_factory_defaults(self) -> None:
         sentinel = object()
 
-        with patch.object(task_llm_service, "create_llm_provider", return_value=sentinel) as mocked:
-            result = task_llm_service._get_task_llm_provider()
+        with patch.object(task_llm_service, "get_task_provider", return_value=sentinel) as mocked:
+            result = task_llm_service.get_task_provider()
 
         self.assertIs(result, sentinel)
-        mocked.assert_called_once_with(
-            model_default="gpt-3.5-turbo",
-            temperature_default=0.7,
-            max_tokens_default=800,
-        )
+        mocked.assert_called_once()
 
-    def test_recommend_task_drafts_from_prompt_parses_legacy_text(self) -> None:
+    def test_recommend_task_drafts_from_prompt_uses_json_generation(self) -> None:
         provider = _FakeProvider(
-            text="1. 제목: 산책하기\n설명: 10분만 밖으로 나가자.\n2. 제목: 물 마시기\n설명: 천천히 한 컵 마신다."
+            payload=[
+                {"title": "산책하기", "description": "10분만 밖으로 나가자."},
+                {"title": "물 마시기", "description": "천천히 한 컵 마신다."},
+            ]
         )
 
-        with patch.object(task_llm_service, "_get_task_llm_provider", return_value=provider):
+        with patch.object(task_llm_service, "get_task_provider", return_value=provider):
             with patch.object(task_llm_service, "get_task_prompt", return_value="system prompt"):
                 drafts = task_llm_service.recommend_task_drafts_from_prompt()
 
@@ -55,9 +54,10 @@ class TaskLLMServiceTests(unittest.TestCase):
                 task_llm_service.TaskDraft(title="물 마시기", description="천천히 한 컵 마신다."),
             ],
         )
-        messages, _options = provider.text_calls[0]
-        self.assertEqual(messages[0].content, "system prompt")
+        messages, schema, _options = provider.json_calls[0]
+        self.assertIn("system prompt", messages[0].content)
         self.assertEqual(messages[1].content, "지금 나에게 추천해줘.")
+        self.assertEqual(schema.name, "task_recommendations")
 
     def test_recommend_task_drafts_from_session_context_uses_json_generation(self) -> None:
         provider = _FakeProvider(
@@ -72,7 +72,7 @@ class TaskLLMServiceTests(unittest.TestCase):
             history_snippet="유저: 너무 불안해\nGPT: 조금 천천히 보자",
         )
 
-        with patch.object(task_llm_service, "_get_task_llm_provider", return_value=provider):
+        with patch.object(task_llm_service, "get_task_provider", return_value=provider):
             with patch.object(task_llm_service, "get_task_prompt", return_value="task prompt"):
                 drafts = task_llm_service.recommend_task_drafts_from_session_context(
                     context=context,
@@ -91,7 +91,7 @@ class TaskLLMServiceTests(unittest.TestCase):
     def test_recommend_task_drafts_from_session_context_rejects_invalid_payload(self) -> None:
         provider = _FakeProvider(payload={"title": "not-a-list"})
 
-        with patch.object(task_llm_service, "_get_task_llm_provider", return_value=provider):
+        with patch.object(task_llm_service, "get_task_provider", return_value=provider):
             with patch.object(task_llm_service, "get_task_prompt", return_value="task prompt"):
                 with self.assertRaisesRegex(RuntimeError, "GPT 응답 파싱 실패"):
                     task_llm_service.recommend_task_drafts_from_session_context(

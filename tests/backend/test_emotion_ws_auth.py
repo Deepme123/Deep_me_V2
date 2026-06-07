@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///./test_ws_auth.db")
+os.environ.setdefault("JWT_SECRET_KEY", "test-ws-auth-secret")
 ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
@@ -56,8 +57,8 @@ def test_websocket_accepts_access_token_cookie(monkeypatch):
         return fake_db.session
 
     monkeypatch.setattr(emotion_ws, "session_scope", fake_session_scope)
-    monkeypatch.setattr(emotion_ws, "_with_db", fake_with_db)
-    monkeypatch.setattr(emotion_ws, "_create_emotion_session", fake_create_emotion_session)
+    monkeypatch.setattr(emotion_ws, "session_with_db", fake_with_db)
+    monkeypatch.setattr(emotion_ws, "session_create_emotion_session", fake_create_emotion_session)
     monkeypatch.setattr(
         emotion_ws,
         "protocol_decode_user_id_from_token",

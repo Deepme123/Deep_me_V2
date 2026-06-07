@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+
+os.environ.setdefault("RATELIMIT_ENABLED", "false")
+os.environ.setdefault("JWT_SECRET_KEY", "test-health-router-secret")
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -33,7 +37,7 @@ def test_health_llm_calls_generate_with_current_signature(monkeypatch):
 
     monkeypatch.setattr(health_llm, "generate_noa_response", fake_generate_noa_response)
 
-    result = health_llm.health_llm(q=None)
+    result = health_llm.health_llm(request=None, q=None)
 
     assert result["ok"] is True
     assert "pong" in result["text"].lower()
@@ -62,7 +66,7 @@ def test_health_llm_stream_ok_and_contract(monkeypatch):
 
     monkeypatch.setattr(health_llm, "stream_noa_response", fake_stream_noa_response)
 
-    result = asyncio.run(health_llm.health_llm_stream(q=None))
+    result = asyncio.run(health_llm.health_llm_stream(request=None, q=None))
 
     assert result["ok"] is True
     assert result["tokens"] == 2
@@ -80,7 +84,7 @@ def test_health_llm_stream_maps_blocked_by_content_filter(monkeypatch):
     monkeypatch.setattr(health_llm, "stream_noa_response", fake_stream_noa_response)
 
     with pytest.raises(HTTPException) as excinfo:
-        asyncio.run(health_llm.health_llm_stream(q=None))
+        asyncio.run(health_llm.health_llm_stream(request=None, q=None))
 
     assert excinfo.value.status_code == 503
     assert excinfo.value.detail == "blocked_by_content_filter"
@@ -93,7 +97,7 @@ def test_health_llm_stream_empty_response(monkeypatch):
     monkeypatch.setattr(health_llm, "stream_noa_response", fake_stream_noa_response)
 
     with pytest.raises(HTTPException) as excinfo:
-        asyncio.run(health_llm.health_llm_stream(q=None))
+        asyncio.run(health_llm.health_llm_stream(request=None, q=None))
 
     assert excinfo.value.status_code == 503
     assert excinfo.value.detail == "llm_stream_empty"

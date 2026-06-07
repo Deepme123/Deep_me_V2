@@ -1,7 +1,8 @@
 # app/main.py
 import os
 import logging
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
 
@@ -32,7 +33,7 @@ app = FastAPI(
 # Rate Limiting
 app.state.limiter = rate_limiter
 if RATELIMIT_ENABLED:
-    app.add_exception_handler(RateLimitExceeded, lambda request, exc: HTTPException(status_code=429, detail="rate_limit_exceeded"))
+    app.add_exception_handler(RateLimitExceeded, lambda request, exc: JSONResponse({"detail": "rate_limit_exceeded"}, status_code=429))
 
 # CORS
 _default_origins = "https://deep-me-v1.onrender.com,http://localhost:3000,http://localhost:5173"

@@ -38,34 +38,28 @@ class LLMServiceTests(unittest.TestCase):
         )
 
         with patch.object(llm_service, "get_llm_settings", return_value=settings) as mocked:
-            result = llm_service._get_backend_llm_settings()
+            result = llm_service.get_backend_llm_info()
 
-        self.assertIs(result, settings)
         mocked.assert_called_once_with(
-            model_default="gpt-4o-mini",
+            model_default="gpt-5.4-mini-2026-03-17",
             timeout_default=60.0,
         )
+        self.assertEqual(result.provider, "openai")
+        self.assertEqual(result.model, "gpt-test")
 
     def test_get_backend_llm_provider_uses_resolved_settings(self) -> None:
-        sentinel = object()
-        settings = LLMSettings(
-            provider="openai",
-            model="gpt-test",
-            temperature=0.1,
-            max_tokens=222,
-            timeout_sec=45.0,
-            openai_api_key="",
-            anthropic_api_key="",
-        )
+        provider = _FakeProvider()
 
-        with (
-            patch.object(llm_service, "_get_backend_llm_settings", return_value=settings),
-            patch.object(llm_service, "create_llm_provider_from_settings", return_value=sentinel) as mocked,
-        ):
-            result = llm_service._get_backend_llm_provider()
+        with patch.object(llm_service, "get_backend_provider", return_value=provider):
+            list(
+                llm_service.stream_noa_response(
+                    system_prompt="sys",
+                    task_prompt=None,
+                    conversation=[("user", "hi")],
+                )
+            )
 
-        self.assertIs(result, sentinel)
-        mocked.assert_called_once_with(settings)
+        self.assertEqual(len(provider.stream_calls), 1)
 
     def test_get_backend_llm_info_returns_resolved_provider_and_model(self) -> None:
         settings = LLMSettings(
@@ -78,7 +72,7 @@ class LLMServiceTests(unittest.TestCase):
             anthropic_api_key="",
         )
 
-        with patch.object(llm_service, "_get_backend_llm_settings", return_value=settings):
+        with patch.object(llm_service, "get_llm_settings", return_value=settings):
             info = llm_service.get_backend_llm_info()
             overridden = llm_service.get_backend_llm_info(model=" claude-override ")
 
@@ -90,7 +84,7 @@ class LLMServiceTests(unittest.TestCase):
     def test_generate_noa_response_uses_common_provider_messages(self) -> None:
         provider = _FakeProvider()
 
-        with patch.object(llm_service, "_get_backend_llm_provider", return_value=provider):
+        with patch.object(llm_service, "get_backend_provider", return_value=provider):
             result = llm_service.generate_noa_response(
                 system_prompt="sys",
                 task_prompt="task",
@@ -117,7 +111,7 @@ class LLMServiceTests(unittest.TestCase):
     def test_stream_noa_response_yields_provider_chunks(self) -> None:
         provider = _FakeProvider()
 
-        with patch.object(llm_service, "_get_backend_llm_provider", return_value=provider):
+        with patch.object(llm_service, "get_backend_provider", return_value=provider):
             chunks = list(
                 llm_service.stream_noa_response(
                     system_prompt="sys",

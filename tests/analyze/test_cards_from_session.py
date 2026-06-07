@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("DATABASE_URL", "postgresql+psycopg2://user:pass@localhost/testdb")
+os.environ.setdefault("JWT_SECRET_KEY", "test-cards-secret")
 ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
@@ -58,6 +59,7 @@ def _build_client(fake_db):
     app = FastAPI()
     app.include_router(cards.router)
     app.dependency_overrides[cards.get_db] = lambda: fake_db
+    app.dependency_overrides[cards.get_current_user] = lambda: None
     return TestClient(app)
 
 
