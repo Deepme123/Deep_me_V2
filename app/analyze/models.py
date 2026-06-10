@@ -6,12 +6,15 @@ from uuid import UUID, uuid4
 from datetime import datetime
 
 from sqlmodel import SQLModel, Field
-from sqlalchemy import Column, JSON
+from sqlalchemy import Column, JSON, UniqueConstraint
 
 from app.backend.models.emotion import EmotionSession
 
 class AnalysisCard(SQLModel, table=True):
     __tablename__ = "analysiscard"
+    __table_args__ = (
+        UniqueConstraint("session_id", name="uq_analysiscard_session_id"),
+    )
 
     card_id: UUID = Field(
         default_factory=uuid4,
