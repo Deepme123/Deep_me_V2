@@ -3,6 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.analyze import models as m
@@ -68,7 +69,11 @@ def _store_card(db: Session, session_id: UUID, payload: sc.CardCreate) -> sc.Car
         session.insight_summary = payload.insight
         db.add(session)
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="card already exists for this session")
     db.refresh(card)
     return sc.CardOut.model_validate(card, from_attributes=True)
 
@@ -198,18 +203,7 @@ def list_cards(
         .order_by(m.AnalysisCard.created_at.desc())
     )
     rows = db.exec(stmt).all()
-    if rows:
-        return [sc.CardOut.model_validate(row, from_attributes=True) for row in rows]
-
-    turns = _load_session_conversation_turns(db, session_id)
-    if not turns:
-        return []
-
-    try:
-        card = _analyze_and_store_card(db=db, session_id=session_id, turns=turns)
-        return [card]
-    except HTTPException:
-        return []
+    return [sc.CardOut.model_validate(row, from_attributes=True) for row in rows]
 
 
 @router.get("/cards/{card_id}", response_model=sc.CardOut)
