@@ -86,7 +86,7 @@ def test_head_migration_includes_analysiscard():
             "user",
             "user_need_selection",
         ]
-        assert _alembic_version(tmp_db) == "0008_rename_emotioncard_to_analysiscard"
+        assert _alembic_version(tmp_db) == "0009_unique_analysiscard_session"
     finally:
         if tmp_db.exists():
             tmp_db.unlink()
