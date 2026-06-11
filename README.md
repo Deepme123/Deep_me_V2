@@ -25,8 +25,8 @@
 이 프로젝트는 **Python 모노레포** 내 여러 FastAPI 서브앱으로 구성됩니다.
 
 - `app/backend`: 인증, 감정대화, 태스크 API, WebSocket
-- `app/analyze`: 분석카드 자동 생성, 요약
-- `app/desire`: 8가지 욕구 분석 및 우선순위 도출
+- `app/analyze`: 분석카드(`AnalysisCard`) 자동 생성, 요약
+- `app/desire`: 8가지 욕구 분석 및 우선순위 도출, 사용자 욕구 선택 저장(`UserNeedSelection`)
 
 모두 단일 Uvicorn 프로세스(`app.main:app`)에서 실행됩니다.
 
@@ -136,10 +136,15 @@ alembic current    # 현재 적용 버전
 alembic history    # 전체 이력
 ```
 
-**최신 마이그레이션** (`0005_behavior_patterns`):
-- `core_emotions` 배열에 `quote`, `reasoning` 필드 추가
-- `situation` VARCHAR → `situation_steps` JSONB (1~4단계)
-- `behavior_patterns` JSONB 컬럼 추가
+**최신 마이그레이션** (`0009_unique_analysiscard_session`):
+
+| 버전 | 내용 |
+|------|------|
+| `0005_behavior_patterns` | `core_emotions`에 `quote`/`reasoning` 추가, `behavior_patterns` JSONB 컬럼 추가 |
+| `0006_situation_steps` | `situation_steps` JSONB 컬럼 추가 (1~4단계 상황 분해) |
+| `0007_user_need_selection` | `user_need_selection` 테이블 추가 (사용자 욕구 선택 저장) |
+| `0008_rename_emotioncard_to_analysiscard` | `emotioncard` 테이블 → `analysiscard` 로 리네임 |
+| `0009_unique_analysiscard_session` | `analysiscard.session_id` 유니크 제약 추가 |
 
 롤백:
 
