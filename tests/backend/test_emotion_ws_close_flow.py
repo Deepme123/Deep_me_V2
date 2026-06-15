@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///./test_ws.db")
+os.environ.setdefault("JWT_SECRET_KEY", "test-ws-close-secret")
 ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
@@ -178,7 +179,7 @@ def ws_harness(monkeypatch):
     def fake_stream_noa_response(**_kwargs):
         yield store.next_llm_output()
 
-    async def fake_generate_analysis_card_async(session_id):
+    async def fakepost_action_generate_analysis_card_async(session_id):
         return {
             "card_id": str(uuid4()),
             "session_id": str(session_id),
@@ -186,13 +187,13 @@ def ws_harness(monkeypatch):
         }
 
     monkeypatch.setattr(emotion_ws, "session_scope", fake_session_scope)
-    monkeypatch.setattr(emotion_ws, "_with_db", fake_with_db)
-    monkeypatch.setattr(emotion_ws, "_create_emotion_session", fake_create_emotion_session)
-    monkeypatch.setattr(emotion_ws, "_prepare_message_context", fake_prepare_message_context)
-    monkeypatch.setattr(emotion_ws, "_commit_full_turn", fake_commit_full_turn)
-    monkeypatch.setattr(emotion_ws, "_close_session_record", fake_close_session_record)
-    monkeypatch.setattr(emotion_ws, "_append_step_marker", fake_append_step_marker)
-    monkeypatch.setattr(emotion_ws, "_generate_analysis_card_async", fake_generate_analysis_card_async)
+    monkeypatch.setattr(emotion_ws, "session_with_db", fake_with_db)
+    monkeypatch.setattr(emotion_ws, "session_create_emotion_session", fake_create_emotion_session)
+    monkeypatch.setattr(emotion_ws, "session_prepare_message_context", fake_prepare_message_context)
+    monkeypatch.setattr(emotion_ws, "session_commit_full_turn", fake_commit_full_turn)
+    monkeypatch.setattr(emotion_ws, "session_close_session_record", fake_close_session_record)
+    monkeypatch.setattr(emotion_ws, "session_append_step_marker", fake_append_step_marker)
+    monkeypatch.setattr(emotion_ws, "post_action_generate_analysis_card_async", fakepost_action_generate_analysis_card_async)
     monkeypatch.setattr(emotion_ws, "resolve_emotion_user_id", lambda _db, _user: store.user_id)
     monkeypatch.setattr(emotion_ws, "get_system_prompt", lambda: "system")
     monkeypatch.setattr(emotion_ws, "get_task_prompt", lambda: "task")
@@ -260,14 +261,14 @@ def test_close_still_returns_close_ok_without_soft_trigger(ws_harness, monkeypat
     store.llm_outputs = ["continue"]
     analysis_card_calls = []
 
-    async def fake_generate_analysis_card_async(session_id):
+    async def fakepost_action_generate_analysis_card_async(session_id):
         analysis_card_calls.append(session_id)
         return {
             "session_id": str(session_id),
             "summary": "should not be generated",
         }
 
-    monkeypatch.setattr(emotion_ws, "_generate_analysis_card_async", fake_generate_analysis_card_async)
+    monkeypatch.setattr(emotion_ws, "post_action_generate_analysis_card_async", fakepost_action_generate_analysis_card_async)
 
     with _open_ws(client) as ws:
         events = _send_message_and_collect(

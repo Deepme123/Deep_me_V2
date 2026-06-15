@@ -6,7 +6,7 @@ import sys
 import types
 import unittest
 
-DEFAULT_PONG_PROMPT = "\ub108\ub294 \uac04\ub2e8\ud788 \ud55c \ub2e8\uc5b4\ub85c\ub9cc \ub300\ub2f5\ud574: pong"
+DEFAULT_PONG_PROMPT = "너는 간단히 한 단어로만 대답해: pong"
 
 
 def _install_fastapi_stub():
@@ -29,12 +29,16 @@ def _install_fastapi_stub():
 
             return _decorator
 
+    class Request:
+        pass
+
     def Query(default=None, **kwargs):
         return default
 
     fastapi.APIRouter = APIRouter
     fastapi.HTTPException = HTTPException
     fastapi.Query = Query
+    fastapi.Request = Request
     sys.modules["fastapi"] = fastapi
     return HTTPException
 
@@ -47,6 +51,16 @@ def _load_health_module():
 
 
 class HealthLLMTests(unittest.TestCase):
+    def setUp(self):
+        self._orig_fastapi = sys.modules.get("fastapi")
+
+    def tearDown(self):
+        if self._orig_fastapi is not None:
+            sys.modules["fastapi"] = self._orig_fastapi
+        else:
+            sys.modules.pop("fastapi", None)
+        sys.modules.pop("app.backend.routers.health_llm", None)
+
     def test_health_llm_passes_backend_signature(self) -> None:
         module, _ = _load_health_module()
         captured = {}
@@ -57,7 +71,7 @@ class HealthLLMTests(unittest.TestCase):
 
         module.generate_noa_response = _fake_generate_noa_response
 
-        result = module.health_llm()
+        result = module.health_llm(request=None)
 
         self.assertEqual(result, {"ok": True, "text": "pong"})
         self.assertEqual(
@@ -74,7 +88,7 @@ class HealthLLMTests(unittest.TestCase):
         module.generate_noa_response = lambda **kwargs: ""
 
         with self.assertRaises(http_exception) as ctx:
-            module.health_llm()
+            module.health_llm(request=None)
 
         self.assertEqual(ctx.exception.status_code, 503)
         self.assertEqual(ctx.exception.detail, "llm_empty_response")
@@ -83,7 +97,7 @@ class HealthLLMTests(unittest.TestCase):
         module, _ = _load_health_module()
         module.generate_noa_response = lambda **kwargs: "hello"
 
-        result = module.health_llm()
+        result = module.health_llm(request=None)
 
         self.assertEqual(
             result,
@@ -100,7 +114,7 @@ class HealthLLMTests(unittest.TestCase):
 
         module.generate_noa_response = _fake_generate_noa_response
 
-        result = module.health_llm(q="say hello")
+        result = module.health_llm(request=None, q="say hello")
 
         self.assertEqual(result, {"ok": True, "text": "hello"})
         self.assertEqual(
@@ -123,7 +137,7 @@ class HealthLLMTests(unittest.TestCase):
 
         module.stream_noa_response = _fake_stream_noa_response
 
-        result = asyncio.run(module.health_llm_stream())
+        result = asyncio.run(module.health_llm_stream(request=None))
 
         self.assertEqual(
             captured,
@@ -143,7 +157,7 @@ class HealthLLMTests(unittest.TestCase):
 
         module.stream_noa_response = _fake_stream_noa_response
 
-        result = asyncio.run(module.health_llm_stream())
+        result = asyncio.run(module.health_llm_stream(request=None))
 
         self.assertEqual(
             result,
@@ -162,7 +176,7 @@ class HealthLLMTests(unittest.TestCase):
         module.iter_chunks_async = _fake_iter_chunks_async
 
         with self.assertRaises(http_exception) as ctx:
-            asyncio.run(module.health_llm_stream())
+            asyncio.run(module.health_llm_stream(request=None))
 
         self.assertEqual(ctx.exception.status_code, 503)
         self.assertEqual(ctx.exception.detail, "blocked_by_content_filter")
@@ -179,7 +193,7 @@ class HealthLLMTests(unittest.TestCase):
         module.iter_chunks_async = _fake_iter_chunks_async
 
         with self.assertRaises(http_exception) as ctx:
-            asyncio.run(module.health_llm_stream())
+            asyncio.run(module.health_llm_stream(request=None))
 
         self.assertEqual(ctx.exception.status_code, 503)
         self.assertEqual(ctx.exception.detail, "llm_stream_error: boom")

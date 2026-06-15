@@ -50,7 +50,7 @@ class LLMCardTests(unittest.TestCase):
             }
         )
 
-        with patch.object(llm_card, "_get_card_llm_provider", return_value=provider):
+        with patch.object(llm_card, "get_card_provider", return_value=provider):
             card = llm_card.analyze_dialogue_to_card(_build_turns(), title_hint="work stress")
 
         self.assertEqual(card.summary, "The user feels overwhelmed by work pressure.")
@@ -75,7 +75,7 @@ class LLMCardTests(unittest.TestCase):
     def test_analyze_dialogue_to_card_falls_back_on_json_generation_failure(self) -> None:
         provider = _FakeProvider(error=RuntimeError("LLM response was not valid JSON."))
 
-        with patch.object(llm_card, "_get_card_llm_provider", return_value=provider):
+        with patch.object(llm_card, "get_card_provider", return_value=provider):
             card = llm_card.analyze_dialogue_to_card(_build_turns())
 
         self.assertEqual(card.model_dump(), sc.CardCreate().model_dump())
@@ -88,7 +88,7 @@ class LLMCardTests(unittest.TestCase):
             }
         )
 
-        with patch.object(llm_card, "_get_card_llm_provider", return_value=provider):
+        with patch.object(llm_card, "get_card_provider", return_value=provider):
             card = llm_card.analyze_dialogue_to_card(_build_turns())
 
         self.assertEqual(card.model_dump(), sc.CardCreate().model_dump())
@@ -121,7 +121,7 @@ class LLMCardTests(unittest.TestCase):
             ),
         ]
 
-        with patch.object(llm_card, "_get_card_llm_provider", return_value=provider):
+        with patch.object(llm_card, "get_card_provider", return_value=provider):
             card = llm_card.analyze_dialogue_to_card(turns)
 
         self.assertEqual(card.situation, "A team meeting at work.")

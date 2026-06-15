@@ -103,7 +103,7 @@ def test_generate_json_parses_responses_output_text():
 
     assert result == {"ok": True}
     assert responses.create_calls[0]["model"] == "gpt-4.1-mini"
-    assert responses.create_calls[0]["text"]["format"]["json_schema"]["name"] == "sample"
+    assert responses.create_calls[0]["text"]["format"]["name"] == "sample"
 
 
 def test_generate_json_normalizes_openai_strict_schema_for_optional_fields():

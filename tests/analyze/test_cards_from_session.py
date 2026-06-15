@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("DATABASE_URL", "postgresql+psycopg2://user:pass@localhost/testdb")
+os.environ.setdefault("JWT_SECRET_KEY", "test-cards-secret")
 ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
@@ -32,6 +33,7 @@ class FakeDB:
         self.steps_by_session = steps_by_session
         self.cards = []
         self._active_session_id = None
+        self._pending_card = None
 
     def get(self, model, pk):
         model_name = getattr(model, "__name__", "")
@@ -45,10 +47,24 @@ class FakeDB:
 
     def add(self, obj):
         if getattr(obj, "__class__", type(obj)).__name__ == "AnalysisCard":
-            self.cards.append(obj)
+            self._pending_card = obj
 
     def commit(self):
-        return None
+        if self._pending_card is not None:
+            from sqlalchemy.exc import IntegrityError
+            existing = {c.session_id for c in self.cards}
+            if self._pending_card.session_id in existing:
+                self._pending_card = None
+                raise IntegrityError(
+                    statement=None,
+                    params=None,
+                    orig=Exception("UNIQUE constraint failed: analysiscard.session_id"),
+                )
+            self.cards.append(self._pending_card)
+            self._pending_card = None
+
+    def rollback(self):
+        self._pending_card = None
 
     def refresh(self, _obj):
         return None
@@ -58,6 +74,7 @@ def _build_client(fake_db):
     app = FastAPI()
     app.include_router(cards.router)
     app.dependency_overrides[cards.get_db] = lambda: fake_db
+    app.dependency_overrides[cards.get_current_user] = lambda: None
     return TestClient(app)
 
 
@@ -175,7 +192,7 @@ def test_auto_from_session_returns_404_for_missing_session(monkeypatch):
     assert fake_db.cards == []
 
 
-def test_auto_from_session_allows_multiple_cards_for_same_session(monkeypatch):
+def test_auto_from_session_rejects_duplicate_card_for_same_session(monkeypatch):
     session_id = uuid4()
     fake_db = FakeDB(
         sessions={session_id: SimpleNamespace(session_id=session_id)},
@@ -206,11 +223,10 @@ def test_auto_from_session_allows_multiple_cards_for_same_session(monkeypatch):
     )
 
     assert first.status_code == 200
-    assert second.status_code == 200
-    assert len(fake_db.cards) == 2
-    assert first.json()["card_id"] != second.json()["card_id"]
     assert first.json()["summary"] == "첫 번째 요약"
-    assert second.json()["summary"] == "두 번째 요약"
+    assert second.status_code == 409
+    assert second.json()["detail"] == "card already exists for this session"
+    assert len(fake_db.cards) == 1
 
 
 def test_auto_from_session_uses_dialogue_transcript_only(monkeypatch):

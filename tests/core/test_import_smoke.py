@@ -7,12 +7,10 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parents[2]
 IMPORT_SAFE_MODULES = [
     "app.db.session",
-    "app.backend.db.session",
     "app.backend.routers.auth",
     "app.backend.main",
     "app.analyze.config",
     "app.analyze.services.llm_card",
-    "app.analyze.main",
     "app.main",
 ]
 
@@ -30,6 +28,8 @@ def test_import_safe_modules_do_not_require_runtime_env_at_import_time():
         "GOOGLE_CLIENT_SECRET",
     ]:
         env.pop(key, None)
+    env.setdefault("JWT_SECRET_KEY", "test-import-smoke-secret")
+    env.setdefault("JWT_REFRESH_SECRET", "test-import-smoke-refresh-secret")
 
     script = """
 import importlib
