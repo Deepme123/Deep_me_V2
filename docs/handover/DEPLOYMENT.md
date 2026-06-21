@@ -86,6 +86,15 @@ CORS_ALLOW_ORIGINS=https://deep-me-v1.onrender.com,http://localhost:3000,http://
 
 운영 도메인이 변경되면 이 값을 업데이트해야 합니다.
 
+### 2.6 에러 알림
+
+```env
+DISCORD_ERROR_WEBHOOK_URL=   # 설정 시 ERROR 이상 로그를 해당 Discord 채널로 전송
+```
+
+미설정 시 알림 없이 stdout 로깅만 동작(기존과 동일). 같은 로거+메시지는
+30초 내 중복 전송하지 않음(`app/backend/core/logging_config.py`).
+
 ---
 
 ## 3. 운영 배포 체크리스트
@@ -142,7 +151,10 @@ LLM_MODEL=gpt-4o                       # gpt-4o-mini → gpt-4o
 
 ## 6. Render 배포 설정
 
-Render `render.yaml` 또는 대시보드에서:
+저장소 루트의 `render.yaml`에 정의되어 있음. 기존에 대시보드로 수동 생성된 서비스는
+render.yaml을 추가해도 자동으로 반영되지 않으므로, Render 대시보드 → 서비스 →
+Settings에서 Pre-Deploy Command가 `alembic upgrade head`로 설정되어 있는지
+직접 확인해야 함(Blueprint로 재연결하면 render.yaml이 그대로 적용됨).
 
 ```yaml
 services:
@@ -152,6 +164,7 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     preDeployCommand: alembic upgrade head
+    healthCheckPath: /health/db
 ```
 
 ---

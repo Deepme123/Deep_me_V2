@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
 
 from app.backend.core.logging_config import setup_logging
-from app.db.session import get_engine, CORE_REQUIRED_TABLES
+from app.db.session import get_engine, ANALYZE_REQUIRED_TABLES
 from app.db.health import check_db_tables, health_db_response
 from app.backend.core.rate_limit import limiter as rate_limiter, RATELIMIT_ENABLED
 
@@ -73,7 +73,7 @@ async def add_charset_for_json(request: Request, call_next) -> Response:
 
 @app.on_event("startup")
 def validate_required_tables() -> None:
-    check_db_tables(get_engine(), CORE_REQUIRED_TABLES, "core")
+    check_db_tables(get_engine(), ANALYZE_REQUIRED_TABLES, "core+analyze")
 
 
 
@@ -84,4 +84,4 @@ def health_app():
 
 @app.get("/health/db")
 def health_db():
-    return health_db_response(get_engine(), CORE_REQUIRED_TABLES, "core")
+    return health_db_response(get_engine(), ANALYZE_REQUIRED_TABLES, "core+analyze")
