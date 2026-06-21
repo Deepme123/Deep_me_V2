@@ -86,6 +86,15 @@ CORS_ALLOW_ORIGINS=https://deep-me-v1.onrender.com,http://localhost:3000,http://
 
 운영 도메인이 변경되면 이 값을 업데이트해야 합니다.
 
+### 2.6 에러 알림
+
+```env
+DISCORD_ERROR_WEBHOOK_URL=   # 설정 시 ERROR 이상 로그를 해당 Discord 채널로 전송
+```
+
+미설정 시 알림 없이 stdout 로깅만 동작(기존과 동일). 같은 로거+메시지는
+30초 내 중복 전송하지 않음(`app/backend/core/logging_config.py`).
+
 ---
 
 ## 3. 운영 배포 체크리스트
