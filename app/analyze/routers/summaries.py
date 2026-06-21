@@ -9,6 +9,7 @@ from sqlmodel import Session
 from app.db.session import get_session as get_db
 from app.analyze import schemas as sc
 from app.analyze.services import summaries as summary_service
+from app.backend.dependencies.auth import get_current_user
 
 
 router = APIRouter(prefix="/api", tags=["summaries"])
@@ -26,9 +27,11 @@ def list_summaries(
     limit: Optional[int] = Query(default=None, gt=0),
     offset: Optional[int] = Query(default=None, ge=0),
     db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user),
 ):
     rows = summary_service.list_summaries(
         db,
+        user_id=UUID(current_user_id),
         limit=limit,
         offset=offset,
     )
@@ -41,9 +44,11 @@ def list_session_summaries(
     limit: Optional[int] = Query(default=None, gt=0),
     offset: Optional[int] = Query(default=None, ge=0),
     db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user),
 ):
     rows = summary_service.list_summaries(
         db,
+        user_id=UUID(current_user_id),
         session_id=session_id,
         limit=limit,
         offset=offset,
