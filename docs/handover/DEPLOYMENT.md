@@ -142,7 +142,10 @@ LLM_MODEL=gpt-4o                       # gpt-4o-mini → gpt-4o
 
 ## 6. Render 배포 설정
 
-Render `render.yaml` 또는 대시보드에서:
+저장소 루트의 `render.yaml`에 정의되어 있음. 기존에 대시보드로 수동 생성된 서비스는
+render.yaml을 추가해도 자동으로 반영되지 않으므로, Render 대시보드 → 서비스 →
+Settings에서 Pre-Deploy Command가 `alembic upgrade head`로 설정되어 있는지
+직접 확인해야 함(Blueprint로 재연결하면 render.yaml이 그대로 적용됨).
 
 ```yaml
 services:
@@ -152,6 +155,7 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     preDeployCommand: alembic upgrade head
+    healthCheckPath: /health/db
 ```
 
 ---
