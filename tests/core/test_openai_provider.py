@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from app.core.llm import LLMJsonSchema, LLMMessage, OpenAIProvider
 
 
@@ -204,6 +206,35 @@ def test_stream_text_falls_back_from_reasoning_responses_to_chat_backups():
     assert output == "fallback"
     assert responses.stream_calls[0]["model"] == "gpt-5-mini"
     assert client.chat.completions.calls[0]["model"] == "gpt-4o-mini"
+
+
+def test_generate_json_reports_truncation_when_max_tokens_hit():
+    responses = FakeResponsesAPI(create_errors=[RuntimeError("responses unavailable")])
+    chat_result = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content='{"summary": "tru'),
+                finish_reason="length",
+            )
+        ]
+    )
+    client = FakeClient(responses=responses, chat_result=chat_result)
+    provider = OpenAIProvider(
+        settings=_build_settings("gpt-5-mini"),
+        client=client,
+        backup_models=("gpt-4o-mini",),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        provider.generate_json(
+            messages=[
+                LLMMessage(role="system", content="Return JSON."),
+                LLMMessage(role="user", content="Ping"),
+            ],
+            schema=LLMJsonSchema(name="sample", schema={"type": "object"}),
+        )
+
+    assert "max_output_tokens" in str(exc_info.value)
 
 
 def test_responses_input_uses_output_text_for_assistant_history():
