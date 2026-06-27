@@ -15,6 +15,7 @@ import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -33,6 +34,7 @@ DISCORD_WEBHOOK_URL: str = os.getenv("DISCORD_WEBHOOK_URL", "")
 RENDER_API_BASE = "https://api.render.com/v1"
 DEPLOY_POLL_INTERVAL = 10   # 초
 DEPLOY_POLL_TIMEOUT = 600   # 최대 10분
+GITHUB_API_HOST = "api.github.com"
 
 router = APIRouter(tags=["deploy"])
 
@@ -58,6 +60,13 @@ def _signature_required_and_valid(raw_body: bytes, signature: str) -> bool:
     if not signature:
         return False
     return _verify_signature(raw_body, signature, GITHUB_WEBHOOK_SECRET)
+
+
+def _is_github_api_url(url: str) -> bool:
+    """commits_url은 PR 웹훅 페이로드에서 그대로 들어오는 값이라,
+    GitHub API 호스트가 아니면 거부해서 SSRF를 막음."""
+    parsed = urlparse(url)
+    return parsed.scheme == "https" and parsed.hostname == GITHUB_API_HOST
 
 
 def _short_sha(sha: str) -> str:
@@ -205,6 +214,9 @@ async def _send_discord_file(
 # PR 커밋 기록
 # ──────────────────────────────────────────────
 async def _fetch_pr_commits(commits_url: str) -> list[dict[str, Any]]:
+    if not _is_github_api_url(commits_url):
+        raise ValueError(f"commits_url이 GitHub API 호스트가 아님: {commits_url}")
+
     commits: list[dict[str, Any]] = []
     url: Optional[str] = commits_url + "?per_page=100"
     headers = {"Accept": "application/vnd.github+json"}
@@ -216,7 +228,9 @@ async def _fetch_pr_commits(commits_url: str) -> list[dict[str, Any]]:
             url = None
             for part in resp.headers.get("Link", "").split(","):
                 if 'rel="next"' in part:
-                    url = part.split(";")[0].strip().strip("<>")
+                    next_url = part.split(";")[0].strip().strip("<>")
+                    if _is_github_api_url(next_url):
+                        url = next_url
     return commits
 
 
