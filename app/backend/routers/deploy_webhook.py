@@ -47,6 +47,19 @@ def _verify_signature(payload_bytes: bytes, signature: str, secret: str) -> bool
     return hmac.compare_digest(expected, signature)
 
 
+def _signature_required_and_valid(raw_body: bytes, signature: str) -> bool:
+    """GITHUB_WEBHOOK_SECRET이 설정된 경우, 서명이 없거나 틀리면 거부.
+
+    이전엔 `signature` 헤더 자체가 없으면 검증을 통째로 스킵해서
+    헤더를 안 보내는 것만으로 인증을 우회할 수 있었음.
+    """
+    if not GITHUB_WEBHOOK_SECRET:
+        return True
+    if not signature:
+        return False
+    return _verify_signature(raw_body, signature, GITHUB_WEBHOOK_SECRET)
+
+
 def _short_sha(sha: str) -> str:
     return sha[:7] if sha else "unknown"
 
@@ -237,10 +250,9 @@ def _build_commit_history_txt(
 
 async def _run_pr_pipeline(payload: dict[str, Any], signature: str, raw_body: bytes) -> None:
     # 1. 서명 검증
-    if signature and GITHUB_WEBHOOK_SECRET:
-        if not _verify_signature(raw_body, signature, GITHUB_WEBHOOK_SECRET):
-            logger.warning("GitHub 웹훅 서명 검증 실패 — 무시")
-            return
+    if not _signature_required_and_valid(raw_body, signature):
+        logger.warning("GitHub 웹훅 서명 검증 실패 — 무시")
+        return
 
     # 2. main으로 merge된 PR인지 확인
     action = payload.get("action", "")
@@ -299,10 +311,9 @@ async def _run_pr_pipeline(payload: dict[str, Any], signature: str, raw_body: by
 # ──────────────────────────────────────────────
 async def _run_pipeline(payload: dict[str, Any], signature: str, raw_body: bytes) -> None:
     # 1. 서명 검증
-    if signature and GITHUB_WEBHOOK_SECRET:
-        if not _verify_signature(raw_body, signature, GITHUB_WEBHOOK_SECRET):
-            logger.warning("GitHub 웹훅 서명 검증 실패 — 무시")
-            return
+    if not _signature_required_and_valid(raw_body, signature):
+        logger.warning("GitHub 웹훅 서명 검증 실패 — 무시")
+        return
 
     # 2. main 브랜치 push인지 확인
     ref = payload.get("ref", "")
