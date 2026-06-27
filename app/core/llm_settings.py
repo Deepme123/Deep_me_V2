@@ -72,14 +72,18 @@ def get_llm_settings(
     model_legacy_names: Sequence[str] = (),
     temperature_default: float = 0.7,
     max_tokens_default: int = 800,
+    max_tokens_override_names: Sequence[str] = (),
     timeout_default: float = 60.0,
 ) -> LLMSettings:
     model_names = ("LLM_MODEL", *model_legacy_names)
+    # 패키지 전용 override(예: CARD_MAX_TOKENS)가 있으면 공통 LLM_MAX_TOKENS보다
+    # 먼저 적용된다 — 그래야 분석카드처럼 출력이 큰 호출만 별도로 늘릴 수 있다.
+    max_tokens_names = (*max_tokens_override_names, "LLM_MAX_TOKENS")
     return LLMSettings(
         provider=_normalize_provider(_read_first(("LLM_PROVIDER",), "openai")),
         model=_read_first(model_names, model_default),
         temperature=_read_float(("LLM_TEMPERATURE",), temperature_default),
-        max_tokens=_read_int(("LLM_MAX_TOKENS",), max_tokens_default),
+        max_tokens=_read_int(max_tokens_names, max_tokens_default),
         timeout_sec=_read_float(("LLM_TIMEOUT_SEC",), timeout_default),
         openai_api_key=_read_first(("OPENAI_API_KEY",), ""),
         anthropic_api_key=_read_first(("ANTHROPIC_API_KEY",), ""),

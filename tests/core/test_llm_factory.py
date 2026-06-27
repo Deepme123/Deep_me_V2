@@ -61,6 +61,7 @@ def test_create_llm_provider_resolves_settings_before_selecting(monkeypatch):
         model_legacy_names=("LEGACY_MODEL",),
         temperature_default=0.6,
         max_tokens_default=456,
+        max_tokens_override_names=("CARD_MAX_TOKENS",),
         timeout_default=33.0,
     )
 
@@ -71,5 +72,6 @@ def test_create_llm_provider_resolves_settings_before_selecting(monkeypatch):
         "model_legacy_names": ("LEGACY_MODEL",),
         "temperature_default": 0.6,
         "max_tokens_default": 456,
+        "max_tokens_override_names": ("CARD_MAX_TOKENS",),
         "timeout_default": 33.0,
     }

@@ -15,6 +15,7 @@ def create_llm_provider(
     model_legacy_names: Sequence[str] = (),
     temperature_default: float = 0.7,
     max_tokens_default: int = 800,
+    max_tokens_override_names: Sequence[str] = (),
     timeout_default: float = 60.0,
 ) -> LLMProvider:
     settings = get_llm_settings(
@@ -22,6 +23,7 @@ def create_llm_provider(
         model_legacy_names=model_legacy_names,
         temperature_default=temperature_default,
         max_tokens_default=max_tokens_default,
+        max_tokens_override_names=max_tokens_override_names,
         timeout_default=timeout_default,
     )
     return create_llm_provider_from_settings(settings)
