@@ -58,7 +58,8 @@ app.include_router(emotion_ws_router)
 app.include_router(auth.auth_router)
 app.include_router(user.user_router)
 app.include_router(task.router)
-app.include_router(demo.router)
+if os.getenv("DEMO_UI_ENABLED", "false").lower() in ("1", "true", "yes", "on"):
+    app.include_router(demo.router)
 app.include_router(deploy_webhook.router)
 
 
