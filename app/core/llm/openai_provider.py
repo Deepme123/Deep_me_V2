@@ -344,12 +344,29 @@ class OpenAIProvider(LLMProvider):
 
     def _parse_json_response(self, response: Any) -> JSONValue:
         raw_text = self._extract_response_text(response).strip()
+        truncated = self._hit_max_tokens(response)
         if not raw_text:
+            if truncated:
+                raise RuntimeError("OpenAI JSON generation hit max_output_tokens before any output.")
             raise RuntimeError("LLM returned an empty JSON response.")
         try:
             return json.loads(raw_text)
         except json.JSONDecodeError as exc:
+            if truncated:
+                raise RuntimeError(
+                    "OpenAI JSON generation was truncated by max_output_tokens before completing valid JSON."
+                ) from exc
             raise RuntimeError("LLM response was not valid JSON.") from exc
+
+    def _hit_max_tokens(self, response: Any) -> bool:
+        if getattr(response, "status", None) == "incomplete":
+            return True
+        choices = getattr(response, "choices", None)
+        if choices:
+            finish_reason = getattr(choices[0], "finish_reason", None)
+            if finish_reason == "length":
+                return True
+        return False
 
     def _extract_response_text(self, response: Any) -> str:
         output_text = getattr(response, "output_text", None)
