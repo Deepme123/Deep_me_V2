@@ -121,6 +121,7 @@ def test_auto_from_session_creates_card_for_valid_session(monkeypatch):
     assert response.status_code == 200
     assert response.json()["session_id"] == str(session_id)
     assert response.json()["summary"] == "불안 패턴 요약"
+    assert response.json()["thoughts"] == "같은 걱정을 반복함"
     assert len(fake_db.cards) == 1
     assert captured["title_hint"] == "불안 패턴 정리"
     assert [(turn.role, turn.text) for turn in captured["turns"]] == [

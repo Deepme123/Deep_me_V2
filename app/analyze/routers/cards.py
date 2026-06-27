@@ -53,6 +53,7 @@ def _store_card(db: Session, session_id: UUID, payload: sc.CardCreate) -> sc.Car
         coping_actions=payload.coping_actions,
         tags=payload.tags,
         insight=payload.insight,
+        thoughts=payload.thoughts,
         exportable=True,
         risk_flag=risk_flag,
         risk_level=risk_level,
