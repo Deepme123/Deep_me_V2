@@ -15,6 +15,7 @@ import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -33,6 +34,7 @@ DISCORD_WEBHOOK_URL: str = os.getenv("DISCORD_WEBHOOK_URL", "")
 RENDER_API_BASE = "https://api.render.com/v1"
 DEPLOY_POLL_INTERVAL = 10   # 초
 DEPLOY_POLL_TIMEOUT = 600   # 최대 10분
+GITHUB_API_HOST = "api.github.com"
 
 router = APIRouter(tags=["deploy"])
 
@@ -45,6 +47,26 @@ def _verify_signature(payload_bytes: bytes, signature: str, secret: str) -> bool
         secret.encode(), payload_bytes, hashlib.sha256
     ).hexdigest()
     return hmac.compare_digest(expected, signature)
+
+
+def _signature_required_and_valid(raw_body: bytes, signature: str) -> bool:
+    """GITHUB_WEBHOOK_SECRET이 설정된 경우, 서명이 없거나 틀리면 거부.
+
+    이전엔 `signature` 헤더 자체가 없으면 검증을 통째로 스킵해서
+    헤더를 안 보내는 것만으로 인증을 우회할 수 있었음.
+    """
+    if not GITHUB_WEBHOOK_SECRET:
+        return True
+    if not signature:
+        return False
+    return _verify_signature(raw_body, signature, GITHUB_WEBHOOK_SECRET)
+
+
+def _is_github_api_url(url: str) -> bool:
+    """commits_url은 PR 웹훅 페이로드에서 그대로 들어오는 값이라,
+    GitHub API 호스트가 아니면 거부해서 SSRF를 막음."""
+    parsed = urlparse(url)
+    return parsed.scheme == "https" and parsed.hostname == GITHUB_API_HOST
 
 
 def _short_sha(sha: str) -> str:
@@ -192,6 +214,9 @@ async def _send_discord_file(
 # PR 커밋 기록
 # ──────────────────────────────────────────────
 async def _fetch_pr_commits(commits_url: str) -> list[dict[str, Any]]:
+    if not _is_github_api_url(commits_url):
+        raise ValueError(f"commits_url이 GitHub API 호스트가 아님: {commits_url}")
+
     commits: list[dict[str, Any]] = []
     url: Optional[str] = commits_url + "?per_page=100"
     headers = {"Accept": "application/vnd.github+json"}
@@ -203,7 +228,9 @@ async def _fetch_pr_commits(commits_url: str) -> list[dict[str, Any]]:
             url = None
             for part in resp.headers.get("Link", "").split(","):
                 if 'rel="next"' in part:
-                    url = part.split(";")[0].strip().strip("<>")
+                    next_url = part.split(";")[0].strip().strip("<>")
+                    if _is_github_api_url(next_url):
+                        url = next_url
     return commits
 
 
@@ -237,10 +264,9 @@ def _build_commit_history_txt(
 
 async def _run_pr_pipeline(payload: dict[str, Any], signature: str, raw_body: bytes) -> None:
     # 1. 서명 검증
-    if signature and GITHUB_WEBHOOK_SECRET:
-        if not _verify_signature(raw_body, signature, GITHUB_WEBHOOK_SECRET):
-            logger.warning("GitHub 웹훅 서명 검증 실패 — 무시")
-            return
+    if not _signature_required_and_valid(raw_body, signature):
+        logger.warning("GitHub 웹훅 서명 검증 실패 — 무시")
+        return
 
     # 2. main으로 merge된 PR인지 확인
     action = payload.get("action", "")
@@ -299,10 +325,9 @@ async def _run_pr_pipeline(payload: dict[str, Any], signature: str, raw_body: by
 # ──────────────────────────────────────────────
 async def _run_pipeline(payload: dict[str, Any], signature: str, raw_body: bytes) -> None:
     # 1. 서명 검증
-    if signature and GITHUB_WEBHOOK_SECRET:
-        if not _verify_signature(raw_body, signature, GITHUB_WEBHOOK_SECRET):
-            logger.warning("GitHub 웹훅 서명 검증 실패 — 무시")
-            return
+    if not _signature_required_and_valid(raw_body, signature):
+        logger.warning("GitHub 웹훅 서명 검증 실패 — 무시")
+        return
 
     # 2. main 브랜치 push인지 확인
     ref = payload.get("ref", "")
