@@ -283,6 +283,8 @@ def _build_fallback_card() -> sc.CardCreate:
 def analyze_dialogue_to_card(
     turns: List[sc.ConversationTurn],
     title_hint: str | None = None,
+    *,
+    max_attempts: int = 2,
 ) -> sc.CardCreate:
     if not turns:
         raise ValueError("conversation_log is empty.")
@@ -298,20 +300,33 @@ def analyze_dialogue_to_card(
         "[Conversation End]"
     )
 
-    try:
-        provider = get_card_provider()
-        payload = provider.generate_json(
-            messages=[
-                LLMMessage(role="system", content=_SYSTEM_PROMPT),
-                LLMMessage(role="user", content=user_prompt),
-            ],
-            schema=_CARD_SCHEMA,
-        )
-        structured = _LLMCardPayload.model_validate(payload)
-        structured = structured.model_copy(
-            update={"core_emotions": _validate_emotion_entries(structured.core_emotions)}
-        )
-        return sc.CardCreate.model_validate(structured.model_dump())
-    except (RuntimeError, ValidationError, ValueError, TypeError) as exc:
-        logger.warning("LLM card analysis failed, returning fallback card: %s", exc)
-        return _build_fallback_card()
+    last_exc: Exception | None = None
+    # 트랜지언트 오류(네트워크, rate limit, JSON 잘림 등) 한 번으로 빈 fallback
+    # 카드가 영구 저장되는 걸 막기 위해 한 번 더 시도해 본다.
+    for attempt in range(1, max_attempts + 1):
+        try:
+            provider = get_card_provider()
+            payload = provider.generate_json(
+                messages=[
+                    LLMMessage(role="system", content=_SYSTEM_PROMPT),
+                    LLMMessage(role="user", content=user_prompt),
+                ],
+                schema=_CARD_SCHEMA,
+            )
+            structured = _LLMCardPayload.model_validate(payload)
+            structured = structured.model_copy(
+                update={"core_emotions": _validate_emotion_entries(structured.core_emotions)}
+            )
+            return sc.CardCreate.model_validate(structured.model_dump())
+        except (RuntimeError, ValidationError, ValueError, TypeError) as exc:
+            last_exc = exc
+            logger.warning(
+                "LLM card analysis attempt %d/%d failed: %s", attempt, max_attempts, exc
+            )
+
+    logger.warning(
+        "LLM card analysis failed after %d attempts, returning fallback card: %s",
+        max_attempts,
+        last_exc,
+    )
+    return _build_fallback_card()

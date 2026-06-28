@@ -3,7 +3,9 @@ from __future__ import annotations
 
 _LOW = ["힘들", "슬픔", "우울", "불안", "짜증"]
 _MEDIUM = ["죽고", "자해", "해치", "절망", "포기"]
-_HIGH = ["나는 죽", "곧 끝낼", "방법을 찾았", "유서", "뛰어내"]
+# score()는 입력 텍스트의 공백을 전부 제거하고 매칭하므로, 패턴 쪽도 공백을
+# 제거해 둬야 한다 — 그러지 않으면 공백이 포함된 패턴은 절대 매칭되지 않는다.
+_HIGH = [p.replace(" ", "") for p in ["나는 죽", "곧 끝낼", "방법을 찾았", "유서", "뛰어내"]]
 
 def score(text: str) -> str:
     t = (text or "").replace(" ", "")
@@ -19,8 +21,11 @@ def risk_from_payload(payload: dict) -> tuple[bool, str]:
         return str(v or "")
 
     bag = " ".join(
-        _to_str(payload.get(k)) for k in
-        ("summary","situation","core_emotions","physical_reactions","coping_actions")
+        _to_str(payload.get(k)) for k in (
+            "summary", "situation", "core_emotions", "physical_reactions",
+            "coping_actions", "thoughts", "insight", "situation_steps",
+            "behavior_patterns", "tags",
+        )
     )
     level = score(bag)
     return (level in {"LOW","MEDIUM","HIGH"}, level if level!="NONE" else None)

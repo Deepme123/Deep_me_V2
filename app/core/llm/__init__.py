@@ -10,6 +10,7 @@ def create_llm_provider(
     model_legacy_names=(),
     temperature_default: float = 0.7,
     max_tokens_default: int = 800,
+    max_tokens_override_names=(),
     timeout_default: float = 60.0,
 ) -> LLMProvider:
     from .factory import create_llm_provider as _create_llm_provider
@@ -19,6 +20,7 @@ def create_llm_provider(
         model_legacy_names=model_legacy_names,
         temperature_default=temperature_default,
         max_tokens_default=max_tokens_default,
+        max_tokens_override_names=max_tokens_override_names,
         timeout_default=timeout_default,
     )
 

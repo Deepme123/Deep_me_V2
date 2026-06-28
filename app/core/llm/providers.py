@@ -19,9 +19,13 @@ def get_card_provider() -> LLMProvider:
     # 함께 소비한다. 분석카드 스키마(situation_steps/behavior_patterns/thoughts 등
     # 다수의 필수 필드)를 끝까지 채우기엔 1500이 너무 낮아 응답이 잘려 JSON 파싱이
     # 실패하고 빈 fallback 카드로 떨어지는 경우가 있었다.
+    # CARD_MAX_TOKENS가 설정되어 있으면 공통 LLM_MAX_TOKENS보다 우선 적용된다 —
+    # LLM_MAX_TOKENS는 채팅/태스크/욕구분석과 공유되는 값이라 그대로 두고
+    # 분석카드만 별도로 늘릴 수 있어야 한다.
     return create_llm_provider(
         model_default="gpt-5.4-mini-2026-03-17",
         max_tokens_default=4000,
+        max_tokens_override_names=("CARD_MAX_TOKENS",),
         timeout_default=60.0,
     )
 

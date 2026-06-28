@@ -181,6 +181,26 @@ def test_generate_json_returns_tool_input_payload():
     }
 
 
+def test_generate_json_raises_clear_error_when_tool_use_is_truncated_by_max_tokens():
+    # P1-2 회귀 테스트: stop_reason == "max_tokens"이면 tool_use 블록이 있어도
+    # 명확한 truncation 에러를 내야 한다 (partial payload를 그대로 반환하면 안 됨).
+    client = FakeClient(
+        messages=FakeMessagesAPI(
+            create_result=SimpleNamespace(
+                stop_reason="max_tokens",
+                content=[_tool_block("analysis_card", {"summary": "tru"})],
+            )
+        )
+    )
+    provider = AnthropicProvider(settings=_build_settings("claude-sonnet-4-5"), client=client)
+
+    with pytest.raises(RuntimeError, match="max_tokens"):
+        provider.generate_json(
+            messages=[LLMMessage(role="user", content="Analyze")],
+            schema=LLMJsonSchema(name="analysis_card", schema={"type": "object"}),
+        )
+
+
 def test_generate_json_raises_when_tool_output_is_missing():
     client = FakeClient(
         messages=FakeMessagesAPI(

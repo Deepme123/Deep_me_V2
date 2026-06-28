@@ -208,6 +208,12 @@ class AnthropicProvider(LLMProvider):
         raise ValueError("Unable to read text from Anthropic response.")
 
     def _extract_tool_input(self, *, response: Any, tool_name: str) -> JSONValue:
+        # stop_reason == "max_tokens"이면 tool_use 블록이 있어도 input이 잘렸을 수
+        # 있으므로, 블록 존재 여부보다 먼저 확인해서 명확한 에러를 낸다.
+        stop_reason = getattr(response, "stop_reason", None)
+        if stop_reason == "max_tokens":
+            raise RuntimeError("Anthropic JSON generation hit max_tokens before tool output.")
+
         for block in self._iter_content_blocks(response):
             if self._block_type(block) != "tool_use":
                 continue
@@ -219,9 +225,6 @@ class AnthropicProvider(LLMProvider):
                 return payload
             raise RuntimeError("Anthropic tool output was not JSON-serializable.")
 
-        stop_reason = getattr(response, "stop_reason", None)
-        if stop_reason == "max_tokens":
-            raise RuntimeError("Anthropic JSON generation hit max_tokens before tool output.")
         raise RuntimeError("Anthropic response did not include the requested tool output.")
 
     def _iter_content_blocks(self, response: Any) -> list[Any]:
