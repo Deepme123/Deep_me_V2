@@ -26,6 +26,9 @@ class FakeExecResult:
     def all(self):
         return self._rows
 
+    def first(self):
+        return self._rows[0] if self._rows else None
+
 
 class FakeDB:
     def __init__(self, sessions, steps_by_session):
@@ -42,12 +45,24 @@ class FakeDB:
             return self.sessions.get(pk)
         return None
 
-    def exec(self, _stmt):
+    def exec(self, stmt):
+        model = None
+        try:
+            model = stmt.column_descriptions[0]["type"]
+        except (AttributeError, IndexError, KeyError, TypeError):
+            model = None
+        if getattr(model, "__name__", "") == "AnalysisCard":
+            matching = [c for c in self.cards if c.session_id == self._active_session_id]
+            return FakeExecResult(matching)
         return FakeExecResult(self.steps_by_session.get(self._active_session_id, []))
 
     def add(self, obj):
         if getattr(obj, "__class__", type(obj)).__name__ == "AnalysisCard":
             self._pending_card = obj
+
+    def delete(self, obj):
+        if getattr(obj, "__class__", type(obj)).__name__ == "AnalysisCard":
+            self.cards = [c for c in self.cards if c is not obj]
 
     def commit(self):
         if self._pending_card is not None:
@@ -227,6 +242,94 @@ def test_auto_from_session_rejects_duplicate_card_for_same_session(monkeypatch):
     assert first.json()["summary"] == "첫 번째 요약"
     assert second.status_code == 409
     assert second.json()["detail"] == "card already exists for this session"
+
+
+def test_auto_from_session_regenerate_true_overwrites_existing_card(monkeypatch):
+    # P1-1 회귀 테스트: 이전 생성이 부실했거나 실패했을 때, regenerate=true로
+    # 다시 호출하면 409 대신 기존 카드를 지우고 새로 만들어야 한다.
+    session_id = uuid4()
+    fake_db = FakeDB(
+        sessions={session_id: SimpleNamespace(session_id=session_id)},
+        steps_by_session={
+            session_id: [
+                _step(session_id, 1, "user", user_input="자꾸 같은 걱정이 떠올라요"),
+                _step(session_id, 2, "assistant", gpt_response="그 걱정이 시작되는 장면을 떠올려볼까요?"),
+            ]
+        },
+    )
+
+    def fake_analyze_dialogue_to_card(*, turns, title_hint):
+        return sc.CardCreate(summary=f"{title_hint or '기본'} 요약")
+
+    monkeypatch.setattr(cards, "analyze_dialogue_to_card", fake_analyze_dialogue_to_card)
+    client = _build_client(fake_db)
+
+    first = client.post(
+        f"/api/sessions/{session_id}/cards/auto-from-session",
+        json={"title_hint": "첫 번째"},
+    )
+    second = client.post(
+        f"/api/sessions/{session_id}/cards/auto-from-session?regenerate=true",
+        json={"title_hint": "두 번째"},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["summary"] == "두 번째 요약"
+    assert len(fake_db.cards) == 1
+    assert fake_db.cards[0].summary == "두 번째 요약"
+
+
+def test_auto_regenerate_true_overwrites_existing_card(monkeypatch):
+    session_id = uuid4()
+    fake_db = FakeDB(
+        sessions={session_id: SimpleNamespace(session_id=session_id)},
+        steps_by_session={},
+    )
+
+    def fake_analyze_dialogue_to_card(*, turns, title_hint):
+        return sc.CardCreate(summary=f"{title_hint or '기본'} 요약")
+
+    monkeypatch.setattr(cards, "analyze_dialogue_to_card", fake_analyze_dialogue_to_card)
+    client = _build_client(fake_db)
+
+    first = client.post(
+        f"/api/sessions/{session_id}/cards/auto",
+        json={"conversation_log": [{"role": "user", "speaker": "USER", "text": "힘들어요"}]},
+    )
+    second = client.post(
+        f"/api/sessions/{session_id}/cards/auto?regenerate=true",
+        json={"conversation_log": [{"role": "user", "speaker": "USER", "text": "다시 해주세요"}]},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert len(fake_db.cards) == 1
+
+
+def test_auto_from_session_regenerate_false_keeps_default_conflict_behavior(monkeypatch):
+    session_id = uuid4()
+    fake_db = FakeDB(
+        sessions={session_id: SimpleNamespace(session_id=session_id)},
+        steps_by_session={
+            session_id: [
+                _step(session_id, 1, "user", user_input="자꾸 같은 걱정이 떠올라요"),
+            ]
+        },
+    )
+
+    def fake_analyze_dialogue_to_card(*, turns, title_hint):
+        return sc.CardCreate(summary="요약")
+
+    monkeypatch.setattr(cards, "analyze_dialogue_to_card", fake_analyze_dialogue_to_card)
+    client = _build_client(fake_db)
+
+    first = client.post(f"/api/sessions/{session_id}/cards/auto-from-session")
+    second = client.post(f"/api/sessions/{session_id}/cards/auto-from-session")
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+    assert len(fake_db.cards) == 1
     assert len(fake_db.cards) == 1
 
 

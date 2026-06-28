@@ -146,6 +146,15 @@ def create_session(
     return sc.SessionOut.model_validate(session, from_attributes=True)
 
 
+def _delete_existing_card_for_session(db: Session, session_id: UUID) -> None:
+    existing = db.exec(
+        select(m.AnalysisCard).where(m.AnalysisCard.session_id == session_id)
+    ).first()
+    if existing is not None:
+        db.delete(existing)
+        db.commit()
+
+
 @router.post("/sessions/{session_id}/cards", response_model=sc.CardOut)
 def create_card(
     session_id: UUID,
@@ -161,10 +170,13 @@ def create_card(
 def create_card_auto(
     session_id: UUID,
     body: sc.AutoCardCreate,
+    regenerate: bool = False,
     db: Session = Depends(get_db),
     current_user_id: str = Depends(get_current_user),
 ):
     _get_session_or_404(db, session_id, current_user_id)
+    if regenerate:
+        _delete_existing_card_for_session(db, session_id)
     return _analyze_and_store_card(
         db=db,
         session_id=session_id,
@@ -177,10 +189,13 @@ def create_card_auto(
 def create_card_auto_from_session(
     session_id: UUID,
     body: sc.AutoCardRequestBase | None = None,
+    regenerate: bool = False,
     db: Session = Depends(get_db),
     current_user_id: str = Depends(get_current_user),
 ):
     _get_session_or_404(db, session_id, current_user_id)
+    if regenerate:
+        _delete_existing_card_for_session(db, session_id)
     turns = _load_session_conversation_turns(db, session_id)
     title_hint = body.title_hint if body else None
     return _analyze_and_store_card(

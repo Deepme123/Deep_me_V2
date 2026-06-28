@@ -23,6 +23,21 @@ class _FakeProvider:
         return self.payload
 
 
+class _SequenceFakeProvider:
+    """호출마다 결과를 순서대로 반환 — 재시도 시나리오 테스트용."""
+
+    def __init__(self, results: list) -> None:
+        self.results = list(results)
+        self.calls = []
+
+    def generate_json(self, *, messages, schema, options=None):
+        self.calls.append((messages, schema, options))
+        result = self.results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
 def _build_turns() -> list[sc.ConversationTurn]:
     return [
         sc.ConversationTurn(role="user", speaker="USER", text="I am overwhelmed at work."),
@@ -234,6 +249,36 @@ class LLMCardTests(unittest.TestCase):
             card = llm_card.analyze_dialogue_to_card(_build_turns())
 
         self.assertEqual(len(card.situation_steps[0].interpretations), 1)
+
+    def test_retries_once_after_transient_failure_then_succeeds(self) -> None:
+        # P1-1 회귀 테스트: 첫 시도가 트랜지언트 오류로 실패해도, 재시도에서
+        # 성공하면 fallback이 아니라 실제 카드를 돌려줘야 한다.
+        provider = _SequenceFakeProvider(
+            [
+                RuntimeError("OpenAI JSON generation was truncated by max_output_tokens."),
+                {"summary": "Recovered on retry."},
+            ]
+        )
+
+        with patch.object(llm_card, "get_card_provider", return_value=provider):
+            card = llm_card.analyze_dialogue_to_card(_build_turns())
+
+        self.assertEqual(card.summary, "Recovered on retry.")
+        self.assertEqual(len(provider.calls), 2)
+
+    def test_falls_back_only_after_all_attempts_exhausted(self) -> None:
+        provider = _SequenceFakeProvider(
+            [
+                RuntimeError("first failure"),
+                RuntimeError("second failure"),
+            ]
+        )
+
+        with patch.object(llm_card, "get_card_provider", return_value=provider):
+            card = llm_card.analyze_dialogue_to_card(_build_turns())
+
+        self.assertEqual(card.model_dump(), sc.CardCreate().model_dump())
+        self.assertEqual(len(provider.calls), 2)
 
 
 if __name__ == "__main__":
