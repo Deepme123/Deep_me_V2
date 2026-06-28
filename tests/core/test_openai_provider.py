@@ -237,6 +237,40 @@ def test_generate_json_reports_truncation_when_max_tokens_hit():
     assert "max_output_tokens" in str(exc_info.value)
 
 
+def test_generate_json_falls_back_to_backup_model_not_primary_reasoning_model():
+    # P2-1 (docs/analysis-card-error-audit.md) 확인용: responses API가 실패하면
+    # chat-completions 폴백은 reasoning 모델 자기 자신은 건너뛰고 곧바로 backup
+    # 모델(gpt-4o-mini 등)로 넘어간다. 분석카드 기본 모델이 reasoning 모델이라
+    # 이 경로를 그대로 탄다 — 조용한 모델 다운그레이드.
+    responses = FakeResponsesAPI(create_errors=[RuntimeError("responses unavailable")])
+    chat_result = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content='{"ok": true}'),
+                finish_reason="stop",
+            )
+        ]
+    )
+    client = FakeClient(responses=responses, chat_result=chat_result)
+    provider = OpenAIProvider(
+        settings=_build_settings("gpt-5-mini"),
+        client=client,
+        backup_models=("gpt-4o-mini", "gpt-4o"),
+    )
+
+    result = provider.generate_json(
+        messages=[
+            LLMMessage(role="system", content="Return JSON."),
+            LLMMessage(role="user", content="Ping"),
+        ],
+        schema=LLMJsonSchema(name="sample", schema={"type": "object"}),
+    )
+
+    assert result == {"ok": True}
+    assert client.chat.completions.calls[0]["model"] == "gpt-4o-mini"
+    assert all(call["model"] != "gpt-5-mini" for call in client.chat.completions.calls)
+
+
 def test_responses_input_uses_output_text_for_assistant_history():
     provider = OpenAIProvider(settings=_build_settings("gpt-5-mini"), client=FakeClient(responses=FakeResponsesAPI()))
 

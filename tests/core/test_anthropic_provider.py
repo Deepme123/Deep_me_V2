@@ -181,6 +181,33 @@ def test_generate_json_returns_tool_input_payload():
     }
 
 
+@pytest.mark.xfail(
+    reason=(
+        "P1-2 (docs/analysis-card-error-audit.md): _extract_tool_input은 tool_use "
+        "블록을 찾으면 stop_reason을 확인하지 않고 즉시 반환한다. max_tokens로 잘려 "
+        "incomplete한 input이 와도 '잘렸다'는 명확한 에러 없이 partial payload를 그대로 "
+        "돌려준다."
+    ),
+    strict=True,
+)
+def test_generate_json_should_raise_clear_error_when_tool_use_is_truncated_by_max_tokens():
+    client = FakeClient(
+        messages=FakeMessagesAPI(
+            create_result=SimpleNamespace(
+                stop_reason="max_tokens",
+                content=[_tool_block("analysis_card", {"summary": "tru"})],
+            )
+        )
+    )
+    provider = AnthropicProvider(settings=_build_settings("claude-sonnet-4-5"), client=client)
+
+    with pytest.raises(RuntimeError, match="max_tokens"):
+        provider.generate_json(
+            messages=[LLMMessage(role="user", content="Analyze")],
+            schema=LLMJsonSchema(name="analysis_card", schema={"type": "object"}),
+        )
+
+
 def test_generate_json_raises_when_tool_output_is_missing():
     client = FakeClient(
         messages=FakeMessagesAPI(

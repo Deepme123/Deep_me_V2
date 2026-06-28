@@ -135,5 +135,106 @@ class LLMCardTests(unittest.TestCase):
         self.assertIn("avoided eye contact", user_prompt)
 
 
+    def test_core_emotions_with_invalid_primary_label_are_dropped(self) -> None:
+        provider = _FakeProvider(
+            payload={
+                "summary": "The user feels something.",
+                "core_emotions": [
+                    {"primary": "존재하지않는감정", "sub": ["아무말"]},
+                    {"primary": "불안", "sub": ["긴장한"]},
+                ],
+            }
+        )
+
+        with patch.object(llm_card, "get_card_provider", return_value=provider):
+            card = llm_card.analyze_dialogue_to_card(_build_turns())
+
+        # 분류 체계에 없는 primary 항목은 걸러지고, 유효한 항목만 남아야 한다.
+        self.assertEqual(len(card.core_emotions), 1)
+        self.assertEqual(card.core_emotions[0].primary, "불안")
+
+    def test_core_emotions_all_invalid_falls_back_to_none_not_empty_card(self) -> None:
+        provider = _FakeProvider(
+            payload={
+                "summary": "The user feels something.",
+                "core_emotions": [{"primary": "존재하지않는감정", "sub": ["아무말"]}],
+            }
+        )
+
+        with patch.object(llm_card, "get_card_provider", return_value=provider):
+            card = llm_card.analyze_dialogue_to_card(_build_turns())
+
+        # core_emotions만 비어도 summary가 남아있으니 fallback이 아니라 부분 카드여야 한다.
+        self.assertIsNone(card.core_emotions)
+        self.assertEqual(card.summary, "The user feels something.")
+
+    def test_physical_reaction_primary_label_is_not_validated_against_taxonomy(self) -> None:
+        # 신규 발견: core_emotions의 primary는 _validate_emotion_entries로 분류 체계와
+        # 대조해 걸러지지만, physical_reactions[].primary는 같은 검증을 거치지 않는다.
+        # LLM이 분류 체계에 없는 레이블을 써도 그대로 통과한다.
+        provider = _FakeProvider(
+            payload={
+                "summary": "Body reaction noted.",
+                "physical_reactions": [
+                    {
+                        "title": "Tight chest",
+                        "description": "Chest tightened.",
+                        "primary": "분류체계에없는감정",
+                    }
+                ],
+            }
+        )
+
+        with patch.object(llm_card, "get_card_provider", return_value=provider):
+            card = llm_card.analyze_dialogue_to_card(_build_turns())
+
+        self.assertEqual(card.physical_reactions[0].primary, "분류체계에없는감정")
+
+    def test_behavior_pattern_primary_label_is_not_validated_against_taxonomy(self) -> None:
+        # 신규 발견: behavior_patterns[].primary도 physical_reactions와 동일하게
+        # 분류 체계 검증을 거치지 않고 그대로 통과한다.
+        provider = _FakeProvider(
+            payload={
+                "summary": "Behavior noted.",
+                "behavior_patterns": [
+                    {
+                        "title": "Avoidance",
+                        "primary": "분류체계에없는감정",
+                        "items": ["미루기"],
+                    }
+                ],
+            }
+        )
+
+        with patch.object(llm_card, "get_card_provider", return_value=provider):
+            card = llm_card.analyze_dialogue_to_card(_build_turns())
+
+        self.assertEqual(card.behavior_patterns[0].primary, "분류체계에없는감정")
+
+    def test_situation_step_interpretation_count_is_not_enforced_outside_llm_schema(self) -> None:
+        # 신규 발견: JSON 스키마(_CARD_SCHEMA)는 interpretations에 minItems=3,
+        # maxItems=3을 요구하지만, 이를 검증하는 pydantic 모델(_SituationStep)에는
+        # 길이 제약이 전혀 없다. OpenAI strict 모드는 스키마를 강제하지만 Anthropic
+        # tool-use는 JSON Schema의 minItems/maxItems를 항상 강제하지 않으므로,
+        # 프로바이더에 따라 1개 또는 5개짜리 interpretations가 그대로 저장될 수 있다.
+        provider = _FakeProvider(
+            payload={
+                "summary": "Situation noted.",
+                "situation_steps": [
+                    {
+                        "title": "Step",
+                        "description": "Something happened.",
+                        "interpretations": ["해석 한 개뿐"],
+                    }
+                ],
+            }
+        )
+
+        with patch.object(llm_card, "get_card_provider", return_value=provider):
+            card = llm_card.analyze_dialogue_to_card(_build_turns())
+
+        self.assertEqual(len(card.situation_steps[0].interpretations), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
