@@ -27,14 +27,6 @@ def test_score_detects_high_risk_keywords_without_internal_spaces():
     assert risk.score("이제 뛰어내릴 거예요") == "HIGH"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "P0-1 (docs/analysis-card-error-audit.md): score()가 입력 텍스트의 공백을 "
-        "전부 제거한 뒤 매칭하는데, _HIGH 패턴 중 공백이 포함된 항목"
-        "('나는 죽', '곧 끝낼', '방법을 찾았')은 공백 없는 문자열과 절대 매칭될 수 없다."
-    ),
-    strict=True,
-)
 @pytest.mark.parametrize(
     "text",
     [
@@ -43,7 +35,8 @@ def test_score_detects_high_risk_keywords_without_internal_spaces():
         "이미 방법을 찾았어요",
     ],
 )
-def test_score_should_detect_high_risk_phrases_containing_spaces(text):
+def test_score_detects_high_risk_phrases_containing_spaces(text):
+    # P0-1 회귀 테스트: _HIGH 패턴 중 공백이 포함된 항목도 정상 매칭돼야 한다.
     assert risk.score(text) == "HIGH"
 
 
@@ -71,15 +64,8 @@ def test_risk_from_payload_handles_missing_keys_gracefully():
     assert risk_level is None
 
 
-@pytest.mark.xfail(
-    reason=(
-        "P0-2 (docs/analysis-card-error-audit.md): risk_from_payload는 "
-        "summary/situation/core_emotions/physical_reactions/coping_actions만 검사하고 "
-        "thoughts/insight/situation_steps/behavior_patterns/tags는 검사하지 않는다."
-    ),
-    strict=True,
-)
-def test_risk_from_payload_should_scan_thoughts_field():
+def test_risk_from_payload_scans_thoughts_field():
+    # P0-2 회귀 테스트: thoughts 필드도 risk 스캔 대상이어야 한다.
     payload = {
         "summary": "평범한 하루였다",
         "situation": "별일 없었다",
@@ -90,13 +76,8 @@ def test_risk_from_payload_should_scan_thoughts_field():
     assert risk_level == "HIGH"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "P0-2 (docs/analysis-card-error-audit.md): insight 필드도 risk 스캔 대상이 아니다."
-    ),
-    strict=True,
-)
-def test_risk_from_payload_should_scan_insight_field():
+def test_risk_from_payload_scans_insight_field():
+    # P0-2 회귀 테스트: insight 필드도 risk 스캔 대상이어야 한다.
     payload = {
         "summary": "평범한 하루였다",
         "insight": "자해 충동을 스스로 인지하고 있다는 점이 의미 있다",
