@@ -181,16 +181,9 @@ def test_generate_json_returns_tool_input_payload():
     }
 
 
-@pytest.mark.xfail(
-    reason=(
-        "P1-2 (docs/analysis-card-error-audit.md): _extract_tool_input은 tool_use "
-        "블록을 찾으면 stop_reason을 확인하지 않고 즉시 반환한다. max_tokens로 잘려 "
-        "incomplete한 input이 와도 '잘렸다'는 명확한 에러 없이 partial payload를 그대로 "
-        "돌려준다."
-    ),
-    strict=True,
-)
-def test_generate_json_should_raise_clear_error_when_tool_use_is_truncated_by_max_tokens():
+def test_generate_json_raises_clear_error_when_tool_use_is_truncated_by_max_tokens():
+    # P1-2 회귀 테스트: stop_reason == "max_tokens"이면 tool_use 블록이 있어도
+    # 명확한 truncation 에러를 내야 한다 (partial payload를 그대로 반환하면 안 됨).
     client = FakeClient(
         messages=FakeMessagesAPI(
             create_result=SimpleNamespace(
