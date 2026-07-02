@@ -38,7 +38,10 @@ class AnalysisCard(SQLModel, table=True):
         sa_column=Column(JSON),
     )
     emotion: Optional[str] = None
-    thoughts: Optional[str] = None
+    thoughts: Optional[List[Any]] = Field(
+        default=None,
+        sa_column=Column(JSON),
+    )
     physical_reactions: Optional[List[str]] = Field(
         default=None,
         sa_column=Column(JSON),

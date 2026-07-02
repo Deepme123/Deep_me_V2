@@ -47,6 +47,12 @@ class BehaviorPattern(BaseModel):
     primary: Optional[str] = None
 
 
+class ThoughtEntry(BaseModel):
+    primary: str
+    quote: Optional[str] = None
+    thoughts: List[str] = Field(default_factory=list)
+
+
 class CardCreate(BaseModel):
     summary: Optional[str] = None
     core_emotions: Optional[List[EmotionEntry]] = None
@@ -57,7 +63,7 @@ class CardCreate(BaseModel):
     coping_actions: Optional[List[str]] = None
     tags: Optional[List[str]] = None
     insight: Optional[str] = None
-    thoughts: Optional[str] = None
+    thoughts: Optional[List[ThoughtEntry]] = None
 
 
 class CardOut(BaseModel):
@@ -76,7 +82,7 @@ class CardOut(BaseModel):
     risk_level: Optional[str] = None
     tags: Optional[List[str]] = None
     insight: Optional[str] = None
-    thoughts: Optional[str] = None
+    thoughts: Optional[List[ThoughtEntry]] = None
     exportable: bool = True
 
 
