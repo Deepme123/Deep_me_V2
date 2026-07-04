@@ -215,6 +215,10 @@
         const sub = Array.isArray(obj.sub) ? obj.sub.join(", ") : obj.sub;
         return obj.quote ? `${obj.primary} (${sub}) — "${obj.quote}"` : `${obj.primary} (${sub})`;
       }
+      if (obj.primary && obj.thoughts) {
+        const thoughts = Array.isArray(obj.thoughts) ? obj.thoughts.join(" / ") : obj.thoughts;
+        return obj.quote ? `${obj.primary} — "${obj.quote}": ${thoughts}` : `${obj.primary}: ${thoughts}`;
+      }
       if (obj.title && obj.description) return `${obj.title}: ${obj.description}`;
       if (obj.title && obj.items) {
         const items = Array.isArray(obj.items) ? obj.items.join(", ") : obj.items;

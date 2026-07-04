@@ -146,7 +146,26 @@ _CARD_SCHEMA = LLMJsonSchema(
                 "items": {"type": "string"},
             },
             "insight": {"type": "string"},
-            "thoughts": {"type": "string"},
+            "thoughts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "primary": {"type": "string"},
+                        "quote": {"type": "string"},
+                        "thoughts": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 1,
+                            "maxItems": 3,
+                        },
+                    },
+                    "required": ["primary", "quote", "thoughts"],
+                },
+                "minItems": 1,
+                "maxItems": 3,
+            },
         },
     },
 )
@@ -188,7 +207,11 @@ Field definitions:
 - coping_actions: 시도했거나 가능한 대처 행동
 - tags: 짧은 주제 키워드
 - insight: 사용자 경험에서 발견되는 패턴이나 강점을 1~2문장으로. 일반론 금지, 이 대화에서만 보이는 것을 담을 것.
-- thoughts: 이 감정 경험을 겪는 사용자의 내면 생각·인지 흐름을 1~2문장으로. 사용자가 스스로에게 어떤 말을 하고 있는지, 어떤 믿음이나 해석이 작동하는지를 담을 것. 일반론 금지.
+- thoughts: 1~3개의 감정별 생각 그룹. 각 항목은 반드시:
+    * "primary": 위 목록의 상위감정 레이블 중 정확히 하나
+    * "quote": 그 생각이 가장 잘 드러난 사용자 발화를 원문 그대로 인용
+    * "thoughts": 그 감정을 겪을 때 사용자의 내면 생각·인지 흐름을 1~3개 문장으로. 사용자가 스스로에게 어떤 말을 하고 있는지, 어떤 믿음이나 해석이 작동하는지를 담을 것. 일반론 금지.
+  목록에 없는 레이블은 절대 사용하지 말 것.
 """
 
 
@@ -246,6 +269,25 @@ class _SituationStep(BaseModel):
     interpretations: list[str]
 
 
+class _ThoughtEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    primary: str
+    quote: str | None = None
+    thoughts: list[str]
+
+
+def _validate_thought_entries(
+    entries: list[_ThoughtEntry] | None,
+) -> list[_ThoughtEntry] | None:
+    if not entries:
+        return entries
+    valid = [e for e in entries if e.primary in _VALID_PRIMARIES]
+    dropped = len(entries) - len(valid)
+    if dropped:
+        logger.warning("Unknown primary emotion in %d thought entries — dropped", dropped)
+    return valid or None
+
+
 class _LLMCardPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -258,7 +300,7 @@ class _LLMCardPayload(BaseModel):
     coping_actions: list[str] | None = None
     tags: list[str] | None = None
     insight: str | None = None
-    thoughts: str | None = None
+    thoughts: list[_ThoughtEntry] | None = None
 
 
 
@@ -315,7 +357,10 @@ def analyze_dialogue_to_card(
             )
             structured = _LLMCardPayload.model_validate(payload)
             structured = structured.model_copy(
-                update={"core_emotions": _validate_emotion_entries(structured.core_emotions)}
+                update={
+                    "core_emotions": _validate_emotion_entries(structured.core_emotions),
+                    "thoughts": _validate_thought_entries(structured.thoughts),
+                }
             )
             return sc.CardCreate.model_validate(structured.model_dump())
         except (RuntimeError, ValidationError, ValueError, TypeError) as exc:

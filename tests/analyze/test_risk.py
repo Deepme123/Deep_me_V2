@@ -69,7 +69,9 @@ def test_risk_from_payload_scans_thoughts_field():
     payload = {
         "summary": "평범한 하루였다",
         "situation": "별일 없었다",
-        "thoughts": "유서를 써야겠다는 생각이 계속 들었다",
+        "thoughts": [
+            {"primary": "우울", "quote": "", "thoughts": ["유서를 써야겠다는 생각이 계속 들었다"]}
+        ],
     }
     risk_flag, risk_level = risk.risk_from_payload(payload)
     assert risk_flag is True
