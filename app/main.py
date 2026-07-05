@@ -7,9 +7,11 @@ from app.backend.main import app as app  # noqa: E402
 
 from app.analyze.routers import cards as cards_router  # noqa: E402
 from app.analyze.routers import summaries as summaries_router  # noqa: E402
+from app.analyze.routers import satisfaction as satisfaction_router  # noqa: E402
 from app.desire.routers.need_card import router as need_card_router  # noqa: E402
 
 app.include_router(cards_router.router, prefix="/analyze")
 app.include_router(summaries_router.router, prefix="/analyze")
+app.include_router(satisfaction_router.router, prefix="/analyze")
 app.include_router(need_card_router, prefix="/desire")
 

@@ -94,6 +94,19 @@ class SummaryOut(BaseModel):
     risk_level: Optional[str] = None
 
 
+# ===== 만족도 평가 =====
+
+class SatisfactionRatingCreate(BaseModel):
+    rating: int = Field(..., ge=1, le=5, description="만족도 별점 (1~5)")
+
+
+class SatisfactionRatingOut(BaseModel):
+    session_id: UUID
+    rating: int
+    created_at: datetime
+    updated_at: datetime
+
+
 # ===== Auto Analyze용 스키마 =====
 
 class ConversationTurn(BaseModel):

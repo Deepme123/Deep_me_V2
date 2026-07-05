@@ -82,11 +82,12 @@ def test_head_migration_includes_analysiscard():
             "need_card_result",
             "need_card_score",
             "refreshtoken",
+            "satisfactionrating",
             "task",
             "user",
             "user_need_selection",
         ]
-        assert _alembic_version(tmp_db) == "0010_thoughts_to_jsonb"
+        assert _alembic_version(tmp_db) == "0011_satisfaction_rating"
     finally:
         if tmp_db.exists():
             tmp_db.unlink()
