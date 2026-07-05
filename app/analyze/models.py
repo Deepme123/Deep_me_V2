@@ -66,3 +66,23 @@ class AnalysisCard(SQLModel, table=True):
     )
     insight: Optional[str] = None
     exportable: bool = Field(default=True)
+
+
+class SatisfactionRating(SQLModel, table=True):
+    __tablename__ = "satisfactionrating"
+    __table_args__ = (
+        UniqueConstraint("session_id", name="uq_satisfactionrating_session_id"),
+    )
+
+    rating_id: UUID = Field(
+        default_factory=uuid4,
+        primary_key=True,
+        index=True,
+    )
+    session_id: UUID = Field(
+        foreign_key="emotionsession.session_id",
+        index=True,
+    )
+    rating: int
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
