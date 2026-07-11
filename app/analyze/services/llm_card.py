@@ -186,7 +186,7 @@ Field definitions:
 - core_emotions: 1~3개의 감정 항목. 각 항목은 반드시:
     * "primary": 위 목록의 상위감정 레이블 중 정확히 하나
     * "sub": 해당 상위감정 하위 목록에서만 고른 1개 이상의 감정 레이블
-    * "quote": 해당 감정이 가장 잘 드러난 사용자 발화를 원문 그대로 인용 (사용자가 실제로 한 말)
+    * "quote": 해당 감정이 가장 잘 드러난 사용자 발화를 원문 그대로 인용 (사용자가 실제로 한 말). 값 앞뒤를 따옴표(" ' " ')로 감싸지 말고 발화 텍스트만 넣을 것.
     * "reasoning": 그 감정 상태를 구체적으로 묘사하는 문장 1~3개. 사용자 발화를 살려 서술하며, 평가나 조언 없이 경험을 그대로 담을 것.
   목록에 없는 레이블은 절대 사용하지 말 것.
 - situation: 감정을 촉발한 구체적인 상황을 1~2문장으로. 사용자가 실제로 처한 맥락을 구체적으로 담을 것.
@@ -210,10 +210,25 @@ Field definitions:
 - insight: 사용자 경험에서 발견되는 패턴이나 강점을 1~2문장으로. 일반론 금지, 이 대화에서만 보이는 것을 담을 것.
 - thoughts: 1~3개의 감정별 생각 그룹. 각 항목은 반드시:
     * "primary": 위 목록의 상위감정 레이블 중 정확히 하나
-    * "quote": 사용자 발화를 원문 그대로 붙여넣지 말 것. 그 생각이 드러난 사용자 발화를 노아가 대신 전해주는 말투로 자연스럽게 재서술할 것. 반드시 사용자를 주어로 한 과거형 종결체("~했어", "~였어")로 끝맺을 것. (예: "취업 준비가 길어지는 게 조급해서 불안했어")
+    * "quote": 사용자 발화를 원문 그대로 붙여넣지 말 것. 그 생각이 드러난 사용자 발화를 노아가 대신 전해주는 말투로 자연스럽게 재서술할 것. 반드시 사용자를 주어로 한 과거형 종결체("~했어", "~였어")로 끝맺을 것. 값 앞뒤를 따옴표(" ' " ')로 감싸지 말고 문장 텍스트만 넣을 것. (예: 취업 준비가 길어지는 게 조급해서 불안했어)
     * "thoughts": 그 감정을 겪을 때 사용자의 내면 생각을 1~3개 문장으로. 반드시 사용자 본인의 1인칭 독백체("나는~", "내가~")로 작성할 것. 관찰자/분석자 시점의 3인칭 서술("사용자는~", "스스로를 ~하게 해석하고 있다")은 절대 쓰지 말 것. 사용자가 마음속으로 스스로에게 실제로 하고 있을 법한 말을 그대로 옮길 것. (예: "내가 가는 길이 맞는지 확신이 안 서.", "남들은 벌써 자리를 잡았는데 나만 뒤처진 것 같아.") 일반론 금지.
   목록에 없는 레이블은 절대 사용하지 말 것.
 """
+
+
+# quote 값이 LLM에 의해 따옴표로 감싸져 오거나 발화 원문에 따옴표가 포함된 경우,
+# UI에서 다시 따옴표로 감싸면 중복(""...")이 발생한다. 저장 전에 감싸는 따옴표를 제거한다.
+_WRAPPING_QUOTES = "\"'“”‘’「」『』"
+
+
+def _strip_wrapping_quotes(text: str | None) -> str | None:
+    if text is None:
+        return None
+    cleaned = text.strip()
+    # 앞뒤가 서로 대응하지 않아도, 감싸는 따옴표류 문자는 반복적으로 벗겨낸다.
+    while len(cleaned) >= 2 and cleaned[0] in _WRAPPING_QUOTES and cleaned[-1] in _WRAPPING_QUOTES:
+        cleaned = cleaned[1:-1].strip()
+    return cleaned
 
 
 class _EmotionEntry(BaseModel):
@@ -243,7 +258,7 @@ def _validate_emotion_entries(
         valid.append(_EmotionEntry(
             primary=entry.primary,
             sub=clean_subs,
-            quote=entry.quote,
+            quote=_strip_wrapping_quotes(entry.quote),
             reasoning=entry.reasoning,
         ))
     return valid or None
@@ -282,7 +297,15 @@ def _validate_thought_entries(
 ) -> list[_ThoughtEntry] | None:
     if not entries:
         return entries
-    valid = [e for e in entries if e.primary in _VALID_PRIMARIES]
+    valid = [
+        _ThoughtEntry(
+            primary=e.primary,
+            quote=_strip_wrapping_quotes(e.quote),
+            thoughts=e.thoughts,
+        )
+        for e in entries
+        if e.primary in _VALID_PRIMARIES
+    ]
     dropped = len(entries) - len(valid)
     if dropped:
         logger.warning("Unknown primary emotion in %d thought entries — dropped", dropped)
