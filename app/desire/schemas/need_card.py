@@ -20,6 +20,7 @@ class NeedScore(BaseModel):
     label_en: str
     score: int = Field(..., ge=0, le=100, description="Score between 0 and 100")
     rank: int = Field(..., ge=1, le=8, description="1=highest priority need, 8=lowest")
+    rationale: str = Field(default="", description="이 욕구 점수의 근거 설명")
     creature_name_ko: str = ""
     creature_emoji: str = ""
     creature_description: str = ""
@@ -35,8 +36,13 @@ class NeedCardResponse(BaseModel):
     top4: List[NeedScore]
 
     @classmethod
-    def from_scores(cls, scores_by_code: dict[str, int]) -> "NeedCardResponse":
+    def from_scores(
+        cls,
+        scores_by_code: dict[str, int],
+        rationales_by_code: dict[str, str] | None = None,
+    ) -> "NeedCardResponse":
         items = []
+        rationales_by_code = rationales_by_code or {}
         sorted_codes = sorted(
             scores_by_code.keys(),
             key=lambda c: scores_by_code[c],
@@ -53,6 +59,7 @@ class NeedCardResponse(BaseModel):
                     label_en=meta["label_en"],
                     score=int(scores_by_code[code_str]),
                     rank=idx,
+                    rationale=rationales_by_code.get(code_str, ""),
                     creature_name_ko=meta.get("creature_name_ko", ""),
                     creature_emoji=meta.get("creature_emoji", ""),
                     creature_description=meta.get("creature_description", ""),

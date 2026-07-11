@@ -60,6 +60,7 @@ def save_need_card_result(
                 code=str(item.code),
                 score=item.score,
                 rank=item.rank,
+                rationale=item.rationale,
             )
         )
 
