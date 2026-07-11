@@ -14,6 +14,8 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # server_default=""로 기존 행을 백필한다. SQLite는 ALTER COLUMN DROP DEFAULT를
+    # 지원하지 않아 server_default를 이후 제거하지 않고 그대로 둔다 (빈 문자열 기본값은 무해).
     op.add_column(
         "need_card_score",
         sa.Column(
@@ -23,8 +25,6 @@ def upgrade() -> None:
             server_default="",
         ),
     )
-    # 신규 행은 애플리케이션이 값을 채우므로 server_default는 기존 행 백필용으로만 사용.
-    op.alter_column("need_card_score", "rationale", server_default=None)
 
 
 def downgrade() -> None:
