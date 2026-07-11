@@ -9,6 +9,7 @@ from sqlmodel import Session
 from app.db.session import get_session as get_db
 from app.analyze import schemas as sc
 from app.analyze.services import summaries as summary_service
+from app.analyze.services.card_content import has_meaningful_content
 from app.backend.dependencies.auth import get_current_user
 
 
@@ -19,6 +20,7 @@ def _serialize_cards(rows: list) -> list[sc.CardOut]:
     return [
         sc.CardOut.model_validate(row, from_attributes=True)
         for row in rows
+        if has_meaningful_content(row.model_dump())
     ]
 
 
