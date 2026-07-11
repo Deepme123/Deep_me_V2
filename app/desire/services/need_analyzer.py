@@ -42,7 +42,7 @@ Conversation:
 Rules:
 - Include exactly one entry for every need code: Choice, Safe, Together, Fun, Meaning, True, Peace, Grow.
 - Rank 1 means the most dominant need in this conversation context, 8 the least.
-- Provide a short rationale citing signals from the text."""
+- For every need, write "rationale" in Korean (2~3문장): 대화 속 어떤 발화·맥락에서 이 욕구가 드러났는지 구체적으로 설명할 것. 일반론 금지, 이 대화에 실제로 나타난 신호에 근거할 것."""
 
 RESPONSE_JSON_SCHEMA = LLMJsonSchema(
     name="need_analysis",
@@ -133,6 +133,7 @@ def _build_need_scores(items: List[LLMNeedItem]) -> List[NeedScore]:
                 label_en=meta["label_en"],
                 score=item.score,
                 rank=idx,
+                rationale=item.rationale,
             )
         )
 

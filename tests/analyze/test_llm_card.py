@@ -280,6 +280,47 @@ class LLMCardTests(unittest.TestCase):
         self.assertEqual(card.model_dump(), sc.CardCreate().model_dump())
         self.assertEqual(len(provider.calls), 2)
 
+    def test_wrapping_quotes_are_stripped_from_quote_fields(self) -> None:
+        # 따옴표 중복 회귀: LLM이 quote를 따옴표로 감싸 보내거나 발화 원문에
+        # 따옴표가 있으면, UI에서 다시 감쌀 때 중복이 발생한다. 저장 전에 감싸는
+        # 따옴표를 제거하되, 문장 중간의 따옴표는 보존해야 한다.
+        provider = _FakeProvider(
+            payload={
+                "summary": "Quotes noted.",
+                "core_emotions": [
+                    {"primary": "불안", "sub": ["걱정되는"], "quote": "“나 안 써주겠지?”"},
+                ],
+                "thoughts": [
+                    {
+                        "primary": "불안",
+                        "quote": '""이대로 계속 있어도 되나""',
+                        "thoughts": ["내가 가는 길이 맞는지 확신이 안 서."],
+                    },
+                ],
+            }
+        )
+
+        with patch.object(llm_card, "get_card_provider", return_value=provider):
+            card = llm_card.analyze_dialogue_to_card(_build_turns())
+
+        self.assertEqual(card.core_emotions[0].quote, "나 안 써주겠지?")
+        self.assertEqual(card.thoughts[0].quote, "이대로 계속 있어도 되나")
+
+    def test_inner_quotes_are_preserved(self) -> None:
+        provider = _FakeProvider(
+            payload={
+                "summary": "Inner quote noted.",
+                "core_emotions": [
+                    {"primary": "불안", "sub": ["걱정되는"], "quote": '엄마가 "괜찮아" 라고 했어'},
+                ],
+            }
+        )
+
+        with patch.object(llm_card, "get_card_provider", return_value=provider):
+            card = llm_card.analyze_dialogue_to_card(_build_turns())
+
+        self.assertEqual(card.core_emotions[0].quote, '엄마가 "괜찮아" 라고 했어')
+
 
 if __name__ == "__main__":
     unittest.main()

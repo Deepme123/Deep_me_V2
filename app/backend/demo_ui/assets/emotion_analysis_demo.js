@@ -209,15 +209,29 @@
       return role;
     }
 
+    // quote 값이 이미 따옴표로 감싸져 있으면 UI에서 다시 감쌀 때 중복(""...")이 되므로 제거한다.
+    function stripWrappingQuotes(text) {
+      let cleaned = String(text).trim();
+      const quotes = "\"'“”‘’「」『』";
+      while (
+        cleaned.length >= 2 &&
+        quotes.includes(cleaned[0]) &&
+        quotes.includes(cleaned[cleaned.length - 1])
+      ) {
+        cleaned = cleaned.slice(1, -1).trim();
+      }
+      return cleaned;
+    }
+
     function formatObjectItem(obj) {
       if (typeof obj !== "object" || obj === null) return String(obj);
       if (obj.primary && obj.sub) {
         const sub = Array.isArray(obj.sub) ? obj.sub.join(", ") : obj.sub;
-        return obj.quote ? `${obj.primary} (${sub}) — "${obj.quote}"` : `${obj.primary} (${sub})`;
+        return obj.quote ? `${obj.primary} (${sub}) — "${stripWrappingQuotes(obj.quote)}"` : `${obj.primary} (${sub})`;
       }
       if (obj.primary && obj.thoughts) {
         const thoughts = Array.isArray(obj.thoughts) ? obj.thoughts.join(" / ") : obj.thoughts;
-        return obj.quote ? `${obj.primary} — "${obj.quote}": ${thoughts}` : `${obj.primary}: ${thoughts}`;
+        return obj.quote ? `${obj.primary} — "${stripWrappingQuotes(obj.quote)}": ${thoughts}` : `${obj.primary}: ${thoughts}`;
       }
       if (obj.title && obj.description) return `${obj.title}: ${obj.description}`;
       if (obj.title && obj.items) {
