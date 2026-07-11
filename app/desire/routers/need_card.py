@@ -54,7 +54,8 @@ async def get_need_card_history(
     items = []
     for row in rows:
         scores_by_code = {score.code: score.score for score in row.scores}
-        card_response = NeedCardResponse.from_scores(scores_by_code)
+        rationales_by_code = {score.code: score.rationale for score in row.scores}
+        card_response = NeedCardResponse.from_scores(scores_by_code, rationales_by_code)
         items.append(
             NeedCardHistoryItem(
                 result_id=row.result_id,

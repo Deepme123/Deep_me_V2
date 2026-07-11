@@ -71,9 +71,18 @@ def list_sessions(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ):
+    # 사용자 발화가 하나도 없는 빈 세션은 기록 리스트에 노출하지 않는다.
+    has_user_step = (
+        select(EmotionStep.step_id)
+        .where(EmotionStep.session_id == EmotionSession.session_id)
+        .where(EmotionStep.user_input != None)  # noqa: E711
+        .where(EmotionStep.user_input != "")
+        .exists()
+    )
     stmt = (
         select(EmotionSession)
         .where(EmotionSession.user_id == emotion_user_id)
+        .where(has_user_step)
         .order_by(EmotionSession.started_at.desc())
         .limit(limit)
         .offset(offset)
