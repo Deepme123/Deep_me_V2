@@ -41,10 +41,7 @@ Deep_me_V2/
 │   ├── desire/             # 욕구/필요 분석 서비스
 │   ├── core/               # LLM 추상화, 공통 설정
 │   └── db/                 # DB 세션 관리
-├── frontend/               # React 프론트엔드
-│   ├── apps/beta/          # 일반 사용자 UI
-│   ├── apps/admin/         # 관리자 모니터링 UI
-│   └── shared/             # 공유 타입, 클라이언트
+├── frontend/               # 프론트엔드 (별도 레포 클론, git 추적 제외)
 ├── alembic/                # DB 마이그레이션
 ├── tests/                  # 테스트 모음
 └── docs/                   # 문서 (인수인계 포함)
@@ -114,18 +111,11 @@ uvicorn app.main:app --reload
 | `http://localhost:8000/health` | API 헬스체크 |
 | `http://localhost:8000/health/db` | DB 연결 확인 |
 | `http://localhost:8000/health/llm` | LLM 연결 확인 |
-| `http://localhost:8000/demo/emotion-analysis` | QA 테스트 UI (HTML) |
 | `http://localhost:8000/docs` | Swagger UI |
 | `WS ws://localhost:8000/ws/emotion` | WebSocket 대화 채널 |
 
-프론트엔드 (별도 터미널):
-
-```bash
-cd frontend
-npm install
-npm run dev
-# → http://localhost:5173
-```
+프론트엔드는 별도 레포(`frontend/`, git 추적 제외)에서 관리되며 실행 방법은 해당 레포의
+README를 참조하세요.
 
 ## 마이그레이션
 
@@ -170,12 +160,6 @@ pytest tests/backend/              # 백엔드 전체
 pytest tests/analyze/              # 분석 서비스
 pytest tests/desire/               # 욕구분석 서비스
 pytest tests/core/                 # LLM 코어
-```
-
-특정 파일:
-
-```bash
-pytest tests/backend/test_demo_router.py -v
 ```
 
 커버리지:
