@@ -10,6 +10,7 @@ from app.analyze import models as m
 from app.analyze import schemas as sc
 from app.db.session import get_session as get_db
 from app.analyze.services import risk as risk_service
+from app.analyze.services.card_content import has_meaningful_content
 from app.analyze.services.llm_card import analyze_dialogue_to_card
 from app.backend.dependencies.auth import get_current_user
 from app.backend.models.emotion import EmotionStep
@@ -31,12 +32,11 @@ def _get_session_or_404(
 
 
 def _has_meaningful_card_content(payload: sc.CardCreate) -> bool:
-    for value in payload.model_dump().values():
-        if isinstance(value, str) and value.strip():
-            return True
-        if isinstance(value, list) and value:
-            return True
-    return False
+    return has_meaningful_content(payload.model_dump())
+
+
+def _card_has_meaningful_content(card: m.AnalysisCard) -> bool:
+    return has_meaningful_content(card.model_dump())
 
 
 def _store_card(db: Session, session_id: UUID, payload: sc.CardCreate) -> sc.CardOut:
@@ -163,6 +163,8 @@ def create_card(
     current_user_id: str = Depends(get_current_user),
 ):
     _get_session_or_404(db, session_id, current_user_id)
+    if not _has_meaningful_card_content(body):
+        raise HTTPException(status_code=400, detail="card content is empty")
     return _store_card(db=db, session_id=session_id, payload=body)
 
 
@@ -219,7 +221,11 @@ def list_cards(
         .order_by(m.AnalysisCard.created_at.desc())
     )
     rows = db.exec(stmt).all()
-    return [sc.CardOut.model_validate(row, from_attributes=True) for row in rows]
+    return [
+        sc.CardOut.model_validate(row, from_attributes=True)
+        for row in rows
+        if _card_has_meaningful_content(row)
+    ]
 
 
 @router.get("/cards/{card_id}", response_model=sc.CardOut)
@@ -229,7 +235,7 @@ def get_card(
     current_user_id: str = Depends(get_current_user),
 ):
     card = db.get(m.AnalysisCard, card_id)
-    if not card:
+    if not card or not _card_has_meaningful_content(card):
         raise HTTPException(status_code=404, detail="card not found")
     _get_session_or_404(db, card.session_id, current_user_id)
     return sc.CardOut.model_validate(card, from_attributes=True)

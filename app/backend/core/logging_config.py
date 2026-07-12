@@ -32,8 +32,8 @@ class DiscordErrorHandler(logging.Handler):
         key = f"{record.name}:{record.levelname}:{record.msg}"
         now = time.monotonic()
         with self._lock:
-            last = self._last_sent.get(key, 0.0)
-            if now - last < self._throttle_sec:
+            last = self._last_sent.get(key)
+            if last is not None and now - last < self._throttle_sec:
                 return
             self._last_sent[key] = now
 
