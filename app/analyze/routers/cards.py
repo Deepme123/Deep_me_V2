@@ -64,7 +64,7 @@ def _store_card(db: Session, session_id: UUID, payload: sc.CardCreate) -> sc.Car
     if session:
         if payload.core_emotions:
             session.emotion_label = payload.core_emotions[0].primary
-        topic_source = payload.situation or payload.summary
+        topic_source = payload.summary or payload.situation
         session.topic = topic_source[:100] if topic_source else None
         session.trigger_summary = payload.situation
         session.insight_summary = payload.insight
