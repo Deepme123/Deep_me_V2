@@ -56,6 +56,21 @@ def test_emit_sends_once_per_throttle_window(monkeypatch):
     assert len(sent) == 1
 
 
+def test_emit_sends_first_message_even_when_monotonic_clock_is_near_zero(monkeypatch):
+    # 컨테이너가 막 시작된 직후에는 time.monotonic()이 throttle_sec보다 작은 값을
+    # 반환할 수 있다. 이때 "처음 보는 키"가 0.0 sentinel과 혼동되어 첫 메시지부터
+    # 조용히 씹히면 안 된다.
+    _use_sync_thread(monkeypatch)
+    monkeypatch.setattr(logging_config.time, "monotonic", lambda: 2.0)
+    sent = []
+    handler = logging_config.DiscordErrorHandler("http://example.invalid/webhook", throttle_sec=60)
+    monkeypatch.setattr(handler, "_post", lambda message: sent.append(message))
+
+    handler.emit(_record("failed"))
+
+    assert len(sent) == 1
+
+
 def test_emit_allows_again_after_throttle_window(monkeypatch):
     _use_sync_thread(monkeypatch)
     sent = []
