@@ -37,11 +37,9 @@ Thumbs.db
 .vscode/
 .claude/
 
-# Frontend
+# Frontend (별도 레포로 관리, 이 백엔드 레포의 git 이력에는 포함하지 않음)
 node_modules/
-frontend/**/node_modules/
-frontend/**/dist/
-frontend/**/.vite/
+frontend/
 
 docs/
 docs/handover
