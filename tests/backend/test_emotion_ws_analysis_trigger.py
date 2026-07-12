@@ -19,6 +19,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 emotion_ws = importlib.import_module("app.backend.routers.emotion_ws")
+ws_post_actions = importlib.import_module("app.backend.services.ws_post_actions")
 
 
 def _utcnow() -> datetime:
@@ -188,7 +189,14 @@ def ws_harness(monkeypatch):
             "summary": "analysis summary",
         }
 
+    async def fake_generate_need_card_async(_session_id):
+        # 실제 구현은 session_scope()로 진짜 DB에 접근하는 백그라운드 스레드 작업이라,
+        # 목킹하지 않으면 매 테스트마다 스키마 없는 실DB에 쿼리를 날리다 실패하고
+        # (테스트 웹소켓 종료 타이밍과 겹쳐) 간헐적으로 CancelledError를 유발했다.
+        return None
+
     monkeypatch.setattr(emotion_ws, "session_scope", fake_session_scope)
+    monkeypatch.setattr(ws_post_actions, "generate_need_card_async", fake_generate_need_card_async)
     monkeypatch.setattr(emotion_ws, "session_with_db", fake_with_db)
     monkeypatch.setattr(emotion_ws, "session_create_emotion_session", fake_create_emotion_session)
     monkeypatch.setattr(emotion_ws, "session_prepare_message_context", fake_prepare_message_context)
