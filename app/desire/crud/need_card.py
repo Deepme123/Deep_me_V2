@@ -61,6 +61,7 @@ def save_need_card_result(
                 score=item.score,
                 rank=item.rank,
                 rationale=item.rationale,
+                reflection_message=item.reflection_message,
             )
         )
 

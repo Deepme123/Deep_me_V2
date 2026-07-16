@@ -30,6 +30,7 @@ def _valid_need_payload():
                 "score": 100 - (idx * 5),
                 "rank": idx + 1,
                 "rationale": f"signal-{code.lower()}",
+                "reflection_message": f"reflection-{code.lower()}",
             }
             for idx, code in enumerate(codes)
         ]
@@ -49,6 +50,10 @@ class NeedAnalyzerTests(unittest.TestCase):
         self.assertEqual(len(result.needs), 8)
         self.assertEqual(len(result.top4), 4)
         self.assertEqual(result.needs[0].rank, 1)
+        self.assertEqual(
+            result.needs[0].reflection_message,
+            f"reflection-{result.needs[0].code.lower()}",
+        )
         messages, schema, _options = provider.calls[0]
         self.assertEqual(messages[0].role, "system")
         self.assertIn("stability", messages[1].content)

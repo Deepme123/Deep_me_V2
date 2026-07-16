@@ -21,6 +21,7 @@ class NeedScore(BaseModel):
     score: int = Field(..., ge=0, le=100, description="Score between 0 and 100")
     rank: int = Field(..., ge=1, le=8, description="1=highest priority need, 8=lowest")
     rationale: str = Field(default="", description="이 욕구 점수의 근거 설명")
+    reflection_message: str = Field(default="", description="욕구 카드 선택 시 보여줄 개인화된 서술 문단")
     creature_name_ko: str = ""
     creature_emoji: str = ""
     creature_description: str = ""
