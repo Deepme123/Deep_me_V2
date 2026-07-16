@@ -119,8 +119,5 @@ async def post_selected_need_cards(
     """사용자가 선택한 욕구를 저장하고 메타데이터를 반환합니다."""
     code = str(payload.selected_need)
     save_user_need_selection(db, UUID(user_id), [code], session_id=payload.session_id)
-    try:
-        result = _resolve_need_card_result(db, UUID(user_id), payload.session_id)
-        return NeedSelectionResponse.from_code(code, _find_reflection_message(result, code))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"선택한 욕구를 처리하는 중 오류가 발생했습니다: {exc}")
+    result = _resolve_need_card_result(db, UUID(user_id), payload.session_id)
+    return NeedSelectionResponse.from_code(code, _find_reflection_message(result, code))
