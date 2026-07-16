@@ -21,6 +21,7 @@ class NeedScore(BaseModel):
     score: int = Field(..., ge=0, le=100, description="Score between 0 and 100")
     rank: int = Field(..., ge=1, le=8, description="1=highest priority need, 8=lowest")
     rationale: str = Field(default="", description="이 욕구 점수의 근거 설명")
+    reflection_message: str = Field(default="", description="욕구 카드 선택 시 보여줄 개인화된 서술 문단")
     creature_name_ko: str = ""
     creature_emoji: str = ""
     creature_description: str = ""
@@ -40,9 +41,11 @@ class NeedCardResponse(BaseModel):
         cls,
         scores_by_code: dict[str, int],
         rationales_by_code: dict[str, str] | None = None,
+        reflection_messages_by_code: dict[str, str] | None = None,
     ) -> "NeedCardResponse":
         items = []
         rationales_by_code = rationales_by_code or {}
+        reflection_messages_by_code = reflection_messages_by_code or {}
         sorted_codes = sorted(
             scores_by_code.keys(),
             key=lambda c: scores_by_code[c],
@@ -60,6 +63,7 @@ class NeedCardResponse(BaseModel):
                     score=int(scores_by_code[code_str]),
                     rank=idx,
                     rationale=rationales_by_code.get(code_str, ""),
+                    reflection_message=reflection_messages_by_code.get(code_str, ""),
                     creature_name_ko=meta.get("creature_name_ko", ""),
                     creature_emoji=meta.get("creature_emoji", ""),
                     creature_description=meta.get("creature_description", ""),
@@ -118,14 +122,20 @@ class NeedCardHistoryResponse(BaseModel):
 
 class NeedSelectionRequest(BaseModel):
     selected_need: NeedCode = Field(..., description="Selected need code")
+    session_id: UUID | None = Field(
+        default=None,
+        description="이 선택의 근거가 된 분석 결과의 세션 ID. 없으면 유저의 가장 최근 분석 결과로 폴백한다.",
+    )
 
     class Config:
         use_enum_values = True
 
 
 class NeedSelectionResponse(NeedDetail):
+    reflection_message: str = Field(default="", description="욕구 카드 선택 시 보여줄 개인화된 서술 문단")
+
     @classmethod
-    def from_code(cls, code: str) -> "NeedSelectionResponse":
+    def from_code(cls, code: str, reflection_message: str = "") -> "NeedSelectionResponse":
         meta = NEEDS_METADATA.get(NeedCode(code))
         if not meta:
             raise ValueError(f"Unknown need code: {code}")
@@ -138,4 +148,5 @@ class NeedSelectionResponse(NeedDetail):
             creature_name_ko=meta.get("creature_name_ko", ""),
             creature_emoji=meta.get("creature_emoji", ""),
             creature_description=meta.get("creature_description", ""),
+            reflection_message=reflection_message,
         )

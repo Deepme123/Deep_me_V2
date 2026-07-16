@@ -87,7 +87,7 @@ def test_head_migration_includes_analysiscard():
             "user",
             "user_need_selection",
         ]
-        assert _alembic_version(tmp_db) == "0012_need_card_score_rationale"
+        assert _alembic_version(tmp_db) == "0014_user_need_selection_session_id"
     finally:
         if tmp_db.exists():
             tmp_db.unlink()

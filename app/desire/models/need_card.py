@@ -37,6 +37,7 @@ class NeedCardScore(SQLModel, table=True):
     score: int = Field(nullable=False)
     rank: int = Field(nullable=False)
     rationale: str = Field(default="", nullable=False)
+    reflection_message: str = Field(default="", nullable=False)
 
     result: Optional[NeedCardResult] = Relationship(back_populates="scores")
 
@@ -53,4 +54,12 @@ class UserNeedSelection(SQLModel, table=True):
         )
     )
     selected_codes: List[str] = Field(sa_column=Column(JSON, nullable=False))
+    session_id: Optional[UUID] = Field(
+        default=None,
+        sa_column=Column(
+            ForeignKey("emotionsession.session_id", ondelete="SET NULL"),
+            nullable=True,
+            index=True,
+        ),
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow)
