@@ -1,3 +1,4 @@
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,6 +12,7 @@ from app.desire.crud.need_card import (
     get_last_user_need_selection,
     save_user_need_selection,
 )
+from app.desire.models.need_card import NeedCardResult
 from app.desire.schemas.need_card import (
     NeedCardHistoryItem,
     NeedCardHistoryResponse,
@@ -26,6 +28,16 @@ router = APIRouter(
     prefix="/need-cards",
     tags=["need-cards"],
 )
+
+
+def _find_reflection_message(result: Optional[NeedCardResult], code: str) -> str:
+    """유저의 최신 분석 결과에서 선택된 code에 해당하는 개인화 서술을 찾는다. 없으면 빈 문자열."""
+    if result is None:
+        return ""
+    for score in result.scores:
+        if score.code == code:
+            return score.reflection_message
+    return ""
 
 
 @router.get("/list", response_model=NeedListResponse)
@@ -55,7 +67,10 @@ async def get_need_card_history(
     for row in rows:
         scores_by_code = {score.code: score.score for score in row.scores}
         rationales_by_code = {score.code: score.rationale for score in row.scores}
-        card_response = NeedCardResponse.from_scores(scores_by_code, rationales_by_code)
+        reflection_messages_by_code = {score.code: score.reflection_message for score in row.scores}
+        card_response = NeedCardResponse.from_scores(
+            scores_by_code, rationales_by_code, reflection_messages_by_code
+        )
         items.append(
             NeedCardHistoryItem(
                 result_id=row.result_id,
@@ -78,7 +93,9 @@ async def get_last_selection(
     if selection is None:
         raise HTTPException(status_code=404, detail="선택한 욕구가 없습니다.")
 
-    return NeedSelectionResponse.from_code(selection.selected_codes[0])
+    code = selection.selected_codes[0]
+    result = get_last_need_card_result_by_user(db, UUID(user_id))
+    return NeedSelectionResponse.from_code(code, _find_reflection_message(result, code))
 
 
 @router.post("/selection", response_model=NeedSelectionResponse)
@@ -91,6 +108,7 @@ async def post_selected_need_cards(
     code = str(payload.selected_need)
     save_user_need_selection(db, UUID(user_id), [code])
     try:
-        return NeedSelectionResponse.from_code(code)
+        result = get_last_need_card_result_by_user(db, UUID(user_id))
+        return NeedSelectionResponse.from_code(code, _find_reflection_message(result, code))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"선택한 욕구를 처리하는 중 오류가 발생했습니다: {exc}")

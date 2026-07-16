@@ -41,9 +41,11 @@ class NeedCardResponse(BaseModel):
         cls,
         scores_by_code: dict[str, int],
         rationales_by_code: dict[str, str] | None = None,
+        reflection_messages_by_code: dict[str, str] | None = None,
     ) -> "NeedCardResponse":
         items = []
         rationales_by_code = rationales_by_code or {}
+        reflection_messages_by_code = reflection_messages_by_code or {}
         sorted_codes = sorted(
             scores_by_code.keys(),
             key=lambda c: scores_by_code[c],
@@ -61,6 +63,7 @@ class NeedCardResponse(BaseModel):
                     score=int(scores_by_code[code_str]),
                     rank=idx,
                     rationale=rationales_by_code.get(code_str, ""),
+                    reflection_message=reflection_messages_by_code.get(code_str, ""),
                     creature_name_ko=meta.get("creature_name_ko", ""),
                     creature_emoji=meta.get("creature_emoji", ""),
                     creature_description=meta.get("creature_description", ""),
@@ -125,8 +128,10 @@ class NeedSelectionRequest(BaseModel):
 
 
 class NeedSelectionResponse(NeedDetail):
+    reflection_message: str = Field(default="", description="욕구 카드 선택 시 보여줄 개인화된 서술 문단")
+
     @classmethod
-    def from_code(cls, code: str) -> "NeedSelectionResponse":
+    def from_code(cls, code: str, reflection_message: str = "") -> "NeedSelectionResponse":
         meta = NEEDS_METADATA.get(NeedCode(code))
         if not meta:
             raise ValueError(f"Unknown need code: {code}")
@@ -139,4 +144,5 @@ class NeedSelectionResponse(NeedDetail):
             creature_name_ko=meta.get("creature_name_ko", ""),
             creature_emoji=meta.get("creature_emoji", ""),
             creature_description=meta.get("creature_description", ""),
+            reflection_message=reflection_message,
         )
