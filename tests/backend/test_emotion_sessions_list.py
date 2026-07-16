@@ -22,6 +22,7 @@ emotion_router = importlib.import_module("app.backend.routers.emotion")
 emotion_models = importlib.import_module("app.backend.models.emotion")
 user_model = importlib.import_module("app.backend.models.user")
 db_session_module = importlib.import_module("app.db.session")
+analyze_models = importlib.import_module("app.analyze.models")
 
 
 @pytest.fixture
@@ -61,6 +62,16 @@ def _add_step(db: Session, session_id, *, order: int, user_input: str) -> None:
     db.commit()
 
 
+def _add_card(db: Session, session_id) -> None:
+    db.add(
+        analyze_models.AnalysisCard(
+            session_id=session_id,
+            summary="요약",
+        )
+    )
+    db.commit()
+
+
 def _build_client(engine, user_id):
     app = FastAPI()
     app.include_router(emotion_router.router)
@@ -78,6 +89,7 @@ def test_list_sessions_excludes_empty_sessions(engine):
     with Session(engine) as db:
         user, session_with_msg = _make_user_and_session(db)
         _add_step(db, session_with_msg.session_id, order=1, user_input="안녕")
+        _add_card(db, session_with_msg.session_id)
 
         # 사용자 발화 없는 빈 세션 (스텝 자체가 없음)
         empty = emotion_models.EmotionSession(user_id=user.user_id)
@@ -111,3 +123,39 @@ def test_list_sessions_excludes_sessions_with_only_blank_user_input(engine):
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_list_sessions_excludes_sessions_without_analysis_card(engine):
+    """메시지는 있지만 분석카드가 아직 없는 세션(대화 진행 중 또는 중도 이탈)은
+    클릭해도 조회되는 내용이 없으므로 기록 리스트에서 제외되어야 한다."""
+    with Session(engine) as db:
+        user, no_card_session = _make_user_and_session(db)
+        _add_step(db, no_card_session.session_id, order=1, user_input="안녕")
+
+        user_id = user.user_id
+
+    client = _build_client(engine, user_id)
+
+    response = client.get("/emotion/sessions")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_list_sessions_includes_sessions_with_analysis_card(engine):
+    with Session(engine) as db:
+        user, session_with_card = _make_user_and_session(db)
+        _add_step(db, session_with_card.session_id, order=1, user_input="안녕")
+        _add_card(db, session_with_card.session_id)
+
+        user_id = user.user_id
+        kept_id = str(session_with_card.session_id)
+
+    client = _build_client(engine, user_id)
+
+    response = client.get("/emotion/sessions")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["session_id"] == kept_id

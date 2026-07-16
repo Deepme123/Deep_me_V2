@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
+from app.analyze.models import AnalysisCard
 from app.backend.core.prompt_loader import get_system_prompt, get_task_prompt
 from app.db.session import get_session
 from app.backend.dependencies.auth import get_current_user_optional
@@ -79,10 +80,18 @@ def list_sessions(
         .where(EmotionStep.user_input != "")
         .exists()
     )
+    # 분석카드가 아직 생성되지 않은 세션(대화 진행 중 또는 중도 이탈)은
+    # 클릭해도 조회되는 내용이 없으므로 리스트에서 제외한다.
+    has_card = (
+        select(AnalysisCard.card_id)
+        .where(AnalysisCard.session_id == EmotionSession.session_id)
+        .exists()
+    )
     stmt = (
         select(EmotionSession)
         .where(EmotionSession.user_id == emotion_user_id)
         .where(has_user_step)
+        .where(has_card)
         .order_by(EmotionSession.started_at.desc())
         .limit(limit)
         .offset(offset)
