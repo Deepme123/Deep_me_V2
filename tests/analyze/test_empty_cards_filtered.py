@@ -49,14 +49,6 @@ def _make_user_and_session(db: Session) -> tuple:
     return user, session
 
 
-def _add_card(db: Session, session_id, **fields) -> models.AnalysisCard:
-    card = models.AnalysisCard(session_id=session_id, **fields)
-    db.add(card)
-    db.commit()
-    db.refresh(card)
-    return card
-
-
 def _build_cards_client(engine, current_user_id: str | None):
     app = FastAPI()
     app.include_router(cards_router.router)
@@ -117,10 +109,10 @@ def test_create_card_accepts_meaningful_payload(engine):
     assert response.json()["summary"] == "요약"
 
 
-def test_list_cards_excludes_empty_card(engine):
+def test_list_cards_excludes_empty_card(engine, add_analysis_card):
     with Session(engine) as db:
         owner, owner_session = _make_user_and_session(db)
-        _add_card(db, owner_session.session_id)  # 빈 카드 (모든 콘텐츠 필드 None)
+        add_analysis_card(db, owner_session.session_id)  # 빈 카드 (모든 콘텐츠 필드 None)
         owner_user_id = str(owner.user_id)
         session_id = owner_session.session_id
 
@@ -132,10 +124,10 @@ def test_list_cards_excludes_empty_card(engine):
     assert response.json() == []
 
 
-def test_list_cards_returns_meaningful_card(engine):
+def test_list_cards_returns_meaningful_card(engine, add_analysis_card):
     with Session(engine) as db:
         owner, owner_session = _make_user_and_session(db)
-        _add_card(db, owner_session.session_id, summary="요약")
+        add_analysis_card(db, owner_session.session_id, summary="요약")
         owner_user_id = str(owner.user_id)
         session_id = owner_session.session_id
 
@@ -149,10 +141,10 @@ def test_list_cards_returns_meaningful_card(engine):
     assert body[0]["summary"] == "요약"
 
 
-def test_get_card_returns_404_for_empty_card(engine):
+def test_get_card_returns_404_for_empty_card(engine, add_analysis_card):
     with Session(engine) as db:
         owner, owner_session = _make_user_and_session(db)
-        empty_card = _add_card(db, owner_session.session_id)
+        empty_card = add_analysis_card(db, owner_session.session_id)
         owner_user_id = str(owner.user_id)
         card_id = empty_card.card_id
 
@@ -163,7 +155,7 @@ def test_get_card_returns_404_for_empty_card(engine):
     assert response.status_code == 404
 
 
-def test_list_summaries_excludes_empty_card_but_keeps_meaningful_one(engine):
+def test_list_summaries_excludes_empty_card_but_keeps_meaningful_one(engine, add_analysis_card):
     with Session(engine) as db:
         owner, empty_session = _make_user_and_session(db)
         _other_owner, meaningful_session = _make_user_and_session(db)
@@ -171,8 +163,8 @@ def test_list_summaries_excludes_empty_card_but_keeps_meaningful_one(engine):
         db.add(meaningful_session)
         db.commit()
 
-        _add_card(db, empty_session.session_id)  # 빈 카드
-        _add_card(db, meaningful_session.session_id, summary="요약")
+        add_analysis_card(db, empty_session.session_id)  # 빈 카드
+        add_analysis_card(db, meaningful_session.session_id, summary="요약")
         owner_user_id = str(owner.user_id)
 
     client = _build_summaries_client(engine, current_user_id=owner_user_id)

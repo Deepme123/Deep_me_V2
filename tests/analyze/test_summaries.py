@@ -20,7 +20,6 @@ if str(ROOT_DIR) not in sys.path:
 
 summaries_router = importlib.import_module("app.analyze.routers.summaries")
 auth_module = importlib.import_module("app.backend.dependencies.auth")
-models = importlib.import_module("app.analyze.models")
 emotion_models = importlib.import_module("app.backend.models.emotion")
 user_model = importlib.import_module("app.backend.models.user")
 
@@ -49,14 +48,6 @@ def _make_user_and_session(db: Session) -> tuple:
     return user, session
 
 
-def _add_card(db: Session, session_id) -> models.AnalysisCard:
-    card = models.AnalysisCard(session_id=session_id, summary="요약")
-    db.add(card)
-    db.commit()
-    db.refresh(card)
-    return card
-
-
 def _build_client(engine, current_user_id: str | None):
     app = FastAPI()
     app.include_router(summaries_router.router)
@@ -79,12 +70,12 @@ def test_list_summaries_requires_auth(engine):
     assert response.status_code == 401
 
 
-def test_list_summaries_only_returns_own_cards(engine):
+def test_list_summaries_only_returns_own_cards(engine, add_analysis_card):
     with Session(engine) as db:
         owner, owner_session = _make_user_and_session(db)
         _other, other_session = _make_user_and_session(db)
-        _add_card(db, owner_session.session_id)
-        _add_card(db, other_session.session_id)
+        add_analysis_card(db, owner_session.session_id, summary="요약")
+        add_analysis_card(db, other_session.session_id, summary="요약")
         owner_user_id = str(owner.user_id)
         owner_session_id = str(owner_session.session_id)
 
@@ -98,11 +89,11 @@ def test_list_summaries_only_returns_own_cards(engine):
     assert body[0]["session_id"] == owner_session_id
 
 
-def test_list_session_summaries_excludes_other_users_session(engine):
+def test_list_session_summaries_excludes_other_users_session(engine, add_analysis_card):
     with Session(engine) as db:
         owner, owner_session = _make_user_and_session(db)
         _other, other_session = _make_user_and_session(db)
-        _add_card(db, other_session.session_id)
+        add_analysis_card(db, other_session.session_id, summary="요약")
         owner_user_id = str(owner.user_id)
         other_session_id = other_session.session_id
 
