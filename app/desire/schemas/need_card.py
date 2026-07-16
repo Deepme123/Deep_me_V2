@@ -122,6 +122,10 @@ class NeedCardHistoryResponse(BaseModel):
 
 class NeedSelectionRequest(BaseModel):
     selected_need: NeedCode = Field(..., description="Selected need code")
+    session_id: UUID | None = Field(
+        default=None,
+        description="이 선택의 근거가 된 분석 결과의 세션 ID. 없으면 유저의 가장 최근 분석 결과로 폴백한다.",
+    )
 
     class Config:
         use_enum_values = True
