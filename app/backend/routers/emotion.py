@@ -5,7 +5,6 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
-from app.analyze.models import AnalysisCard
 from app.backend.core.prompt_loader import get_system_prompt, get_task_prompt
 from app.db.session import get_session
 from app.backend.dependencies.auth import get_current_user_optional
@@ -72,6 +71,9 @@ def list_sessions(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ):
+    from app.analyze.models import AnalysisCard
+    from app.analyze.services.card_content import has_meaningful_content
+
     # 사용자 발화가 하나도 없는 빈 세션은 기록 리스트에 노출하지 않는다.
     has_user_step = (
         select(EmotionStep.step_id)
@@ -80,8 +82,9 @@ def list_sessions(
         .where(EmotionStep.user_input != "")
         .exists()
     )
-    # 분석카드가 아직 생성되지 않은 세션(대화 진행 중 또는 중도 이탈)은
-    # 클릭해도 조회되는 내용이 없으므로 리스트에서 제외한다.
+    # 아직 진행 중(ended_at 없음)인데 분석카드도 없는 세션은 클릭해도 조회되는
+    # 내용이 없으므로 제외한다. 이미 종료된 세션은 카드 생성이 실패했거나
+    # 아직 재시도되지 않았을 수 있으므로 카드 유무와 무관하게 노출한다.
     has_card = (
         select(AnalysisCard.card_id)
         .where(AnalysisCard.session_id == EmotionSession.session_id)
@@ -91,12 +94,29 @@ def list_sessions(
         select(EmotionSession)
         .where(EmotionSession.user_id == emotion_user_id)
         .where(has_user_step)
-        .where(has_card)
+        .where(has_card | (EmotionSession.ended_at != None))  # noqa: E711
         .order_by(EmotionSession.started_at.desc())
         .limit(limit)
         .offset(offset)
     )
-    return db.exec(stmt).all()
+    sessions = db.exec(stmt).all()
+
+    # 카드가 존재하지만 내용이 완전히 비어있는 세션(수동 생성 API의 과거 버그로
+    # 생성된 레거시 데이터 등)도 클릭 시 빈 화면이 되므로 함께 제외한다.
+    session_ids = [s.session_id for s in sessions]
+    if not session_ids:
+        return sessions
+    cards = db.exec(
+        select(AnalysisCard).where(AnalysisCard.session_id.in_(session_ids))
+    ).all()
+    empty_card_session_ids = {
+        card.session_id
+        for card in cards
+        if not has_meaningful_content(card.model_dump())
+    }
+    if not empty_card_session_ids:
+        return sessions
+    return [s for s in sessions if s.session_id not in empty_card_session_ids]
 
 
 @router.get("/sessions/{session_id}", response_model=EmotionSessionRead)
