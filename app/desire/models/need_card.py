@@ -37,6 +37,7 @@ class NeedCardScore(SQLModel, table=True):
     score: int = Field(nullable=False)
     rank: int = Field(nullable=False)
     rationale: str = Field(default="", nullable=False)
+    reflection_message: str = Field(default="", nullable=False)
 
     result: Optional[NeedCardResult] = Relationship(back_populates="scores")
 
