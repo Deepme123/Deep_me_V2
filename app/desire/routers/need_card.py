@@ -61,7 +61,20 @@ async def list_needs() -> NeedListResponse:
 async def analyze_need_cards(
     payload: NeedCardRequest,
     db: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user),
 ) -> NeedCardResponse:
+    """로그인 유저 본인 소유의 세션만 분석할 수 있다.
+
+    session_id 소유권을 확인하지 않으면, 개인화 힌트 조회 로직이 그 세션
+    소유자의 과거 욕구 선택 이력을 조회해 프롬프트에 섞어 넣기 때문에
+    타인의 이력이 응답에 간접적으로 반영될 수 있다.
+    """
+    from app.backend.models.emotion import EmotionSession
+
+    session = db.get(EmotionSession, payload.session_id)
+    if session is None or session.user_id != UUID(user_id):
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+
     return await analyze_needs(payload.conversation_text, payload.session_id, db)
 
 
