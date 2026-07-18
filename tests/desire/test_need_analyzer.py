@@ -87,5 +87,44 @@ class NeedAnalyzerTests(unittest.TestCase):
         self.assertEqual([item.rank for item in result.needs], list(range(1, 9)))
 
 
+class PersonalizationHintTests(unittest.TestCase):
+    def test_build_hint_returns_empty_when_no_selections(self) -> None:
+        self.assertEqual(need_analyzer._build_personalization_hint([]), "")
+
+    def test_build_hint_summarizes_top_frequent_codes(self) -> None:
+        selections = [
+            MagicMock(selected_codes=["Together"]),
+            MagicMock(selected_codes=["Together"]),
+            MagicMock(selected_codes=["Together"]),
+            MagicMock(selected_codes=["Peace"]),
+            MagicMock(selected_codes=["Peace"]),
+            MagicMock(selected_codes=["Grow"]),
+        ]
+
+        hint = need_analyzer._build_personalization_hint(selections)
+
+        self.assertIn("소속감", hint)
+        self.assertIn("평온", hint)
+        self.assertNotIn("성장", hint)
+
+    def test_call_llm_includes_hint_section_when_present(self) -> None:
+        provider = _FakeProvider(payload=_valid_need_payload())
+
+        with patch.object(need_analyzer, "get_llm_provider", return_value=provider):
+            need_analyzer._call_llm("conversation", personalization_hint="자율, 안전")
+
+        messages, _schema, _options = provider.calls[0]
+        self.assertIn("자율, 안전", messages[1].content)
+
+    def test_call_llm_omits_hint_section_when_absent(self) -> None:
+        provider = _FakeProvider(payload=_valid_need_payload())
+
+        with patch.object(need_analyzer, "get_llm_provider", return_value=provider):
+            need_analyzer._call_llm("conversation")
+
+        messages, _schema, _options = provider.calls[0]
+        self.assertNotIn("참고용 사용자 성향 힌트", messages[1].content)
+
+
 if __name__ == "__main__":
     unittest.main()
