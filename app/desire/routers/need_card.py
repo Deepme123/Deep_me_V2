@@ -80,8 +80,9 @@ async def get_need_card_history(
         scores_by_code = {score.code: score.score for score in row.scores}
         rationales_by_code = {score.code: score.rationale for score in row.scores}
         reflection_messages_by_code = {score.code: score.reflection_message for score in row.scores}
+        ranks_by_code = {score.code: score.rank for score in row.scores}
         card_response = NeedCardResponse.from_scores(
-            scores_by_code, rationales_by_code, reflection_messages_by_code
+            scores_by_code, rationales_by_code, reflection_messages_by_code, ranks_by_code
         )
         items.append(
             NeedCardHistoryItem(
