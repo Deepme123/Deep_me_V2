@@ -58,14 +58,17 @@ def _load_need_card_conversation_text(session_id: UUID) -> str:
 
 
 async def generate_need_card_async(session_id: UUID) -> None:
-    from app.desire.services.need_analyzer import analyze_needs
+    from app.desire.services.need_analyzer import analyze_needs_sync
 
     conversation_text = await asyncio.to_thread(_load_need_card_conversation_text, session_id)
     if not conversation_text.strip():
         return
 
-    with session_scope() as db:
-        await analyze_needs(conversation_text, session_id, db)
+    def _work() -> None:
+        with session_scope() as db:
+            analyze_needs_sync(conversation_text, session_id, db)
+
+    await asyncio.to_thread(_work)
 
 
 async def generate_analysis_card_async(session_id: UUID) -> dict:

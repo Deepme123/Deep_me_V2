@@ -219,19 +219,34 @@ def _fallback_need_scores() -> List[NeedScore]:
     return fallback_items
 
 
+def analyze_needs_sync(
+    conversation_text: str,
+    session_id: UUID,
+    db: Session,
+) -> NeedCardResponse:
+    """개인화 힌트 조회 → LLM 채점(실패 시 폴백) → 저장을 단일 스레드 호출로 원자적으로 수행한다.
+
+    REST(analyze_needs)와 WS(ws_post_actions.generate_need_card_async) 양쪽이 이 함수를
+    각각 하나의 threadpool 호출로만 감싸 써야 한다 — 별도 await 경계로 쪼개면, 타임아웃으로
+    인한 취소가 "LLM 호출은 끝났지만 저장은 아직 안 된" 틈에 끼어들어 계산된 결과가
+    저장되지 못한 채 유실될 수 있다.
+    """
+    personalization_hint = _resolve_personalization_hint(db, session_id)
+    try:
+        need_scores = _call_llm(conversation_text, personalization_hint)
+    except Exception as exc:
+        logger.error("Using fallback need scores because analysis failed: %s", exc)
+        need_scores = _fallback_need_scores()
+
+    save_need_card_result(db, session_id, need_scores)
+
+    top4 = need_scores[:4]
+    return NeedCardResponse(needs=need_scores, top4=top4)
+
+
 async def analyze_needs(
     conversation_text: str,
     session_id: UUID,
     db: Session,
 ) -> NeedCardResponse:
-    try:
-        personalization_hint = await run_in_threadpool(_resolve_personalization_hint, db, session_id)
-        need_scores = await run_in_threadpool(_call_llm, conversation_text, personalization_hint)
-    except Exception as exc:
-        logger.error("Using fallback need scores because analysis failed: %s", exc)
-        need_scores = _fallback_need_scores()
-
-    await run_in_threadpool(save_need_card_result, db, session_id, need_scores)
-
-    top4 = need_scores[:4]
-    return NeedCardResponse(needs=need_scores, top4=top4)
+    return await run_in_threadpool(analyze_needs_sync, conversation_text, session_id, db)
