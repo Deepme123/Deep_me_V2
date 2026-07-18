@@ -87,5 +87,68 @@ class NeedAnalyzerTests(unittest.TestCase):
         self.assertEqual([item.rank for item in result.needs], list(range(1, 9)))
 
 
+class PersonalizationHintTests(unittest.TestCase):
+    def test_build_hint_returns_empty_when_no_selections(self) -> None:
+        self.assertEqual(need_analyzer._build_personalization_hint([]), "")
+
+    def test_build_hint_summarizes_top_frequent_codes(self) -> None:
+        selections = [
+            MagicMock(selected_codes=["Together"]),
+            MagicMock(selected_codes=["Together"]),
+            MagicMock(selected_codes=["Together"]),
+            MagicMock(selected_codes=["Peace"]),
+            MagicMock(selected_codes=["Peace"]),
+            MagicMock(selected_codes=["Grow"]),
+        ]
+
+        hint = need_analyzer._build_personalization_hint(selections)
+
+        self.assertIn("소속감", hint)
+        self.assertIn("평온", hint)
+        self.assertNotIn("성장", hint)
+
+    def test_build_hint_returns_empty_when_all_counts_tied_at_one(self) -> None:
+        """1회씩만 선택된 욕구들은 "자주 선택했다"고 부를 근거가 없으므로
+        임의의 2개를 골라 확정적으로 서술하면 안 된다."""
+        selections = [
+            MagicMock(selected_codes=["Together"]),
+            MagicMock(selected_codes=["Peace"]),
+            MagicMock(selected_codes=["Grow"]),
+        ]
+
+        hint = need_analyzer._build_personalization_hint(selections)
+
+        self.assertEqual(hint, "")
+
+    def test_call_llm_includes_hint_section_when_present(self) -> None:
+        provider = _FakeProvider(payload=_valid_need_payload())
+
+        with patch.object(need_analyzer, "get_llm_provider", return_value=provider):
+            need_analyzer._call_llm("conversation", personalization_hint="자율, 안전")
+
+        messages, _schema, _options = provider.calls[0]
+        self.assertIn("자율, 안전", messages[1].content)
+
+    def test_call_llm_omits_hint_section_when_absent(self) -> None:
+        provider = _FakeProvider(payload=_valid_need_payload())
+
+        with patch.object(need_analyzer, "get_llm_provider", return_value=provider):
+            need_analyzer._call_llm("conversation")
+
+        messages, _schema, _options = provider.calls[0]
+        self.assertNotIn("참고용 사용자 성향 힌트", messages[1].content)
+
+    def test_resolve_hint_rolls_back_session_on_failure(self) -> None:
+        """DB 조회 도중 예외가 나면, 이후 save_need_card_result가 오염된
+        트랜잭션 위에서 실패하지 않도록 세션을 롤백해야 한다."""
+        db = MagicMock()
+        db.get.side_effect = RuntimeError("connection lost")
+
+        hint = need_analyzer._resolve_personalization_hint(db, uuid4())
+
+        self.assertEqual(hint, "")
+        db.rollback.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

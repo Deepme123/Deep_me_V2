@@ -114,3 +114,17 @@ def get_last_user_need_selection(
         .limit(1)
     )
     return session.exec(stmt).first()
+
+
+def get_recent_user_need_selections(
+    session: Session,
+    user_id: UUID,
+    limit: int = 10,
+) -> List[UserNeedSelection]:
+    stmt = (
+        select(UserNeedSelection)
+        .where(UserNeedSelection.user_id == user_id)
+        .order_by(UserNeedSelection.created_at.desc())
+        .limit(limit)
+    )
+    return list(session.exec(stmt).all())
