@@ -171,6 +171,7 @@ def _resolve_personalization_hint(db: Session, session_id: UUID) -> str:
         return _build_personalization_hint(selections)
     except Exception as exc:
         logger.warning("Failed to resolve personalization hint: %s", exc)
+        db.rollback()
         return ""
 
 

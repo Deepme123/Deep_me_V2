@@ -125,6 +125,17 @@ class PersonalizationHintTests(unittest.TestCase):
         messages, _schema, _options = provider.calls[0]
         self.assertNotIn("참고용 사용자 성향 힌트", messages[1].content)
 
+    def test_resolve_hint_rolls_back_session_on_failure(self) -> None:
+        """DB 조회 도중 예외가 나면, 이후 save_need_card_result가 오염된
+        트랜잭션 위에서 실패하지 않도록 세션을 롤백해야 한다."""
+        db = MagicMock()
+        db.get.side_effect = RuntimeError("connection lost")
+
+        hint = need_analyzer._resolve_personalization_hint(db, uuid4())
+
+        self.assertEqual(hint, "")
+        db.rollback.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
