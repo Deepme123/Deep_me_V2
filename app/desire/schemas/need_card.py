@@ -42,15 +42,19 @@ class NeedCardResponse(BaseModel):
         scores_by_code: dict[str, int],
         rationales_by_code: dict[str, str] | None = None,
         reflection_messages_by_code: dict[str, str] | None = None,
+        ranks_by_code: dict[str, int] | None = None,
     ) -> "NeedCardResponse":
         items = []
         rationales_by_code = rationales_by_code or {}
         reflection_messages_by_code = reflection_messages_by_code or {}
-        sorted_codes = sorted(
-            scores_by_code.keys(),
-            key=lambda c: scores_by_code[c],
-            reverse=True,
-        )
+        if ranks_by_code:
+            sorted_codes = sorted(scores_by_code.keys(), key=lambda c: ranks_by_code[c])
+        else:
+            sorted_codes = sorted(
+                scores_by_code.keys(),
+                key=lambda c: scores_by_code[c],
+                reverse=True,
+            )
 
         for idx, code_str in enumerate(sorted_codes, start=1):
             code = NeedCode(code_str)
