@@ -146,16 +146,25 @@ def _build_need_scores(items: List[LLMNeedItem]) -> List[NeedScore]:
     return needs
 
 
+MIN_FREQUENT_SELECTION_COUNT = 2
+
+
 def _build_personalization_hint(selections: List[UserNeedSelection]) -> str:
-    """과거 유저 선택 이력을 빈도 집계해 참고용 힌트 문장을 만든다. 이력이 없으면 빈 문자열."""
+    """과거 유저 선택 이력을 빈도 집계해 참고용 힌트 문장을 만든다.
+
+    2회 이상 선택된 욕구가 없으면(전부 1회씩 동률 등) "자주 선택했다"고
+    부를 근거가 없으므로 힌트를 만들지 않는다.
+    """
     counts: Dict[str, int] = {}
     for selection in selections:
         for code in selection.selected_codes:
             counts[code] = counts.get(code, 0) + 1
-    if not counts:
+
+    frequent = {code: count for code, count in counts.items() if count >= MIN_FREQUENT_SELECTION_COUNT}
+    if not frequent:
         return ""
 
-    top_codes = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:2]
+    top_codes = sorted(frequent.items(), key=lambda kv: (-kv[1], kv[0]))[:2]
     labels = [NEEDS_METADATA[NeedCode(code)]["label_ko"] for code, _ in top_codes]
     return f"이 사용자가 과거 세션에서 자주 선택한 욕구: {', '.join(labels)}."
 

@@ -107,6 +107,19 @@ class PersonalizationHintTests(unittest.TestCase):
         self.assertIn("평온", hint)
         self.assertNotIn("성장", hint)
 
+    def test_build_hint_returns_empty_when_all_counts_tied_at_one(self) -> None:
+        """1회씩만 선택된 욕구들은 "자주 선택했다"고 부를 근거가 없으므로
+        임의의 2개를 골라 확정적으로 서술하면 안 된다."""
+        selections = [
+            MagicMock(selected_codes=["Together"]),
+            MagicMock(selected_codes=["Peace"]),
+            MagicMock(selected_codes=["Grow"]),
+        ]
+
+        hint = need_analyzer._build_personalization_hint(selections)
+
+        self.assertEqual(hint, "")
+
     def test_call_llm_includes_hint_section_when_present(self) -> None:
         provider = _FakeProvider(payload=_valid_need_payload())
 
