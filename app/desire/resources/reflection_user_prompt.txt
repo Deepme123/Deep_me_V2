@@ -1,0 +1,4 @@
+이제 아래 정보로 욕구 각각에 대해 생성하세요.
+욕구 후보: {desire_list}
+이번 대화 요약: {conversation_summary}
+감정 키워드: {emotion_keywords}
