@@ -14,6 +14,7 @@ from app.desire.crud.need_card import get_recent_user_need_selections, save_need
 from app.desire.models.need_card import UserNeedSelection
 from app.desire.schemas.need_card import NeedCardResponse, NeedScore
 from app.desire.services.llm_client import get_llm_provider
+from app.desire.services.reflection_writer import generate_reflection_messages
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +44,7 @@ Conversation:
 {personalization_section}Rules:
 - Include exactly one entry for every need code: Choice, Safe, Together, Fun, Meaning, True, Peace, Grow.
 - Rank 1 means the most dominant need in this conversation context, 8 the least.
-- For every need, write "rationale" in Korean (2~3문장): 대화 속 어떤 발화·맥락에서 이 욕구가 드러났는지 구체적으로 설명할 것. 일반론 금지, 이 대화에 실제로 나타난 신호에 근거할 것.
-- For every need, also write "reflection_message" in Korean (2~4문장): rationale과는 별개로, 사용자가 이 욕구 카드를 선택했을 때 보게 될 감성적인 서술문을 쓸 것. 2인칭 반말로, "~였을 수도 있어", "~일지도 몰라" 같은 조심스러운 추측형 어미를 사용해 그때 느꼈을 법한 감정(외로움, 불안, 부족함 등)을 짚어주고, 이 욕구가 조용히 마음을 두드렸을 거라는 식으로 마무리할 것. 분석적 설명이 아니라 위로하듯 이야기하는 톤이어야 하며, 반드시 이 대화에서 실제로 드러난 맥락에 근거해야 하고 일반론이나 상투적 문구만 반복해서는 안 됨."""
+- For every need, write "rationale" in Korean (2~3문장): 대화 속 어떤 발화·맥락에서 이 욕구가 드러났는지 구체적으로 설명할 것. 일반론 금지, 이 대화에 실제로 나타난 신호에 근거할 것."""
 
 RESPONSE_JSON_SCHEMA = LLMJsonSchema(
     name="need_analysis",
@@ -58,13 +58,12 @@ RESPONSE_JSON_SCHEMA = LLMJsonSchema(
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["code", "score", "rank", "rationale", "reflection_message"],
+                    "required": ["code", "score", "rank", "rationale"],
                     "properties": {
                         "code": {"type": "string", "enum": NEED_CODES},
                         "score": {"type": "integer", "minimum": 0, "maximum": 100},
                         "rank": {"type": "integer", "minimum": 1, "maximum": 8},
                         "rationale": {"type": "string"},
-                        "reflection_message": {"type": "string"},
                     },
                 },
             }
@@ -82,7 +81,6 @@ class LLMNeedItem(BaseModel):
     score: int = Field(ge=0, le=100)
     rank: int = Field(ge=1, le=8)
     rationale: str = ""
-    reflection_message: str = ""
 
     @model_validator(mode="after")
     def clamp_values(self) -> "LLMNeedItem":
@@ -120,7 +118,6 @@ def _build_need_scores(items: List[LLMNeedItem]) -> List[NeedScore]:
                 score=DEFAULT_NEED_SCORE,
                 rank=99,
                 rationale="Added by server because the model omitted this need.",
-                reflection_message="",
             )
 
     ordered_items = sorted(
@@ -139,7 +136,6 @@ def _build_need_scores(items: List[LLMNeedItem]) -> List[NeedScore]:
                 score=item.score,
                 rank=idx,
                 rationale=item.rationale,
-                reflection_message=item.reflection_message,
             )
         )
 
@@ -248,9 +244,14 @@ def analyze_needs_sync(
         logger.error("Using fallback need scores because analysis failed: %s", exc)
         need_scores = _fallback_need_scores()
 
+    top4 = need_scores[:4]
+    reflections = generate_reflection_messages(db, session_id, [item.label_ko for item in top4])
+    for item in top4:
+        if item.label_ko in reflections:
+            item.reflection_message = reflections[item.label_ko]
+
     save_need_card_result(db, session_id, need_scores)
 
-    top4 = need_scores[:4]
     return NeedCardResponse(needs=need_scores, top4=top4)
 
 
