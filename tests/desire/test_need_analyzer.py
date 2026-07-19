@@ -30,7 +30,6 @@ def _valid_need_payload():
                 "score": 100 - (idx * 5),
                 "rank": idx + 1,
                 "rationale": f"signal-{code.lower()}",
-                "reflection_message": f"reflection-{code.lower()}",
             }
             for idx, code in enumerate(codes)
         ]
@@ -42,6 +41,7 @@ class NeedAnalyzerTests(unittest.TestCase):
         provider = _FakeProvider(payload=_valid_need_payload())
 
         with patch.object(need_analyzer, "get_llm_provider", return_value=provider), \
+             patch.object(need_analyzer, "generate_reflection_messages", return_value={}), \
              patch.object(need_analyzer, "save_need_card_result"):
             result = asyncio.run(need_analyzer.analyze_needs(
                 "I need more stability in my life.", uuid4(), MagicMock()
@@ -50,19 +50,34 @@ class NeedAnalyzerTests(unittest.TestCase):
         self.assertEqual(len(result.needs), 8)
         self.assertEqual(len(result.top4), 4)
         self.assertEqual(result.needs[0].rank, 1)
-        self.assertEqual(
-            result.needs[0].reflection_message,
-            f"reflection-{result.needs[0].code.lower()}",
-        )
         messages, schema, _options = provider.calls[0]
         self.assertEqual(messages[0].role, "system")
         self.assertIn("stability", messages[1].content)
         self.assertEqual(schema.name, "need_analysis")
 
+    def test_analyze_needs_fills_top4_reflection_messages_only(self) -> None:
+        provider = _FakeProvider(payload=_valid_need_payload())
+        reflections_by_label = {"자율": "자율 reflection", "안전": "안전 reflection"}
+
+        with patch.object(need_analyzer, "get_llm_provider", return_value=provider), \
+             patch.object(
+                 need_analyzer, "generate_reflection_messages", return_value=reflections_by_label
+             ) as mock_generate, \
+             patch.object(need_analyzer, "save_need_card_result"):
+            result = asyncio.run(need_analyzer.analyze_needs("conversation", uuid4(), MagicMock()))
+
+        top4_labels = [item.label_ko for item in result.top4]
+        mock_generate.assert_called_once()
+        self.assertEqual(mock_generate.call_args.args[2], top4_labels)
+        for item in result.needs:
+            expected = reflections_by_label.get(item.label_ko, "") if item in result.top4 else ""
+            self.assertEqual(item.reflection_message, expected)
+
     def test_analyze_needs_falls_back_on_json_generation_failure(self) -> None:
         provider = _FakeProvider(error=RuntimeError("LLM response was not valid JSON."))
 
         with patch.object(need_analyzer, "get_llm_provider", return_value=provider), \
+             patch.object(need_analyzer, "generate_reflection_messages", return_value={}), \
              patch.object(need_analyzer, "save_need_card_result"):
             result = asyncio.run(need_analyzer.analyze_needs("Conversation text", uuid4(), MagicMock()))
 
@@ -77,6 +92,7 @@ class NeedAnalyzerTests(unittest.TestCase):
         provider = _FakeProvider(payload={"needs": [{"code": "Choice"}]})
 
         with patch.object(need_analyzer, "get_llm_provider", return_value=provider), \
+             patch.object(need_analyzer, "generate_reflection_messages", return_value={}), \
              patch.object(need_analyzer, "save_need_card_result"):
             result = asyncio.run(need_analyzer.analyze_needs("Conversation text", uuid4(), MagicMock()))
 
