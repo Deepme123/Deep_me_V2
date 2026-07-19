@@ -3,7 +3,8 @@ from logging.config import fileConfig
 from pathlib import Path
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import JSON, engine_from_config, pool
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import SQLModel
 
 from app.db.session import get_database_url
@@ -28,13 +29,22 @@ from app.desire import models as desire_models  # noqa: F401,E402
 target_metadata = SQLModel.metadata
 
 
+def compare_type(context, inspected_column, metadata_column, inspected_type, metadata_type):
+    # 일부 컬럼은 postgres에서 의도적으로 JSONB로 운영되지만, SQLModel 컬럼은
+    # sqlite 테스트 호환을 위해 범용 JSON으로 선언되어 있다(0003/0010 마이그레이션
+    # 참고). 이 조합은 실제 드리프트가 아니므로 비교에서 제외한다.
+    if type(metadata_type) is JSON and isinstance(inspected_type, JSONB):
+        return False
+    return None
+
+
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
-        compare_type=True,
+        compare_type=compare_type,
         dialect_opts={"paramstyle": "named"},
     )
 
@@ -53,7 +63,7 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            compare_type=True,
+            compare_type=compare_type,
         )
 
         with context.begin_transaction():

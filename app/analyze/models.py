@@ -19,7 +19,6 @@ class AnalysisCard(SQLModel, table=True):
     card_id: UUID = Field(
         default_factory=uuid4,
         primary_key=True,
-        index=True,
     )
     session_id: UUID = Field(
         foreign_key="emotionsession.session_id",
@@ -77,7 +76,6 @@ class SatisfactionRating(SQLModel, table=True):
     rating_id: UUID = Field(
         default_factory=uuid4,
         primary_key=True,
-        index=True,
     )
     session_id: UUID = Field(
         foreign_key="emotionsession.session_id",

@@ -14,7 +14,7 @@ class RefreshToken(SQLModel, table=True):
     - token_hash: DB 유출 대비 원문 토큰 해시(sha256)
     - replaced_by: 새 RT의 jti (회전 체인)
     """
-    jti: str = Field(primary_key=True, index=True)
+    jti: str = Field(primary_key=True)
     user_id: UUID = Field(index=True, foreign_key="user.user_id")
     token_hash: str = Field(nullable=False)
 
