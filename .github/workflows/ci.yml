@@ -27,3 +27,45 @@ jobs:
 
       - name: Run tests
         run: pytest tests/ -v
+
+  migrations:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: deepme
+          POSTGRES_PASSWORD: deepme
+          POSTGRES_DB: deepme
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+psycopg2://deepme:deepme@localhost:5432/deepme
+      JWT_SECRET_KEY: ci-test-secret-key
+      JWT_REFRESH_SECRET: ci-test-refresh-secret
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Apply migrations
+        run: alembic upgrade head
+
+      - name: Check for model/migration drift
+        run: alembic check
