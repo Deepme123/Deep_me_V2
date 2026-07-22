@@ -216,10 +216,12 @@ Field definitions:
 - tags: 짧은 주제 키워드
 - insight: [노아 문체 적용 필드] 사용자 경험에서 발견되는 패턴이나 강점을 1~2문장으로. 일반론 금지, 이 대화에서만 보이는 것을 담을 것.
 - thoughts: 1~3개의 감정별 생각 그룹. 각 항목은 반드시:
-    * "primary": 위 목록의 상위감정 레이블 중 정확히 하나
+    * "primary": 반드시 위 core_emotions에 실제로 포함시킨 감정 레이블 중 하나여야 함. core_emotions에 없는 새로운 감정을 여기서 만들어내지 말 것.
     * "quote": 사용자 발화를 원문 그대로 붙여넣지 말 것. 그 생각이 드러난 사용자 발화를 노아가 대신 전해주는 말투로 자연스럽게 재서술할 것. 반드시 사용자를 주어로 한 과거형 종결체("~했어", "~였어")로 끝맺을 것. 값 앞뒤를 따옴표(" ' " ')로 감싸지 말고 문장 텍스트만 넣을 것. (예: 취업 준비가 길어지는 게 조급해서 불안했어)
     * "thoughts": 그 감정을 겪을 때 사용자의 내면 생각을 1~3개 문장으로. 반드시 사용자 본인의 1인칭 독백체("나는~", "내가~")로 작성할 것. 관찰자/분석자 시점의 3인칭 서술("사용자는~", "스스로를 ~하게 해석하고 있다")은 절대 쓰지 말 것. 사용자가 마음속으로 스스로에게 실제로 하고 있을 법한 말을 그대로 옮길 것. (예: "내가 가는 길이 맞는지 확신이 안 서.", "남들은 벌써 자리를 잡았는데 나만 뒤처진 것 같아.") 일반론 금지.
   목록에 없는 레이블은 절대 사용하지 말 것.
+
+공통 규칙: physical_reactions[].primary와 behavior_patterns[].primary도 반드시 core_emotions에 실제로 포함시킨 감정 레이블 중에서만 골라야 함. core_emotions에 없는 감정을 다른 필드의 primary로 새로 만들어내지 말 것.
 """
 
 
@@ -285,6 +287,50 @@ class _BehaviorPattern(BaseModel):
     items: list[str]
 
 
+def _clamp_optional_primary(
+    primary: str | None,
+    allowed_primaries: frozenset[str] | None,
+) -> str | None:
+    """taxonomy에 없거나 core_emotions에 없는 primary는 None으로 비운다."""
+    if primary is None or primary not in _VALID_PRIMARIES:
+        return None
+    if allowed_primaries is not None and primary not in allowed_primaries:
+        return None
+    return primary
+
+
+def _validate_physical_reactions(
+    entries: list[_PhysicalReactionItem] | None,
+    allowed_primaries: frozenset[str] | None,
+) -> list[_PhysicalReactionItem] | None:
+    if not entries:
+        return entries
+    return [
+        _PhysicalReactionItem(
+            title=e.title,
+            description=e.description,
+            primary=_clamp_optional_primary(e.primary, allowed_primaries),
+        )
+        for e in entries
+    ]
+
+
+def _validate_behavior_patterns(
+    entries: list[_BehaviorPattern] | None,
+    allowed_primaries: frozenset[str] | None,
+) -> list[_BehaviorPattern] | None:
+    if not entries:
+        return entries
+    return [
+        _BehaviorPattern(
+            title=e.title,
+            primary=_clamp_optional_primary(e.primary, allowed_primaries),
+            items=e.items,
+        )
+        for e in entries
+    ]
+
+
 class _SituationStep(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str
@@ -301,6 +347,7 @@ class _ThoughtEntry(BaseModel):
 
 def _validate_thought_entries(
     entries: list[_ThoughtEntry] | None,
+    allowed_primaries: frozenset[str] | None = None,
 ) -> list[_ThoughtEntry] | None:
     if not entries:
         return entries
@@ -312,10 +359,14 @@ def _validate_thought_entries(
         )
         for e in entries
         if e.primary in _VALID_PRIMARIES
+        and (allowed_primaries is None or e.primary in allowed_primaries)
     ]
     dropped = len(entries) - len(valid)
     if dropped:
-        logger.warning("Unknown primary emotion in %d thought entries — dropped", dropped)
+        logger.warning(
+            "Unknown or core_emotions-mismatched primary emotion in %d thought entries — dropped",
+            dropped,
+        )
     return valid or None
 
 
@@ -387,10 +438,24 @@ def analyze_dialogue_to_card(
                 schema=_CARD_SCHEMA,
             )
             structured = _LLMCardPayload.model_validate(payload)
+            validated_emotions = _validate_emotion_entries(structured.core_emotions)
+            # core_emotions에 실제로 존재하는 primary만 허용해, thoughts/physical_reactions/
+            # behavior_patterns에 감정 탭에는 없는 새 감정 레이블이 새어나가는 것을 막는다.
+            allowed_primaries = (
+                frozenset(e.primary for e in validated_emotions)
+                if validated_emotions
+                else None
+            )
             structured = structured.model_copy(
                 update={
-                    "core_emotions": _validate_emotion_entries(structured.core_emotions),
-                    "thoughts": _validate_thought_entries(structured.thoughts),
+                    "core_emotions": validated_emotions,
+                    "thoughts": _validate_thought_entries(structured.thoughts, allowed_primaries),
+                    "physical_reactions": _validate_physical_reactions(
+                        structured.physical_reactions, allowed_primaries
+                    ),
+                    "behavior_patterns": _validate_behavior_patterns(
+                        structured.behavior_patterns, allowed_primaries
+                    ),
                 }
             )
             return sc.CardCreate.model_validate(structured.model_dump())

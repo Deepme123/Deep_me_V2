@@ -183,10 +183,9 @@ class LLMCardTests(unittest.TestCase):
         self.assertIsNone(card.core_emotions)
         self.assertEqual(card.summary, "The user feels something.")
 
-    def test_physical_reaction_primary_label_is_not_validated_against_taxonomy(self) -> None:
-        # 신규 발견: core_emotions의 primary는 _validate_emotion_entries로 분류 체계와
-        # 대조해 걸러지지만, physical_reactions[].primary는 같은 검증을 거치지 않는다.
-        # LLM이 분류 체계에 없는 레이블을 써도 그대로 통과한다.
+    def test_physical_reaction_primary_label_not_in_taxonomy_is_cleared(self) -> None:
+        # physical_reactions[].primary도 core_emotions와 동일하게 분류 체계 검증을
+        # 거친다. 분류 체계에 없는 레이블은 항목을 버리지 않고 primary만 비운다.
         provider = _FakeProvider(
             payload={
                 "summary": "Body reaction noted.",
@@ -203,11 +202,34 @@ class LLMCardTests(unittest.TestCase):
         with patch.object(llm_card, "get_card_provider", return_value=provider):
             card = llm_card.analyze_dialogue_to_card(_build_turns())
 
-        self.assertEqual(card.physical_reactions[0].primary, "분류체계에없는감정")
+        self.assertIsNone(card.physical_reactions[0].primary)
+        self.assertEqual(card.physical_reactions[0].title, "Tight chest")
 
-    def test_behavior_pattern_primary_label_is_not_validated_against_taxonomy(self) -> None:
-        # 신규 발견: behavior_patterns[].primary도 physical_reactions와 동일하게
-        # 분류 체계 검증을 거치지 않고 그대로 통과한다.
+    def test_physical_reaction_primary_not_in_core_emotions_is_cleared(self) -> None:
+        # 감정 탭(core_emotions)에 없는 감정이 신체반응 탭에 새로 나타나지 않도록,
+        # core_emotions에 없는 primary는 비워야 한다.
+        provider = _FakeProvider(
+            payload={
+                "summary": "Body reaction noted.",
+                "core_emotions": [{"primary": "불안", "sub": ["긴장한"]}],
+                "physical_reactions": [
+                    {
+                        "title": "Tight chest",
+                        "description": "Chest tightened.",
+                        "primary": "감동",
+                    }
+                ],
+            }
+        )
+
+        with patch.object(llm_card, "get_card_provider", return_value=provider):
+            card = llm_card.analyze_dialogue_to_card(_build_turns())
+
+        self.assertIsNone(card.physical_reactions[0].primary)
+
+    def test_behavior_pattern_primary_label_not_in_taxonomy_is_cleared(self) -> None:
+        # behavior_patterns[].primary도 physical_reactions와 동일하게 분류 체계
+        # 검증을 거친다.
         provider = _FakeProvider(
             payload={
                 "summary": "Behavior noted.",
@@ -224,7 +246,61 @@ class LLMCardTests(unittest.TestCase):
         with patch.object(llm_card, "get_card_provider", return_value=provider):
             card = llm_card.analyze_dialogue_to_card(_build_turns())
 
-        self.assertEqual(card.behavior_patterns[0].primary, "분류체계에없는감정")
+        self.assertIsNone(card.behavior_patterns[0].primary)
+        self.assertEqual(card.behavior_patterns[0].title, "Avoidance")
+
+    def test_behavior_pattern_primary_not_in_core_emotions_is_cleared(self) -> None:
+        provider = _FakeProvider(
+            payload={
+                "summary": "Behavior noted.",
+                "core_emotions": [{"primary": "불안", "sub": ["긴장한"]}],
+                "behavior_patterns": [
+                    {
+                        "title": "Avoidance",
+                        "primary": "감동",
+                        "items": ["미루기"],
+                    }
+                ],
+            }
+        )
+
+        with patch.object(llm_card, "get_card_provider", return_value=provider):
+            card = llm_card.analyze_dialogue_to_card(_build_turns())
+
+        self.assertIsNone(card.behavior_patterns[0].primary)
+
+    def test_thought_primary_not_in_core_emotions_is_dropped(self) -> None:
+        # 회귀 테스트: 감정 탭(core_emotions)에 없는 감정이 생각 탭에 그룹 태그로
+        # 나타나던 버그. core_emotions에 없는 primary를 가진 thought 항목은
+        # 통째로 드롭되어야 한다.
+        provider = _FakeProvider(
+            payload={
+                "summary": "Thought mismatch noted.",
+                "core_emotions": [
+                    {"primary": "좌절", "sub": ["좌절한"]},
+                    {"primary": "불안", "sub": ["걱정되는"]},
+                    {"primary": "피곤", "sub": ["지친"]},
+                ],
+                "thoughts": [
+                    {
+                        "primary": "불안",
+                        "quote": "어디를 바꿔야 하는지 모르겠어.",
+                        "thoughts": ["나는 방향을 잘못 잡은 건가."],
+                    },
+                    {
+                        "primary": "감동",
+                        "quote": "작은 성과라도 나왔으면 좋겠어.",
+                        "thoughts": ["나는 아주 작은 결과라도 지금은 정말 필요해."],
+                    },
+                ],
+            }
+        )
+
+        with patch.object(llm_card, "get_card_provider", return_value=provider):
+            card = llm_card.analyze_dialogue_to_card(_build_turns())
+
+        self.assertEqual(len(card.thoughts), 1)
+        self.assertEqual(card.thoughts[0].primary, "불안")
 
     def test_situation_step_interpretation_count_is_not_enforced_outside_llm_schema(self) -> None:
         # 신규 발견: JSON 스키마(_CARD_SCHEMA)는 interpretations에 minItems=3,
