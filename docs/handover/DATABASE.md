@@ -18,11 +18,13 @@
 | `user` | 서비스 사용자 |
 | `emotionsession` | 감정 대화 세션 |
 | `emotionstep` | 대화 transcript (개별 발화 단위) |
-| `emotioncard` | 세션 종료 후 생성되는 분석카드 |
+| `analysiscard` | 세션 종료 후 생성되는 분석카드 (구 `emotioncard`, 마이그레이션 0008에서 개명) |
+| `satisfactionrating` | 세션별 만족도 평가 (1건, session_id UNIQUE) |
 | `task` | 감정 세션 이후 추천된 실천 과제 |
 | `refreshtoken` | JWT 리프레시 토큰 (rotation + 재사용 감지) |
 | `need_card_result` | 욕구 분석 실행 단위 (session_id 연결) |
 | `need_card_score` | 욕구 분석 8개 점수 행 (result_id 연결) |
+| `user_need_selection` | 유저가 선택한 욕구 코드 이력 (session_id 연결, 마이그레이션 0007/0014) |
 
 ---
 
@@ -67,21 +69,24 @@ insight_tag VARCHAR  NULL
 UNIQUE(session_id, step_order)   -- 순서 중복 방지
 ```
 
-### 3.4 `emotioncard`
+### 3.4 `analysiscard` (구 `emotioncard`)
 
-LLM이 생성한 심리 분석 결과를 저장합니다.
+LLM이 생성한 심리 분석 결과를 저장합니다. 마이그레이션 0008에서 테이블명이
+`emotioncard` → `analysiscard`로 바뀌었습니다. `session_id`는 UNIQUE(0009) —
+세션당 카드 1건.
 
 ```sql
 card_id            UUID     PK
-session_id         UUID     FK → emotionsession.session_id
+session_id         UUID     FK → emotionsession.session_id  UNIQUE
 created_at         TIMESTAMP
 
 -- LLM 생성 필드 (전부 NULL 가능)
 summary            VARCHAR
 core_emotions      JSONB    -- 배열: [{"emotion": "불안", "quote": "...", "reasoning": "..."}]
+situation          VARCHAR
 situation_steps    JSONB    -- 배열: [{단계1}, {단계2}, ...], 1~4단계
 emotion            VARCHAR
-thoughts           VARCHAR
+thoughts           JSONB    -- 배열 (0010에서 VARCHAR → JSONB 변환)
 physical_reactions JSONB    -- 배열: ["신체반응1", ...]  최대 4개
 behaviors          VARCHAR
 behavior_patterns  JSONB    -- 배열: [{"pattern": "...", "frequency": "..."}]
@@ -94,6 +99,18 @@ risk_flag          BOOLEAN  DEFAULT false
 risk_level         VARCHAR  NULL   -- "LOW" | "MEDIUM" | "HIGH"
 
 exportable         BOOLEAN  DEFAULT true
+```
+
+### 3.4b `satisfactionrating`
+
+세션에 대한 사용자 만족도 평가 1건을 저장합니다 (마이그레이션 0011).
+
+```sql
+rating_id   UUID      PK
+session_id  UUID      FK → emotionsession.session_id  UNIQUE
+rating      INTEGER
+created_at  TIMESTAMP
+updated_at  TIMESTAMP
 ```
 
 ### 3.5 `task`
@@ -137,11 +154,25 @@ created_at  TIMESTAMP
 욕구 분석 결과의 8개 욕구 점수를 행 단위로 저장합니다.
 
 ```sql
-score_id   UUID     PK
-result_id  UUID     FK → need_card_result.result_id  ON DELETE CASCADE
-code       VARCHAR  -- NeedCode: Choice | Safe | Together | Fun | Meaning | True | Peace | Grow
-score      INTEGER  -- 0~100
-rank       INTEGER  -- 1(최우선) ~ 8(최하위)
+score_id            UUID     PK
+result_id           UUID     FK → need_card_result.result_id  ON DELETE CASCADE
+code                VARCHAR  -- NeedCode: Choice | Safe | Together | Fun | Meaning | True | Peace | Grow
+score               INTEGER  -- 0~100
+rank                INTEGER  -- 1(최우선) ~ 8(최하위)
+rationale           VARCHAR  DEFAULT ''   -- 점수 근거 설명 (0012)
+reflection_message  VARCHAR  DEFAULT ''   -- top4 욕구에 한해 생성되는 개인화 서술 (0013)
+```
+
+### 3.9 `user_need_selection`
+
+사용자가 홈 화면에서 선택한 욕구 코드 이력을 저장합니다 (마이그레이션 0007, `session_id`는 0014에서 추가).
+
+```sql
+selection_id    UUID     PK
+user_id         UUID     FK → user.user_id  ON DELETE CASCADE
+selected_codes  JSONB    -- 배열: ["Meaning"]
+session_id      UUID     FK → emotionsession.session_id  ON DELETE SET NULL  NULL
+created_at      TIMESTAMP
 ```
 
 ---
@@ -155,12 +186,20 @@ alembic/
 ├── alembic.ini              # Alembic 설정
 ├── env.py                   # DB URL 주입, target_metadata 등록
 └── versions/
-    ├── 0001_base_schema.py                    # user, emotionsession, emotionstep, task, refreshtoken
-    ├── 0002_add_emotioncard.py                # emotioncard 테이블 추가
-    ├── 0003_physical_reactions_to_jsonb.py    # physical_reactions 컬럼 JSONB 변환
-    ├── 0004_add_needcard_tables.py            # need_card_result, need_card_score 테이블 추가
-    └── 0005_behavior_patterns.py              # behavior_patterns, situation_steps JSONB 추가
-                                               # core_emotions quote/reasoning 필드 추가
+    ├── 0001_base_schema.py                          # user, emotionsession, emotionstep, task, refreshtoken
+    ├── 0002_add_emotioncard.py                      # emotioncard 테이블 추가
+    ├── 0003_physical_reactions_to_jsonb.py          # physical_reactions 컬럼 JSONB 변환
+    ├── 0004_add_needcard_tables.py                  # need_card_result, need_card_score 테이블 추가
+    ├── 0005_behavior_patterns.py                    # behavior_patterns, situation_steps JSONB, core_emotions quote/reasoning 추가
+    ├── 0006_situation_steps.py                      # situation_steps 관련 후속 정리
+    ├── 0007_user_need_selection.py                  # user_need_selection 테이블 추가
+    ├── 0008_rename_emotioncard_to_analysiscard.py   # emotioncard → analysiscard 테이블명 변경
+    ├── 0009_unique_analysiscard_session.py          # analysiscard.session_id UNIQUE 제약 추가
+    ├── 0010_thoughts_to_jsonb.py                    # thoughts 컬럼 VARCHAR → JSONB 변환
+    ├── 0011_satisfaction_rating.py                  # satisfactionrating 테이블 추가
+    ├── 0012_need_card_score_rationale.py            # need_card_score.rationale 컬럼 추가
+    ├── 0013_need_card_score_reflection_message.py   # need_card_score.reflection_message 컬럼 추가
+    └── 0014_user_need_selection_session_id.py       # user_need_selection.session_id 컬럼 추가
 ```
 
 ### 4.2 마이그레이션 명령어
@@ -182,10 +221,12 @@ alembic stamp 0001_base_schema  # 예: 0001 버전까지 적용된 경우
 alembic upgrade head
 ```
 
-**마이그레이션 0005 상세정보 (2026-05-05 추가):**
-- `core_emotions` 배열 필드에 `quote`, `reasoning` 추가
-- `situation` VARCHAR → `situation_steps` JSONB로 변경 (1~4단계 구조)
-- `behavior_patterns` JSONB 컬럼 추가
+**최신 마이그레이션(0014)까지 반영된 상태 기준으로 최소 필요 테이블**은
+`app/db/session.py`의 `ANALYZE_REQUIRED_TABLES`에 정의되어 있으며
+(`user`, `emotionsession`, `emotionstep`, `analysiscard`), 시작 시 헬스체크가 이
+목록을 기준으로 검사합니다. `satisfactionrating`, `need_card_result`,
+`need_card_score`, `user_need_selection`은 이 필수 목록에는 포함되지 않지만
+해당 기능을 쓰려면 마찬가지로 마이그레이션이 적용되어 있어야 합니다.
 
 > ⚠️ 이미 테이블이 존재하는 DB에서 `alembic upgrade head`를 바로 실행하면  
 > "table already exists" 오류가 발생합니다. 반드시 `stamp` 먼저 실행하세요.
@@ -248,13 +289,19 @@ user
  │        │
  │        ├──< emotionstep (session_id, CASCADE DELETE)
  │        │
- │        ├──< emotioncard (session_id)
+ │        ├──< analysiscard (session_id, UNIQUE)
  │        │
- │        └──< need_card_result (session_id, CASCADE DELETE)
- │                 │
- │                 └──< need_card_score (result_id, CASCADE DELETE)
+ │        ├──< satisfactionrating (session_id, UNIQUE)
+ │        │
+ │        ├──< need_card_result (session_id, CASCADE DELETE)
+ │        │        │
+ │        │        └──< need_card_score (result_id, CASCADE DELETE)
+ │        │
+ │        └──< user_need_selection (session_id, SET NULL)
  │
  ├──< task (user_id)
  │
- └──< refreshtoken (user_id)
+ ├──< refreshtoken (user_id)
+ │
+ └──< user_need_selection (user_id, CASCADE DELETE)
 ```
