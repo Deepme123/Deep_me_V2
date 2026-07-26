@@ -83,6 +83,11 @@ Google Access 토큰으로 로그인합니다.
 
 ---
 
+> `/auth/callback`, `/auth/google`은 `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/
+> `GOOGLE_REDIRECT_URI` 환경변수가 필요합니다. `AUTH_SET_COOKIE_ON_POST=true`이면
+> `POST /auth/google`도 콜백처럼 리프레시 쿠키를 응답에 설정합니다(기본값 false —
+> 모바일 클라이언트는 응답 바디의 토큰만 사용).
+
 ## 2. 감정 대화 REST (`/emotion`)
 
 모든 엔드포인트는 인증 선택적 (`Authorization: Bearer {token}` 없으면 웹 테스트용 익명 유저로 처리).
@@ -300,15 +305,16 @@ WebSocket 연결 주소: `ws://localhost:8000/ws/emotion`
 
 **Request:** body 없음
 
-**Response:**
+**Response:** (DB 테이블은 `analysiscard` — 구 `emotioncard`)
 ```json
 {
   "card_id": "uuid",
   "session_id": "uuid",
   "summary": "오늘 직장에서 받은 압박감으로 인해...",
-  "core_emotions": [{"label": "불안", "intensity": 8}, {"label": "무력감", "intensity": 6}],
+  "core_emotions": [{"emotion": "불안", "quote": "...", "reasoning": "..."}],
   "situation": "상사로부터 갑작스러운 질책을 받음",
   "situation_steps": [...],
+  "thoughts": [...],
   "physical_reactions": [...],
   "behavior_patterns": [...],
   "coping_actions": [...],
@@ -374,6 +380,28 @@ conversation_log를 직접 보내서 카드를 생성합니다 (DB transcript �
 
 ---
 
+### `PUT /analyze/api/sessions/{session_id}/satisfaction`
+
+세션에 대한 만족도 평가를 저장(또는 갱신)합니다. `session_id` 기준 1건만 유지됨(UPSERT).
+
+**Request:**
+```json
+{ "rating": 4 }
+```
+
+**Response:**
+```json
+{ "rating_id": "uuid", "session_id": "uuid", "rating": 4, "created_at": "...", "updated_at": "..." }
+```
+
+---
+
+### `GET /analyze/api/sessions/{session_id}/satisfaction`
+
+세션의 만족도 평가를 조회합니다. 없으면 `404`.
+
+---
+
 ## 5. 욕구 분석 (`/desire/need-cards`)
 
 ### `GET /desire/need-cards/list`
@@ -400,7 +428,9 @@ conversation_log를 직접 보내서 카드를 생성합니다 (DB transcript �
 
 ### `POST /desire/need-cards/analyze`
 
-대화 내용에서 8가지 욕구를 분석하고 DB에 저장합니다.
+`Authorization: Bearer {token}` 필요. 대화 내용에서 8가지 욕구를 분석하고 DB에
+저장합니다. `session_id`가 로그인 유저 본인 소유가 아니면 `404`(타인 세션
+존재 여부를 노출하지 않기 위해 403 대신 404 사용).
 
 **Request:**
 ```json
@@ -420,6 +450,8 @@ conversation_log를 직접 보내서 카드를 생성합니다 (DB transcript �
       "label_en": "Meaning",
       "score": 85,
       "rank": 1,
+      "rationale": "이 욕구 점수의 근거 설명",
+      "reflection_message": "top4에 속한 욕구에만 채워지는 개인화 서술",
       "creature_name_ko": "거북이",
       "creature_emoji": "🐢",
       "creature_description": "오래 사는 존재 — 인내, 지속성, 깊은 방향감"
@@ -443,65 +475,91 @@ conversation_log를 직접 보내서 카드를 생성합니다 (DB transcript �
 | `True` | 진정성 | 조개 | 🐚 |
 | `Fun` | 재미 | 문어 | 🐙 |
 
-> `score`: 0~100. `rank`: 1=가장 높은 욕구, 8=가장 낮은 욕구.
+> `score`: 0~100. `rank`: 1=가장 높은 욕구, 8=가장 낮은 욕구. `rationale`/
+> `reflection_message`는 저장돼 있지 않으면 빈 문자열.
+
+세션 종료(`MSG_CONFIRM_CLOSE`) 시 이 분석은 `ws_post_actions.py`를 통해서도
+비동기로 자동 실행되므로, 클라이언트가 이 엔드포인트를 직접 또 호출할 필요는
+보통 없다.
 
 ---
 
-### `GET /desire/need-cards/results/{session_id}`
+### `GET /desire/need-cards/history`
 
-세션에 저장된 욕구 분석 결과를 조회합니다. **홈 화면에서 선택한 욕구카드 표시에 사용.**
+`Authorization: Bearer {token}` 필요. 로그인 유저의 욕구 분석 히스토리 목록을
+반환합니다 (created_at 내림차순). 세션별 `GET .../results/{session_id}` 단건
+조회 엔드포인트는 더 이상 없고, 이 목록 API와 아래 `last-selection`으로 대체됨.
+
+**Query:** `?limit=20&offset=0`
 
 **Response:**
 ```json
 {
-  "result_id": "uuid",
-  "session_id": "uuid",
-  "created_at": "2026-01-01T00:00:00",
-  "needs": [
+  "items": [
     {
-      "code": "Meaning",
-      "label_ko": "의미",
-      "label_en": "Meaning",
-      "score": 85,
-      "rank": 1,
-      "creature_name_ko": "거북이",
-      "creature_emoji": "🐢",
-      "creature_description": "오래 사는 존재 — 인내, 지속성, 깊은 방향감"
-    },
-    ...
+      "result_id": "uuid",
+      "session_id": "uuid",
+      "created_at": "2026-01-01T00:00:00",
+      "top4": [ { "code": "Meaning", "score": 85, "rank": 1, ... } ]
+    }
   ],
-  "top4": [...]
+  "total": 3
 }
 ```
 
-결과 없으면 `404`.
+---
+
+### `GET /desire/need-cards/last-selection`
+
+`Authorization: Bearer {token}` 필요. 로그인 유저가 마지막으로 선택한 욕구
+하나를 반환합니다. **홈 화면에서 선택한 욕구카드 표시에 사용.** 선택 이력이
+없으면 `404`.
+
+**Response:**
+```json
+{
+  "code": "Meaning",
+  "label_ko": "의미",
+  "label_en": "Meaning",
+  "description": "행동과 노력이 가치 있고 의미 있다고 느끼고 싶음.",
+  "icon": "meaning",
+  "creature_name_ko": "거북이",
+  "creature_emoji": "🐢",
+  "creature_description": "오래 사는 존재 — 인내, 지속성, 깊은 방향감",
+  "reflection_message": "..."
+}
+```
 
 ---
 
 ### `POST /desire/need-cards/selection`
 
-선택된 욕구 코드 목록의 UI 렌더링 메타데이터를 반환합니다. DB 저장 없음.
+`Authorization: Bearer {token}` 필요. 사용자가 선택한 욕구 **1개**를 DB에
+저장하고(`user_need_selection`), UI 렌더링 메타데이터와 개인화
+`reflection_message`를 함께 반환합니다. 과거에는 `selected_needs` 배열을 받아
+DB 저장 없이 메타데이터만 반환했지만, 현재는 단일 선택 + 영구 저장 방식으로
+바뀌었습니다.
 
 **Request:**
 ```json
-{ "selected_needs": ["Meaning", "Together"] }
+{ "selected_need": "Meaning", "session_id": "uuid" }
 ```
+
+`session_id`는 선택 근거가 된 분석 결과의 세션(생략 가능 — 생략 시 유저의
+가장 최근 분석 결과로 `reflection_message`를 폴백 조회).
 
 **Response:**
 ```json
 {
-  "needs": [
-    {
-      "code": "Meaning",
-      "label_ko": "의미",
-      "label_en": "Meaning",
-      "description": "행동과 노력이 가치 있고 의미 있다고 느끼고 싶음.",
-      "icon": "meaning",
-      "creature_name_ko": "거북이",
-      "creature_emoji": "🐢",
-      "creature_description": "오래 사는 존재 — 인내, 지속성, 깊은 방향감"
-    }
-  ]
+  "code": "Meaning",
+  "label_ko": "의미",
+  "label_en": "Meaning",
+  "description": "행동과 노력이 가치 있고 의미 있다고 느끼고 싶음.",
+  "icon": "meaning",
+  "creature_name_ko": "거북이",
+  "creature_emoji": "🐢",
+  "creature_description": "오래 사는 존재 — 인내, 지속성, 깊은 방향감",
+  "reflection_message": "..."
 }
 ```
 
@@ -597,11 +655,14 @@ LLM이 일반 프롬프트 기반으로 태스크를 추천·생성합니다.
 
 ---
 
-## 8. QA Demo UI
+## 8. 배포 웹훅 (`/webhook`)
 
-`GET /demo/emotion-analysis` — HTML 페이지 반환 (Vanilla JS WebSocket 테스트 UI)
+### `POST /webhook/github`
 
-회귀 테스트 및 내부 QA용. 운영 UI와 별개입니다.
+GitHub main 브랜치 push를 감지해 Render 배포를 트리거하고 Discord로 알림을
+보내는 내부용 웹훅. `GITHUB_WEBHOOK_SECRET`으로 서명 검증. 프론트엔드에서
+호출할 일 없는 운영/CI 전용 엔드포인트 — 자세한 내용은
+[DEPLOYMENT.md](./DEPLOYMENT.md) 참고.
 
 ---
 
