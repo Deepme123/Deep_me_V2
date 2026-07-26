@@ -7,9 +7,11 @@
 | 항목 | 버전 |
 |------|------|
 | Python | 3.11+ |
-| Node.js | 18+ |
-| npm | 9+ |
+| Flutter SDK | 3.0+ (프론트엔드, `frontend/pubspec.yaml` 기준) |
 | PostgreSQL | 14+ |
+
+> 프론트엔드는 React가 아니라 **Flutter 모바일 앱**입니다. 자세한 내용은
+> [FRONTEND.md](./FRONTEND.md) 참고.
 
 ---
 
@@ -63,15 +65,16 @@ uvicorn app.main:app --reload
 # → http://localhost:8000
 ```
 
-### 2.6 프론트엔드 실행
+### 2.6 프론트엔드 실행 (Flutter)
 
 ```bash
 cd frontend
-npm install
-cp .env.example .env      # 프론트엔드 환경변수
-npm run dev
-# → http://localhost:5173
+flutter pub get
+flutter run              # 연결된 기기/에뮬레이터에서 실행
 ```
+
+WebSocket/API 접속 주소는 `frontend/lib/core/config/api_config.dart`에서 설정.
+자세한 내용은 [FRONTEND.md](./FRONTEND.md) 참고.
 
 ---
 
@@ -82,10 +85,12 @@ npm run dev
 | `http://localhost:8000/health` | API 서버 헬스체크 |
 | `http://localhost:8000/health/db` | DB 연결 확인 |
 | `http://localhost:8000/health/llm` | LLM 연결 확인 |
-| `http://localhost:8000/demo/emotion-analysis` | QA 테스트 UI |
 | `http://localhost:8000/docs` | FastAPI 자동 생성 Swagger UI |
 | `http://localhost:8000/redoc` | ReDoc API 문서 |
-| `http://localhost:5173/beta/chat` | React 프론트엔드 |
+
+> 과거 서버 렌더링 QA 데모(`/demo/emotion-analysis`)는 제거되었습니다. 로컬
+> WebSocket 동작 확인은 Flutter 앱을 직접 실행하거나 `/docs`의 스키마를 참고해
+> 별도 클라이언트로 테스트합니다.
 
 ---
 
@@ -124,28 +129,43 @@ pytest --cov=app --cov-report=term-missing
 
 ```
 tests/
+├── conftest.py                              # RATELIMIT_ENABLED=false, TestClient(client) 픽스처
 ├── backend/
-│   ├── test_demo_router.py              # QA Demo 라우터
+│   ├── test_close_policy_filter.py          # [[CONFIRM_CLOSE]] 청크 경계 감지
+│   ├── test_deploy_webhook.py               # GitHub→Render 배포 웹훅
+│   ├── test_emotion_sessions_list.py        # 세션 목록 REST
 │   ├── test_emotion_ws_analysis_trigger.py  # WS 분석 트리거
-│   ├── test_emotion_ws_auth.py          # WS 인증
-│   ├── test_emotion_ws_close_flow.py    # WS 종료 흐름
-│   ├── test_health_llm.py              # LLM 헬스체크
-│   ├── test_llm_service.py             # LLM 서비스
-│   ├── test_prompt_loader.py           # 프롬프트 로더
-│   ├── test_stream_bridge.py           # 스트리밍 브리지
-│   └── test_task_llm_service.py        # 태스크 추천 서비스
+│   ├── test_emotion_ws_auth.py              # WS 인증
+│   ├── test_emotion_ws_close_flow.py        # WS 종료 흐름
+│   ├── test_health_llm.py                   # LLM 헬스체크
+│   ├── test_llm_service.py                  # LLM 서비스
+│   ├── test_logging_config.py               # Discord 에러 알림 로깅
+│   ├── test_prompt_loader.py                # 프롬프트 로더
+│   ├── test_stream_bridge.py                # 스트리밍 브리지
+│   └── test_task_llm_service.py             # 태스크 추천 서비스
 ├── analyze/
-│   ├── test_cards_from_session.py      # 세션 기반 카드 생성
-│   ├── test_llm_card.py                # LLM 카드 생성
-│   └── test_schema_migrations.py       # 스키마 마이그레이션
+│   ├── test_cards_from_session.py           # 세션 기반 카드 생성
+│   ├── test_empty_cards_filtered.py         # 빈 카드 필터링(card_content.py)
+│   ├── test_llm_card.py                     # LLM 카드 생성
+│   ├── test_risk.py                         # 위험 키워드/레벨 판정
+│   ├── test_satisfaction.py                 # 만족도 평가 API
+│   ├── test_schema_migrations.py            # 스키마 마이그레이션
+│   └── test_summaries.py                    # 요약 목록 조회
 ├── desire/
-│   └── test_need_analyzer.py           # 욕구분석
-└── core/
-    ├── test_import_smoke.py            # 임포트 스모크 테스트
-    ├── test_llm_factory.py             # LLM 팩토리
-    ├── test_anthropic_provider.py      # Anthropic 프로바이더
-    ├── test_openai_provider.py         # OpenAI 프로바이더
-    └── test_provider_contracts.py      # 프로바이더 인터페이스 계약
+│   ├── test_need_analyzer.py                # 욕구분석 채점
+│   ├── test_need_card_analyze_auth.py       # /need-cards/analyze 인증·소유권
+│   ├── test_need_card_response_sort.py      # 욕구 응답 순위 정렬
+│   ├── test_need_card_selection.py          # /need-cards/selection
+│   └── test_reflection_writer.py            # top4 reflection 문단 생성
+├── core/
+│   ├── test_import_smoke.py                 # 임포트 스모크 테스트
+│   ├── test_llm_factory.py                  # LLM 팩토리
+│   ├── test_llm_settings.py                 # llm_settings.py 환경변수 파싱
+│   ├── test_anthropic_provider.py           # Anthropic 프로바이더
+│   ├── test_openai_provider.py              # OpenAI 프로바이더
+│   └── test_provider_contracts.py           # 프로바이더 인터페이스 계약
+├── test_health_llm_rate_limit.py            # /health/llm 레이트리밋
+└── test_health_llm_router.py                # /health/llm 라우팅
 ```
 
 ---
@@ -168,11 +188,12 @@ alembic history      # 전체 마이그레이션 이력
 ```
 
 **현재 마이그레이션 버전:**
-- `0005_behavior_patterns` (최신, 2026-05-05)
-  - `core_emotions` 배열에 `quote`, `reasoning` 필드 추가
-  - `situation` VARCHAR → `situation_steps` JSONB 변경 (1~4단계)
-  - `behavior_patterns` JSONB 컬럼 추가
-  - 욕구 카드 DB 연동 완료 (`need_card_result`, `need_card_score` 테이블)
+- `0014_user_need_selection_session_id` (최신)
+  - 전체 목록은 [DATABASE.md](./DATABASE.md) §4.1 참고
+  - 주요 변경: `emotioncard` → `analysiscard` 테이블명 변경(0008), 만족도 평가
+    `satisfactionrating` 테이블 추가(0011), `need_card_score`에
+    `rationale`/`reflection_message` 추가(0012/0013), `user_need_selection`에
+    `session_id` 추가(0014)
 
 ### 롤백
 
@@ -255,7 +276,9 @@ sqlalchemy.exc.ProgrammingError: table "user" already exists
 ```
 Access-Control-Allow-Origin 헤더 없음
 ```
-→ `CORS_ALLOW_ORIGINS`에 프론트엔드 주소 추가 (`http://localhost:5173`)
+→ CORS는 브라우저 기반 클라이언트(관리자 웹 등)에만 해당. Flutter 앱은
+  브라우저가 아니므로 보통 CORS 영향을 받지 않음 — `CORS_ALLOW_ORIGINS`는
+  웹 클라이언트를 붙일 때만 신경 쓰면 됨
 
 ---
 
@@ -263,7 +286,8 @@ Access-Control-Allow-Origin 헤더 없음
 
 → 자동 종료가 안 된다면 시스템 프롬프트에 해당 마커 출력 조건이 포함되어 있는지 확인  
 → `app/backend/resources/system_prompt.txt` 파일에서 현재 프롬프트 직접 확인  
-→ 대화 턴 수(`SESSION_MAX_TURNS`) 초과 여부 확인
+→ 대화 턴 수(`POLICY_MAX_TURNS`, 레거시 이름 `SESSION_MAX_TURNS`) 초과 여부 확인  
+→ `MIN_CLOSE_ORDER` 이전 스텝에서는 마커가 와도 무시됨
 
 ### JWT_SECRET_KEY 미설정 오류
 

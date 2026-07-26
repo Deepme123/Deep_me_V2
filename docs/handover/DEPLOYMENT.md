@@ -52,7 +52,15 @@ POSTGRES_DB=
 
 > Render/Neon 호스트는 자동으로 `?sslmode=require`가 추가됩니다.
 
-### 2.3 JWT / 인증
+### 2.3 Google OAuth
+
+```env
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=http://localhost:8000/auth/callback   # 운영에서는 실제 도메인으로 교체
+```
+
+### 2.4 JWT / 인증
 
 ```env
 JWT_SECRET_KEY=                               # ⚠️ 필수! 미설정 시 서버 시작 실패 (보안 C-2)
@@ -61,13 +69,20 @@ JWT_ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=120
 REFRESH_TOKEN_EXPIRE_DAYS=21
 REFRESH_COOKIE_NAME=__Host-deepme_rtok
-SECURE_COOKIE=true                            # HTTPS에서 true, HTTP 로컬에서 false
+SECURE_COOKIE=true                            # tokens.py의 리프레시 쿠키 secure 플래그. HTTPS에서 true, HTTP 로컬에서 false
+COOKIE_SECURE=true                            # auth.py의 로그인 응답 쿠키 secure 플래그 — SECURE_COOKIE와 별개 변수! 둘 다 맞춰서 설정할 것
+AUTH_SET_COOKIE_ON_POST=false                 # true면 POST /auth/google도 콜백처럼 리프레시 쿠키를 Set-Cookie함 (기본은 모바일 클라이언트 고려해 false)
 ```
 
-### 2.4 WebSocket / 세션
+> ⚠️ `SECURE_COOKIE`(`app/backend/core/tokens.py`)와 `COOKIE_SECURE`
+> (`app/backend/routers/auth.py`)는 이름이 비슷하지만 서로 다른 환경변수다.
+> 운영에서는 둘 다 `true`로 맞춰야 한다.
+
+### 2.5 WebSocket / 대화 정책
 
 ```env
-SESSION_MAX_TURNS=20             # 대화 최대 턴 수
+POLICY_MAX_TURNS=20              # 대화 최대 턴 수 (레거시 이름 SESSION_MAX_TURNS도 폴백으로 읽힘)
+MIN_CLOSE_ORDER=16               # 이 스텝 순서 이전엔 [[CONFIRM_CLOSE]] 토큰이 와도 자동 종료하지 않음
 WS_IDLE_TIMEOUT=120              # 유휴 타임아웃 (초)
 WS_SEND_BUFFER=20                # 전송 버퍼 크기
 WS_HEARTBEAT_SEC=15              # 하트비트 주기 (초)
@@ -76,9 +91,21 @@ RECOMMEND_TIMEOUT=15             # 태스크 추천 타임아웃 (초)
 ANALYSIS_CARD_TIMEOUT=45         # 분석카드 생성 타임아웃 (초)
 WS_HISTORY_TURNS=8               # LLM 컨텍스트 윈도우 (대화 턴 수)
 WS_MAX_USER_TEXT_LEN=8192        # 최대 입력 크기 (bytes)
+ACTIVITY_STEP_TYPE=activity_suggest    # 액티비티 제안 스텝의 step_type 값
+CANCEL_CLOSE_STEP_TYPE=cancel_close    # 종료 취소 스텝의 step_type 값
+
+# 시스템 프롬프트 유출 방지 (system_prompt.txt 문구가 응답에 그대로 새는 것 감지/마스킹)
+LEAK_GUARD_MODE=mask             # mask | off 등
+LEAK_GUARD_NGRAM=20
+LEAK_GUARD_MIN_MATCH=3
+
+# 인증 없이 /emotion REST를 웹 테스트용 익명 유저로 쓰도록 허용 (운영에서는 false 유지)
+EMOTION_NO_AUTH_WEB_TEST=false
+WEB_TEST_USER_EMAIL=webtest@local
+WEB_TEST_USER_NAME=Web Test User
 ```
 
-### 2.5 CORS
+### 2.6 CORS
 
 ```env
 CORS_ALLOW_ORIGINS=https://deep-me-v1.onrender.com,http://localhost:3000,http://localhost:5173
@@ -86,14 +113,26 @@ CORS_ALLOW_ORIGINS=https://deep-me-v1.onrender.com,http://localhost:3000,http://
 
 운영 도메인이 변경되면 이 값을 업데이트해야 합니다.
 
-### 2.6 에러 알림
+### 2.7 레이트 리밋
 
 ```env
-DISCORD_ERROR_WEBHOOK_URL=   # 설정 시 ERROR 이상 로그를 해당 Discord 채널로 전송
+RATELIMIT_ENABLED=true    # false면 slowapi 레이트리밋 전체 비활성화. tests/conftest.py는 테스트에서 자동으로 false 처리
 ```
 
-미설정 시 알림 없이 stdout 로깅만 동작(기존과 동일). 같은 로거+메시지는
-30초 내 중복 전송하지 않음(`app/backend/core/logging_config.py`).
+### 2.8 에러 알림 / 배포 웹훅
+
+```env
+DISCORD_ERROR_WEBHOOK_URL=   # 설정 시 ERROR 이상 로그를 이 Discord 채널로 전송 (app/backend/core/logging_config.py)
+DISCORD_WEBHOOK_URL=         # GitHub → Render 배포 알림용 별도 채널 (app/backend/routers/deploy_webhook.py)
+
+GITHUB_WEBHOOK_SECRET=       # /webhook/github 서명(HMAC) 검증용
+RENDER_DEPLOY_HOOK_URL=      # Render Deploy Hook URL
+RENDER_API_KEY=              # Render API 키 (배포 상태 폴링용)
+RENDER_SERVICE_ID=           # Render 서비스 ID
+```
+
+`DISCORD_ERROR_WEBHOOK_URL` 미설정 시 알림 없이 stdout 로깅만 동작. 같은
+로거+메시지는 30초 내 중복 전송하지 않음.
 
 ---
 
@@ -104,10 +143,12 @@ DISCORD_ERROR_WEBHOOK_URL=   # 설정 시 ERROR 이상 로그를 해당 Discord 
 - [ ] `JWT_REFRESH_SECRET` 필수 설정
 - [ ] 프롬프트 수정 API는 운영 환경에서 비활성화됨 (보안 C-1)
 - [ ] 테스트 계정/토큰 엔드포인트는 제거됨 (보안 C-3)
-- [ ] analyze 서브앱 모든 엔드포인트 인증 확인 (보안 C-4)
+- [ ] analyze/desire 라우터 모든 엔드포인트 인증 확인 (보안 C-4)
+- [ ] 최신 보안 이슈 현황은 [docs/SECURITY_AUDIT.md](../SECURITY_AUDIT.md) 확인 (P0/P1 미해결 항목 존재 가능)
 
 ### 기본 운영 설정
-- [ ] `SECURE_COOKIE=true` 확인 (HTTPS 필수)
+- [ ] `SECURE_COOKIE=true` **및** `COOKIE_SECURE=true` 둘 다 확인 (서로 다른 변수, HTTPS 필수)
+- [ ] `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`GOOGLE_REDIRECT_URI` 운영 값 설정 확인
 - [ ] `DATABASE_URL` 운영 DB 연결 문자열 설정
 - [ ] `OPENAI_API_KEY` (또는 `ANTHROPIC_API_KEY`) 유효한 키 설정
 - [ ] `CORS_ALLOW_ORIGINS` 운영 도메인 포함 확인
@@ -120,7 +161,7 @@ DISCORD_ERROR_WEBHOOK_URL=   # 설정 시 ERROR 이상 로그를 해당 Discord 
 
 | 항목 | 로컬 | 운영 |
 |------|------|------|
-| `SECURE_COOKIE` | false | true |
+| `SECURE_COOKIE` / `COOKIE_SECURE` | false | true |
 | `DATABASE_URL` | localhost PostgreSQL | Render/Neon |
 | `CORS_ALLOW_ORIGINS` | localhost 포함 | 운영 도메인만 |
 | `JWT_SECRET_KEY` | 개발용 (약한 키) | 강력한 랜덤 키 |
