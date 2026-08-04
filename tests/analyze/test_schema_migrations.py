@@ -79,6 +79,7 @@ def test_head_migration_includes_analysiscard():
             "analysiscard",
             "emotionsession",
             "emotionstep",
+            "greetingmessagestat",
             "need_card_result",
             "need_card_score",
             "refreshtoken",
@@ -87,7 +88,7 @@ def test_head_migration_includes_analysiscard():
             "user",
             "user_need_selection",
         ]
-        assert _alembic_version(tmp_db) == "0014_user_need_selection_session_id"
+        assert _alembic_version(tmp_db) == "0015_add_greeting_message_stat"
     finally:
         if tmp_db.exists():
             tmp_db.unlink()
