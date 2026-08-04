@@ -7,6 +7,7 @@ from uuid import UUID
 import asyncio
 import logging
 import os
+import random
 from contextlib import suppress
 
 from sqlalchemy.exc import IntegrityError
@@ -49,9 +50,13 @@ from app.backend.services.ws_session_service import (
     append_step_marker as session_append_step_marker,
     close_session_record as session_close_session_record,
     commit_full_turn as session_commit_full_turn,
+    commit_opening_message as session_commit_opening_message,
     create_emotion_session as session_create_emotion_session,
     prepare_message_context as session_prepare_message_context,
     with_db as session_with_db,
+)
+from app.backend.services.greeting_service import (
+    pick_greeting_message as greeting_pick_greeting_message,
 )
 from app.backend.services.ws_streaming import (
     OutboundWSChannel,
@@ -95,6 +100,10 @@ class WSConfig:
     # user_order가 이 값 미만이면 토큰이 감지돼도 세션 종료를 억제한다.
     # 12단계 대화 기준 최소 user_order ≈ 23 이므로 16을 기본값으로 사용.
     MIN_CLOSE_ORDER: int = int(os.getenv("MIN_CLOSE_ORDER", "16"))
+    # 세션 오픈 직후 서버가 먼저 인사 메시지를 보내기 전 대기하는 시간(초).
+    # 곧바로 뜨는 느낌보다 자연스러운 텀을 주기 위함.
+    GREETING_DELAY_MIN_SEC: float = float(os.getenv("GREETING_DELAY_MIN_SEC", "1.0"))
+    GREETING_DELAY_MAX_SEC: float = float(os.getenv("GREETING_DELAY_MAX_SEC", "2.0"))
 
 CFG = WSConfig()
 
@@ -370,6 +379,27 @@ async def ws_emotion(websocket: WebSocket):
 
     send_task = asyncio.create_task(outbound.sender())
 
+    # ── 세션 오픈 직후, 사용자 입력 없이 서버가 먼저 인사 메시지를 보냄
+    async def _send_opening_greeting() -> None:
+        try:
+            _, greeting_text = await session_with_db(greeting_pick_greeting_message)
+        except Exception:
+            logger.exception("WS opening greeting selection failed | session_id=%s", session_id)
+            return
+
+        delay = random.uniform(CFG.GREETING_DELAY_MIN_SEC, CFG.GREETING_DELAY_MAX_SEC)
+        await asyncio.sleep(delay)
+
+        try:
+            await guard_send(EmotionMessageResponse(type="message_start").model_dump())
+            await guard_send(
+                EmotionMessageResponse(type="message", message=greeting_text).model_dump()
+            )
+            await guard_send(EmotionMessageResponse(type="message_end").model_dump())
+            await session_with_db(session_commit_opening_message, session_id, greeting_text)
+        except Exception:
+            logger.exception("WS opening greeting send failed | session_id=%s", session_id)
+
     # ── 연결 직후 인증된 사용자 기준으로 세션 자동 오픈
     async def _bootstrap_open_if_possible():
         nonlocal session_id, sys_fp, auth_user_id
@@ -413,6 +443,7 @@ async def ws_emotion(websocket: WebSocket):
                 llm_info.model,
             )
             logger.info("WS bootstrap open_ok sent | session_id=%s", session_id)
+            await _send_opening_greeting()
         except Exception:
             logger.exception("WS bootstrap open failed")
             await close_ws(code=1011, reason="bootstrap_failed")
