@@ -88,7 +88,11 @@ class WSConfig:
     WS_HEARTBEAT_SEC: float = float(os.getenv("WS_HEARTBEAT_SEC", "30"))
     LLM_STREAM_TIMEOUT: float = float(os.getenv("LLM_STREAM_TIMEOUT", "120"))
     RECOMMEND_TIMEOUT: float = float(os.getenv("RECOMMEND_TIMEOUT", "15"))
-    ANALYSIS_CARD_TIMEOUT: float = float(os.getenv("ANALYSIS_CARD_TIMEOUT", "45"))
+    # 분석카드 생성 LLM(get_card_provider) 자체 timeout이 LLM_TIMEOUT_SEC
+    # 기본값(60초)이므로, 이 값이 그보다 작으면 LLM 응답을 기다리는 도중에
+    # asyncio.wait_for가 먼저 만료되어 정상 응답도 TimeoutError로 실패 처리된다.
+    # DB 조회/직렬화 오버헤드까지 감안해 60초보다 여유 있게 설정한다.
+    ANALYSIS_CARD_TIMEOUT: float = float(os.getenv("ANALYSIS_CARD_TIMEOUT", "75"))
     WS_HISTORY_TURNS: int = max(5, min(10, int(os.getenv("WS_HISTORY_TURNS", "8"))))
     WS_MAX_USER_TEXT_LEN: int = int(os.getenv("WS_MAX_USER_TEXT_LEN", str(8 * 1024)))  # bytes/ASCII-ish
     # [[CONFIRM_CLOSE]] 토큰은 STEP 12(마무리)에서만 나와야 함.
