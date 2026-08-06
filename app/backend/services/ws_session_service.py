@@ -129,6 +129,22 @@ def commit_full_turn(
     db.commit()
 
 
+def commit_opening_message(db: Session, session_id: UUID, assistant_text: str) -> None:
+    """세션 오픈 직후, 사용자 입력 없이 서버가 먼저 보내는 인사 메시지를 assistant 전용
+    스텝(step_order=1)으로 저장한다. 세션이 막 생성된 직후에만 호출되므로 항상 1번이 된다."""
+    step = EmotionStep(
+        session_id=session_id,
+        step_order=1,
+        step_type="assistant",
+        user_input="",
+        gpt_response=assistant_text,
+        created_at=datetime.utcnow(),
+        insight_tag=None,
+    )
+    db.add(step)
+    db.commit()
+
+
 def close_session_record(db: Session, session_id: UUID, payload: EmotionCloseRequest) -> None:
     session = db.get(EmotionSession, session_id)
     if session:
