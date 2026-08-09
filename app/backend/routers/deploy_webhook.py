@@ -378,22 +378,36 @@ async def _run_pipeline(payload: dict[str, Any], signature: str, raw_body: bytes
     logger.info(f"'{branch}' 브랜치({env_label}) push 감지: {_short_sha(commit_sha)} by {author}")
 
     # 4. Render 배포 트리거
-    if not cfg["deploy_hook"]:
-        logger.error(f"RENDER_DEPLOY_HOOK_URL_{env_name.upper()} 미설정")
+    # Deploy Hook URL이 있으면 그걸 우선 쓰고(기존 방식), 없으면
+    # API 키 + 서비스ID로 POST /services/{id}/deploys를 직접 호출한다.
+    # Deploy Hook은 Render 대시보드에서만 발급 가능해서, API 키만으로도
+    # 같은 결과(수동 발급 없이 배포 트리거)를 낼 수 있게 하기 위함.
+    if not cfg["deploy_hook"] and not (cfg["api_key"] and cfg["service_id"]):
+        logger.error(f"RENDER_DEPLOY_HOOK_URL_{env_name.upper()} 및 API 키/서비스ID 모두 미설정")
         await _send_discord(_build_discord_embed(
             False, commit_sha, commit_message, author,
-            f"RENDER_DEPLOY_HOOK_URL_{env_name.upper()} 환경변수가 없어.", None, env_label
+            f"RENDER_DEPLOY_HOOK_URL_{env_name.upper()} 또는 "
+            f"RENDER_API_KEY_{env_name.upper()}/RENDER_SERVICE_ID_{env_name.upper()} 환경변수가 없어.",
+            None, env_label
         ), cfg["discord"])
         return
 
     deploy_id = ""
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(cfg["deploy_hook"])
-            resp.raise_for_status()
-            data = resp.json() if resp.content else {}
-            logger.info(f"Render 응답: {data}")
-            deploy_id = data.get("deploy", {}).get("id", "") if isinstance(data, dict) else ""
+            if cfg["deploy_hook"]:
+                resp = await client.post(cfg["deploy_hook"])
+                resp.raise_for_status()
+                data = resp.json() if resp.content else {}
+                deploy_id = data.get("deploy", {}).get("id", "") if isinstance(data, dict) else ""
+            else:
+                resp = await client.post(
+                    f"{RENDER_API_BASE}/services/{cfg['service_id']}/deploys",
+                    headers={"Authorization": f"Bearer {cfg['api_key']}"},
+                )
+                resp.raise_for_status()
+                data = resp.json() if resp.content else {}
+                deploy_id = data.get("id", "") if isinstance(data, dict) else ""
             logger.info(f"Render 배포 트리거 완료 — deploy_id: {deploy_id}")
     except Exception as e:
         error_msg = _handle_http_error(e)
