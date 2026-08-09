@@ -26,10 +26,27 @@ logger = logging.getLogger(__name__)
 # 환경변수
 # ──────────────────────────────────────────────
 GITHUB_WEBHOOK_SECRET: str = os.getenv("GITHUB_WEBHOOK_SECRET", "")
-RENDER_DEPLOY_HOOK_URL: str = os.getenv("RENDER_DEPLOY_HOOK_URL", "")
-RENDER_API_KEY: str = os.getenv("RENDER_API_KEY", "")
-RENDER_SERVICE_ID: str = os.getenv("RENDER_SERVICE_ID", "")
-DISCORD_WEBHOOK_URL: str = os.getenv("DISCORD_WEBHOOK_URL", "")
+
+# GitHub는 브랜치 필터링 없이 모든 push 이벤트를 이 엔드포인트로 보내므로,
+# main → 운영 / develop → 테스트로 라우팅하는 건 코드에서 처리한다.
+BRANCH_ENV_MAP = {"main": "prod", "develop": "test"}
+
+ENV_CONFIGS: dict[str, dict[str, str]] = {
+    "prod": {
+        "label": "운영",
+        "deploy_hook": os.getenv("RENDER_DEPLOY_HOOK_URL_PROD", ""),
+        "api_key": os.getenv("RENDER_API_KEY_PROD", ""),
+        "service_id": os.getenv("RENDER_SERVICE_ID_PROD", ""),
+        "discord": os.getenv("DISCORD_WEBHOOK_URL_PROD", ""),
+    },
+    "test": {
+        "label": "테스트",
+        "deploy_hook": os.getenv("RENDER_DEPLOY_HOOK_URL_TEST", ""),
+        "api_key": os.getenv("RENDER_API_KEY_TEST", ""),
+        "service_id": os.getenv("RENDER_SERVICE_ID_TEST", ""),
+        "discord": os.getenv("DISCORD_WEBHOOK_URL_TEST", ""),
+    },
+}
 
 RENDER_API_BASE = "https://api.render.com/v1"
 DEPLOY_POLL_INTERVAL = 10   # 초
@@ -97,9 +114,9 @@ def _handle_http_error(e: Exception) -> str:
 # ──────────────────────────────────────────────
 # Render 상태 폴링
 # ──────────────────────────────────────────────
-async def _poll_render_deploy(deploy_id: str) -> dict[str, Any]:
-    headers = {"Authorization": f"Bearer {RENDER_API_KEY}"}
-    url = f"{RENDER_API_BASE}/services/{RENDER_SERVICE_ID}/deploys/{deploy_id}"
+async def _poll_render_deploy(deploy_id: str, api_key: str, service_id: str) -> dict[str, Any]:
+    headers = {"Authorization": f"Bearer {api_key}"}
+    url = f"{RENDER_API_BASE}/services/{service_id}/deploys/{deploy_id}"
     deadline = time.time() + DEPLOY_POLL_TIMEOUT
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -112,7 +129,7 @@ async def _poll_render_deploy(deploy_id: str) -> dict[str, Any]:
 
                 if status == "live":
                     svc_resp = await client.get(
-                        f"{RENDER_API_BASE}/services/{RENDER_SERVICE_ID}",
+                        f"{RENDER_API_BASE}/services/{service_id}",
                         headers=headers
                     )
                     svc_data = svc_resp.json() if svc_resp.status_code == 200 else {}
@@ -138,6 +155,7 @@ def _build_discord_embed(
     author: str,
     error_detail: str,
     deploy_url: Optional[str],
+    env_label: str,
 ) -> dict[str, Any]:
     short = _short_sha(commit_sha)
     now = _now_utc()
@@ -151,16 +169,16 @@ def _build_discord_embed(
         if deploy_url:
             fields.append({"name": "🔗 배포 URL", "value": deploy_url, "inline": False})
         return {"embeds": [{
-            "title": "✅ 배포 성공",
-            "description": f"`{short}` 커밋이 성공적으로 배포됐어.",
+            "title": f"✅ [{env_label}] 배포 성공",
+            "description": f"`{short}` 커밋이 {env_label} 서버에 성공적으로 배포됐어.",
             "color": 0x57F287,
             "fields": fields,
             "footer": {"text": "Deep Me Deploy Bot"},
         }]}
     else:
         return {"embeds": [{
-            "title": "❌ 배포 실패",
-            "description": f"`{short}` 커밋 배포 중 오류 발생.",
+            "title": f"❌ [{env_label}] 배포 실패",
+            "description": f"`{short}` 커밋 {env_label} 서버 배포 중 오류 발생.",
             "color": 0xED4245,
             "fields": [
                 {"name": "커밋", "value": f"`{short}` — {commit_message[:100]}", "inline": False},
@@ -172,14 +190,14 @@ def _build_discord_embed(
         }]}
 
 
-async def _send_discord(embed_payload: dict[str, Any]) -> None:
-    if not DISCORD_WEBHOOK_URL:
+async def _send_discord(embed_payload: dict[str, Any], webhook_url: str) -> None:
+    if not webhook_url:
         logger.warning("DISCORD_WEBHOOK_URL 미설정 — 알림 건너뜀")
         return
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
-                DISCORD_WEBHOOK_URL,
+                webhook_url,
                 json=embed_payload,
                 headers={"Content-Type": "application/json"}
             )
@@ -193,14 +211,15 @@ async def _send_discord_file(
     embed_payload: dict[str, Any],
     filename: str,
     file_content: str,
+    webhook_url: str,
 ) -> None:
-    if not DISCORD_WEBHOOK_URL:
+    if not webhook_url:
         logger.warning("DISCORD_WEBHOOK_URL 미설정 — 알림 건너뜀")
         return
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
-                DISCORD_WEBHOOK_URL,
+                webhook_url,
                 data={"payload_json": json.dumps(embed_payload)},
                 files={"file": (filename, file_content.encode("utf-8"), "text/plain")},
             )
@@ -287,6 +306,9 @@ async def _run_pr_pipeline(payload: dict[str, Any], signature: str, raw_body: by
     commits_url: str = pr.get("commits_url", "")
     logger.info(f"PR #{pr_number} merged into main: {head_branch} by {merged_by}")
 
+    # PR merge 알림은 base가 항상 main(운영)이므로 운영 채널로 고정 전송
+    discord_url = ENV_CONFIGS["prod"]["discord"]
+
     # 3. 커밋 목록 조회
     try:
         commits = await _fetch_pr_commits(commits_url)
@@ -298,7 +320,7 @@ async def _run_pr_pipeline(payload: dict[str, Any], signature: str, raw_body: by
             "description": error_msg,
             "color": 0xED4245,
             "footer": {"text": "Deep Me Deploy Bot"},
-        }]})
+        }]}, discord_url)
         return
 
     # 4. txt 생성 + Discord 파일 첨부 전송
@@ -317,7 +339,7 @@ async def _run_pr_pipeline(payload: dict[str, Any], signature: str, raw_body: by
         ],
         "footer": {"text": "Deep Me Deploy Bot"},
     }]}
-    await _send_discord_file(embed, f"pr_{pr_number}_commits.txt", txt_content)
+    await _send_discord_file(embed, f"pr_{pr_number}_commits.txt", txt_content, discord_url)
 
 
 # ──────────────────────────────────────────────
@@ -329,12 +351,15 @@ async def _run_pipeline(payload: dict[str, Any], signature: str, raw_body: bytes
         logger.warning("GitHub 웹훅 서명 검증 실패 — 무시")
         return
 
-    # 2. main 브랜치 push인지 확인
+    # 2. main(운영)/develop(테스트) push인지 확인
     ref = payload.get("ref", "")
     branch = ref.replace("refs/heads/", "")
-    if branch != "main":
+    env_name = BRANCH_ENV_MAP.get(branch)
+    if env_name is None:
         logger.info(f"'{branch}' 브랜치 push — 파이프라인 건너뜀")
         return
+    cfg = ENV_CONFIGS[env_name]
+    env_label = cfg["label"]
 
     # 3. 커밋 정보 추출
     head_commit = payload.get("head_commit") or {}
@@ -350,49 +375,49 @@ async def _run_pipeline(payload: dict[str, Any], signature: str, raw_body: bytes
         commit.get("author", {}).get("username")
         or commit.get("author", {}).get("name", "unknown")
     )
-    logger.info(f"main 브랜치 push 감지: {_short_sha(commit_sha)} by {author}")
+    logger.info(f"'{branch}' 브랜치({env_label}) push 감지: {_short_sha(commit_sha)} by {author}")
 
     # 4. Render 배포 트리거
-    if not RENDER_DEPLOY_HOOK_URL:
-        logger.error("RENDER_DEPLOY_HOOK_URL 미설정")
+    if not cfg["deploy_hook"]:
+        logger.error(f"RENDER_DEPLOY_HOOK_URL_{env_name.upper()} 미설정")
         await _send_discord(_build_discord_embed(
             False, commit_sha, commit_message, author,
-            "RENDER_DEPLOY_HOOK_URL 환경변수가 없어.", None
-        ))
+            f"RENDER_DEPLOY_HOOK_URL_{env_name.upper()} 환경변수가 없어.", None, env_label
+        ), cfg["discord"])
         return
 
     deploy_id = ""
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(RENDER_DEPLOY_HOOK_URL)
+            resp = await client.post(cfg["deploy_hook"])
             resp.raise_for_status()
             data = resp.json() if resp.content else {}
-            logger.info(f"Render 응답: {data}") 
+            logger.info(f"Render 응답: {data}")
             deploy_id = data.get("deploy", {}).get("id", "") if isinstance(data, dict) else ""
             logger.info(f"Render 배포 트리거 완료 — deploy_id: {deploy_id}")
     except Exception as e:
         error_msg = _handle_http_error(e)
         logger.error(f"Render 배포 트리거 실패: {error_msg}")
         await _send_discord(_build_discord_embed(
-            False, commit_sha, commit_message, author, error_msg, None
-        ))
+            False, commit_sha, commit_message, author, error_msg, None, env_label
+        ), cfg["discord"])
         return
 
     # 5. 배포 상태 폴링 (API 키 있을 때만)
-    if deploy_id and RENDER_API_KEY and RENDER_SERVICE_ID:
-        poll = await _poll_render_deploy(deploy_id)
+    if deploy_id and cfg["api_key"] and cfg["service_id"]:
+        poll = await _poll_render_deploy(deploy_id, cfg["api_key"], cfg["service_id"])
         success = poll["status"] == "live"
         await _send_discord(_build_discord_embed(
             success, commit_sha, commit_message, author,
-            poll.get("error", ""), poll.get("deploy_url") if success else None
-        ))
+            poll.get("error", ""), poll.get("deploy_url") if success else None, env_label
+        ), cfg["discord"])
     else:
         # 트리거만 하고 성공으로 처리
-        logger.info("RENDER_API_KEY 미설정 — 트리거 완료로 처리")
+        logger.info(f"RENDER_API_KEY_{env_name.upper()} 미설정 — 트리거 완료로 처리")
         await _send_discord(_build_discord_embed(
             True, commit_sha, commit_message, author,
-            "배포 트리거 완료. 상태는 Render 대시보드에서 확인해.", None
-        ))
+            "배포 트리거 완료. 상태는 Render 대시보드에서 확인해.", None, env_label
+        ), cfg["discord"])
 
 
 # ──────────────────────────────────────────────
