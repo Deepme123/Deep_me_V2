@@ -58,6 +58,9 @@ from app.backend.services.ws_session_service import (
 from app.backend.services.greeting_service import (
     pick_greeting_message as greeting_pick_greeting_message,
 )
+from app.backend.core.greeting_loader import (
+    get_greeting_messages as greeting_get_greeting_messages,
+)
 from app.backend.services.ws_streaming import (
     OutboundWSChannel,
     ws_send_safe as streaming_ws_send_safe,
@@ -385,11 +388,22 @@ async def ws_emotion(websocket: WebSocket):
 
     # ── 세션 오픈 직후, 사용자 입력 없이 서버가 먼저 인사 메시지를 보냄
     async def _send_opening_greeting() -> None:
+        # DB 기반 선택(카운터 조회/증가)이 실패해도 인사말 자체는 항상 나가야 하므로,
+        # 실패 시 DB에 의존하지 않는 무작위 선택으로 폴백한다.
         try:
             _, greeting_text = await session_with_db(greeting_pick_greeting_message)
         except Exception:
-            logger.exception("WS opening greeting selection failed | session_id=%s", session_id)
-            return
+            logger.exception(
+                "WS opening greeting selection failed, falling back to random pick | session_id=%s",
+                session_id,
+            )
+            try:
+                greeting_text = random.choice(greeting_get_greeting_messages())
+            except Exception:
+                logger.exception(
+                    "WS opening greeting fallback pick failed | session_id=%s", session_id
+                )
+                return
 
         delay = random.uniform(CFG.GREETING_DELAY_MIN_SEC, CFG.GREETING_DELAY_MAX_SEC)
         await asyncio.sleep(delay)
@@ -400,9 +414,19 @@ async def ws_emotion(websocket: WebSocket):
                 EmotionMessageResponse(type="message", message=greeting_text).model_dump()
             )
             await guard_send(EmotionMessageResponse(type="message_end").model_dump())
-            await session_with_db(session_commit_opening_message, session_id, greeting_text)
         except Exception:
             logger.exception("WS opening greeting send failed | session_id=%s", session_id)
+            return
+
+        # 클라이언트에는 이미 전달된 상태이므로, 이후 DB 커밋(기록/카운터) 실패는
+        # 인사말 누락으로 이어지지 않는다 — 별도로 로그만 남긴다.
+        try:
+            await session_with_db(session_commit_opening_message, session_id, greeting_text)
+        except Exception:
+            logger.exception(
+                "WS opening greeting commit failed (message already sent) | session_id=%s",
+                session_id,
+            )
 
     # ── 연결 직후 인증된 사용자 기준으로 세션 자동 오픈
     async def _bootstrap_open_if_possible():

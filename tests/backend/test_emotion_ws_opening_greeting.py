@@ -116,3 +116,37 @@ def test_opening_greeting_prefers_less_selected_candidate_and_persists_count(ws_
         assert steps[0].step_order == 1
         assert steps[0].step_type == "assistant"
         assert steps[0].gpt_response == greeting_loader.get_greeting_messages()[1]
+
+
+def test_opening_greeting_falls_back_to_random_pick_when_db_selection_fails(ws_app, monkeypatch):
+    """DB 기반 선택(카운터 조회/증가)이 실패해도 인사말 자체는 전송돼야 한다."""
+    client, engine, user_id = ws_app
+
+    def _boom(db):
+        raise RuntimeError("db unavailable")
+
+    monkeypatch.setattr(emotion_ws, "greeting_pick_greeting_message", _boom)
+    monkeypatch.setattr(emotion_ws.random, "choice", lambda pool: pool[3])
+
+    with client.websocket_connect(
+        "/ws/emotion",
+        headers={"cookie": "access_token=test-token"},
+    ) as ws:
+        open_event = ws.receive_json()
+        message_start = ws.receive_json()
+        message = ws.receive_json()
+        message_end = ws.receive_json()
+
+    assert open_event["type"] == "open_ok"
+    assert message_start["type"] == "message_start"
+    assert message_end["type"] == "message_end"
+    assert message["type"] == "message"
+    assert message["message"] == greeting_loader.get_greeting_messages()[3]
+
+    with Session(engine) as db:
+        session_id = UUID(open_event["session_id"])
+        steps = list(
+            db.exec(select(EmotionStep).where(EmotionStep.session_id == session_id))
+        )
+        assert len(steps) == 1
+        assert steps[0].gpt_response == greeting_loader.get_greeting_messages()[3]
