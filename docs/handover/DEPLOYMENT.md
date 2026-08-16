@@ -149,6 +149,9 @@ DISCORD_WEBHOOK_URL_TEST=           # 테스트 배포 알림 채널
 `RENDER_API_KEY_*`/`RENDER_SERVICE_ID_*` 미설정 시 배포는 트리거만 하고
 Render 대시보드에서 상태를 직접 확인하라는 알림으로 대체된다.
 
+`develop` push 시 Discord 알림 제목에 `[테스트]` 라벨이 붙는지로 운영/테스트
+분리가 정상 동작하는지 확인할 수 있다.
+
 ---
 
 ## 3. 운영 배포 체크리스트
