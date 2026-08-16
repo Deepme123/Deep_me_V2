@@ -65,6 +65,7 @@ Deep_me_V2/
 | [FRONTEND.md](./FRONTEND.md) | Flutter 프론트엔드 구조, 백엔드 연동 방식 |
 | [DEPLOYMENT.md](./DEPLOYMENT.md) | 배포 방법, 환경변수 전체 목록, 주의사항 |
 | [DEVELOPMENT_GUIDE.md](./DEVELOPMENT_GUIDE.md) | 로컬 개발환경 세팅, 테스트 실행 방법 |
+| [CI_CD.md](./CI_CD.md) | CI 파이프라인, 배포 트리거(웹훅), 롤백 방법 |
 | [COMMIT_HISTORY.md](./COMMIT_HISTORY.md) | 2026-05-10 시점 커밋 히스토리 스냅샷 (그 이후 변경 이력은 `git log` 참조) |
 
 ---
