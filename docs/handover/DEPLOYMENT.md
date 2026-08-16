@@ -95,6 +95,31 @@ DISCORD_ERROR_WEBHOOK_URL=   # 설정 시 ERROR 이상 로그를 해당 Discord 
 미설정 시 알림 없이 stdout 로깅만 동작(기존과 동일). 같은 로거+메시지는
 30초 내 중복 전송하지 않음(`app/backend/core/logging_config.py`).
 
+### 2.7 배포 웹훅 (운영/테스트 분리)
+
+`app/backend/routers/deploy_webhook.py`가 GitHub push 웹훅(`POST /webhook/github`)을
+받아 `main` 브랜치는 운영(PROD), `develop` 브랜치는 테스트(TEST) Render 서비스로
+각각 배포를 트리거하고 Discord로 결과를 알린다. GitHub는 브랜치 필터 없이 모든
+push 이벤트를 보내므로 웹훅 자체는 하나만 등록하면 되고, 브랜치별 라우팅은
+코드(`BRANCH_ENV_MAP`)에서 처리한다.
+
+```env
+GITHUB_WEBHOOK_SECRET=              # /webhook/github 서명(HMAC) 검증용, 운영/테스트 공용
+
+RENDER_DEPLOY_HOOK_URL_PROD=        # 운영(deep-me-v2) Deploy Hook URL
+RENDER_API_KEY_PROD=                # 운영 배포 상태 폴링용 API 키
+RENDER_SERVICE_ID_PROD=             # 운영 서비스 ID
+DISCORD_WEBHOOK_URL_PROD=           # 운영 배포 알림 채널
+
+RENDER_DEPLOY_HOOK_URL_TEST=        # 테스트(deep-me-v2-test) Deploy Hook URL
+RENDER_API_KEY_TEST=                # 테스트 배포 상태 폴링용 API 키
+RENDER_SERVICE_ID_TEST=             # 테스트 서비스 ID
+DISCORD_WEBHOOK_URL_TEST=           # 테스트 배포 알림 채널
+```
+
+`RENDER_API_KEY_*`/`RENDER_SERVICE_ID_*` 미설정 시 배포는 트리거만 하고
+Render 대시보드에서 상태를 직접 확인하라는 알림으로 대체된다.
+
 ---
 
 ## 3. 운영 배포 체크리스트
@@ -160,6 +185,14 @@ Settings에서 Pre-Deploy Command가 `alembic upgrade head`로 설정되어 있�
 services:
   - type: web
     name: deep-me-v2
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    preDeployCommand: alembic upgrade head
+    healthCheckPath: /health/db
+
+  - type: web
+    name: deep-me-v2-test
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT

@@ -6,3 +6,11 @@ services:
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     preDeployCommand: alembic upgrade head
     healthCheckPath: /health/db
+
+  - type: web
+    name: deep-me-v2-test
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    preDeployCommand: alembic upgrade head
+    healthCheckPath: /health/db
