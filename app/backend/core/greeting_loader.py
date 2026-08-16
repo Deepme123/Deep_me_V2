@@ -2,7 +2,7 @@ from pathlib import Path
 import logging
 from functools import lru_cache
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent  # app/backend/
 _CWD_BASE_DIR = Path.cwd() / "app" / "backend"
 _DEFAULT_GREETING_PATH = BASE_DIR / "resources" / "greeting_messages.txt"
 _CWD_GREETING_PATH = _CWD_BASE_DIR / "resources" / "greeting_messages.txt"
