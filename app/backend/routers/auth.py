@@ -25,11 +25,7 @@ from app.backend.core.tokens import (
     set_refresh_cookie,
     clear_refresh_cookie,
 )
-# 프로젝트에 사용자 인증 의존성이 있다면 사용 (예: get_current_user)
-try:
-    from app.core.auth import get_current_user  # 존재 시 사용
-except Exception:
-    get_current_user = None  # 미존재 시 /logout에서 대체 처리
+from app.core.auth import get_current_user
 
 auth_router = APIRouter()
 
@@ -310,24 +306,19 @@ async def auth_with_google_access(
 def logout(
     response: Response,
     db: Session = Depends(get_session),
-    current_user: Optional[User] = Depends(get_current_user) if get_current_user else None,
+    current_user_id: str = Depends(get_current_user),
 ):
     """
     현재 사용자 모든 RT 무효화 + 쿠키 제거
     """
-    if get_current_user and not current_user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
-
-    # current_user가 없고 get_current_user가 없다면(개발 편의), 쿠키만 제거
-    if current_user:
-        for row in db.exec(
-            select(RefreshToken).where(
-                RefreshToken.user_id == current_user.user_id,
-                RefreshToken.revoked_at.is_(None),
-            )
-        ):
-            row.revoked_at = datetime.utcnow()
-        db.commit()
+    for row in db.exec(
+        select(RefreshToken).where(
+            RefreshToken.user_id == UUID(current_user_id),
+            RefreshToken.revoked_at.is_(None),
+        )
+    ):
+        row.revoked_at = datetime.utcnow()
+    db.commit()
 
     clear_refresh_cookie(response)
     response.delete_cookie("access_token", path="/")
