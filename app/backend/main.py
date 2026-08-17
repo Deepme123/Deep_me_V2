@@ -10,6 +10,7 @@ from app.backend.core.logging_config import setup_logging
 from app.db.session import get_engine, ANALYZE_REQUIRED_TABLES
 from app.db.health import check_db_tables, health_db_response
 from app.backend.core.rate_limit import limiter as rate_limiter, RATELIMIT_ENABLED
+from app.backend.core.deletion_scheduler import start_scheduler, shutdown_scheduler
 
 # 모델 모듈 임포트(테이블 등록 보장용)
 from app.backend.models import emotion as _m_emotion  # noqa: F401
@@ -73,6 +74,16 @@ async def add_charset_for_json(request: Request, call_next) -> Response:
 @app.on_event("startup")
 def validate_required_tables() -> None:
     check_db_tables(get_engine(), ANALYZE_REQUIRED_TABLES, "core+analyze")
+
+
+@app.on_event("startup")
+def _start_account_deletion_scheduler() -> None:
+    start_scheduler()
+
+
+@app.on_event("shutdown")
+def _stop_account_deletion_scheduler() -> None:
+    shutdown_scheduler()
 
 
 
