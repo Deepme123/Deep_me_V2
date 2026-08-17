@@ -121,115 +121,98 @@ class SendBackpressure(Exception):
     """Raised when websocket send queue is saturated."""
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 라우터
+# 연결 핸들러
+#
+# 연결 하나(WebSocket 하나)의 생명주기 전체(인증→accept→오프닝 인사→메시지
+# 루프→종료)를 담당한다. 이전에는 이 상태(session_id, leak_guard 등)를 라우터
+# 함수 안의 nonlocal 클로저로 들고 있었는데, 메서드 단위로 쪼개 가독성을
+# 높이기 위해 인스턴스 상태로 옮겼다. 모듈 최상위에 import된 이름들
+# (session_with_db, get_system_prompt, CFG 등)은 테스트가 monkeypatch로
+# 직접 오버라이드하는 지점이라 그대로 자유 함수 호출 형태로 남겨뒀다.
 
-@router.websocket("/ws/emotion")
-async def ws_emotion(websocket: WebSocket):
-    # Pre-accept JWT validation (header/query)
-    raw_token = (
-        protocol_extract_bearer_token(websocket)
-        or protocol_extract_token_fallback(websocket)
-        or protocol_extract_cookie_token(websocket)
-    )
-    auth_user_id = protocol_decode_user_id_from_token(raw_token)
-    if raw_token and not auth_user_id:
-        await websocket.close(code=4401, reason="invalid_token")
-        return
-    try:
-        with session_scope() as db:
-            auth_user_id = resolve_emotion_user_id(db, auth_user_id)
-    except HTTPException:
-        await websocket.close(code=4401, reason="auth_required")
-        return
-    except Exception:
-        await websocket.close(code=1011, reason="auth_resolve_failed")
-        return
 
-    subproto = websocket.headers.get("sec-websocket-protocol")
-    await websocket.accept(subprotocol=subproto if subproto else None)
+class _EmotionWSHandler:
+    def __init__(self, websocket: WebSocket) -> None:
+        self.websocket = websocket
+        self.session_id: UUID | None = None
+        self.leak_guard = SharedLeakGuard()
+        self.sys_fp: set[int] = set()
+        self.shutdown = asyncio.Event()
+        self.recommend_fuse_tripped = False
+        self.activity_fired = False
+        self.auth_user_id = None
+        self.outbound: OutboundWSChannel | None = None
+        self.send_task: asyncio.Task | None = None
 
-    session_id: UUID | None = None
-    leak_guard = SharedLeakGuard()
-    sys_fp: set[int] = set()
-    shutdown = asyncio.Event()
-    recommend_fuse_tripped = False
-    activity_fired: bool = False
+    # ── 저수준 송신/종료 ────────────────────────────────────────────────
 
-    async def close_ws(code: int = 1000, reason: str = "") -> None:
-        if shutdown.is_set():
+    async def close_ws(self, code: int = 1000, reason: str = "") -> None:
+        if self.shutdown.is_set():
             return
-        shutdown.set()
+        self.shutdown.set()
         with suppress(Exception):
-            await websocket.close(code=code, reason=reason)
+            await self.websocket.close(code=code, reason=reason)
 
-    outbound = OutboundWSChannel(
-        websocket=websocket,
-        heartbeat_sec=CFG.WS_HEARTBEAT_SEC,
-        send_buffer=CFG.WS_SEND_BUFFER,
-        shutdown=shutdown,
-        logger=logger,
-        close_ws=close_ws,
-        send_backpressure_error=SendBackpressure,
-        ping_message={"type": MSG_PING},
-    )
+    async def guard_send(self, data: dict) -> None:
+        await self.outbound.guard_send(data)
 
-    async def guard_send(data: dict):
-        await outbound.guard_send(data)
+    async def flush_outbound_messages(self) -> None:
+        await self.outbound.flush()
 
-    async def flush_outbound_messages() -> None:
-        await outbound.flush()
-
-    async def _close_session_record_async(session_id_arg: UUID, payload: EmotionCloseRequest) -> None:
+    async def _close_session_record_async(
+        self, session_id_arg: UUID, payload: EmotionCloseRequest
+    ) -> None:
         await session_with_db(session_close_session_record, session_id_arg, payload)
 
-    async def _append_step_marker_async(session_id_arg: UUID, step_type: str) -> None:
+    async def _append_step_marker_async(self, session_id_arg: UUID, step_type: str) -> None:
         await session_with_db(session_append_step_marker, session_id_arg, step_type)
 
     async def finalize_close(
+        self,
         payload: EmotionCloseRequest,
         *,
         trigger_analysis_card: bool = False,
     ) -> bool:
         return await post_action_finalize_close(
-            session_id=session_id,
+            session_id=self.session_id,
             payload=payload,
             trigger_analysis_card=trigger_analysis_card,
-            close_session_record=_close_session_record_async,
-            flush_outbound_messages=flush_outbound_messages,
-            send_immediate=lambda data: streaming_ws_send_safe(websocket, data, logger=logger),
+            close_session_record=self._close_session_record_async,
+            flush_outbound_messages=self.flush_outbound_messages,
+            send_immediate=lambda data: streaming_ws_send_safe(self.websocket, data, logger=logger),
             generate_analysis_card=post_action_generate_analysis_card_async,
             analysis_card_timeout=CFG.ANALYSIS_CARD_TIMEOUT,
             logger=logger,
         )
 
-    async def enter_close_cooldown(*, send_ack: bool) -> bool:
+    async def enter_close_cooldown(self, *, send_ack: bool) -> bool:
         return await post_action_enter_close_cooldown(
-            session_id=session_id,
+            session_id=self.session_id,
             cancel_close_step_type=CANCEL_CLOSE_STEP_TYPE,
-            append_step_marker=_append_step_marker_async,
+            append_step_marker=self._append_step_marker_async,
             send_ack=send_ack,
-            guard_send=guard_send,
+            guard_send=self.guard_send,
             build_cancel_close_ok_message=build_cancel_close_ok_message,
             logger=logger,
         )
 
-    async def _handle_message(msg: dict) -> bool:
-        """MSG_MESSAGE 처리. True 반환 시 루프 종료."""
-        nonlocal activity_fired, recommend_fuse_tripped
+    # ── 사용자 메시지(MSG_MESSAGE) 처리 ────────────────────────────────
 
-        if not session_id:
-            await guard_send({"type": "error", "message": "no session"})
+    async def handle_message(self, msg: dict) -> bool:
+        """MSG_MESSAGE 처리. True 반환 시 루프 종료."""
+        if not self.session_id:
+            await self.guard_send({"type": "error", "message": "no session"})
             return False
 
         try:
             payload = EmotionMessageRequest(**msg)
         except Exception as e:
-            await guard_send({"type": "error", "message": f"bad message payload: {e}"})
+            await self.guard_send({"type": "error", "message": f"bad message payload: {e}"})
             return False
 
         user_text = payload.text or ""
         if len(user_text.encode("utf-8")) > CFG.WS_MAX_USER_TEXT_LEN:
-            await guard_send({"type": "error", "message": "message_too_large"})
+            await self.guard_send({"type": "error", "message": "message_too_large"})
             return False
         logger.info("WS recv user | %s", mask_preview(user_text, 100))
 
@@ -237,10 +220,10 @@ async def ws_emotion(websocket: WebSocket):
             prep = await session_with_db(
                 lambda db: session_prepare_message_context(
                     db,
-                    session_id,
+                    self.session_id,
                     user_text,
                     ws_history_turns=CFG.WS_HISTORY_TURNS,
-                    already_fired=activity_fired,
+                    already_fired=self.activity_fired,
                 )
             )
             want_activity = bool(prep.get("want_activity"))
@@ -248,11 +231,11 @@ async def ws_emotion(websocket: WebSocket):
             assistant_order = int(prep.get("assistant_order") or 0)
             convo = prep.get("conversation") or []
         except TurnLimitReached:
-            await guard_send({"type": "limit", "message": "max turns reached"})
+            await self.guard_send({"type": "limit", "message": "max turns reached"})
             return False
         except Exception as e:
             logger.exception("WS DB fetch failed")
-            await guard_send({"type": "error", "message": f"db_failed: {safe_str(e)}"})
+            await self.guard_send({"type": "error", "message": f"db_failed: {safe_str(e)}"})
             return False
 
         try:
@@ -260,7 +243,7 @@ async def ws_emotion(websocket: WebSocket):
             task_prompt = get_task_prompt() if want_activity else None
         except Exception as e:
             logger.exception("WS prompt load failed")
-            await guard_send({"type": "error", "message": f"prompt_failed: {safe_str(e)}"})
+            await self.guard_send({"type": "error", "message": f"prompt_failed: {safe_str(e)}"})
             return False
 
         assistant_chunks: list[str] = []
@@ -269,12 +252,12 @@ async def ws_emotion(websocket: WebSocket):
         _BATCH_CHARS = 60
 
         async def _flush_batch(buf: str) -> None:
-            safe = leak_guard.sanitize_out(buf, sys_fp)
+            safe = self.leak_guard.sanitize_out(buf, self.sys_fp)
             if not safe:
                 return
             assistant_chunks.append(safe)
             logger.debug("WS delta | %s", mask_preview(safe))
-            await guard_send(EmotionMessageResponse(type="message_delta", delta=safe).model_dump())
+            await self.guard_send(EmotionMessageResponse(type="message_delta", delta=safe).model_dump())
 
         async def _consume_stream():
             nonlocal end_by_token
@@ -305,7 +288,7 @@ async def ws_emotion(websocket: WebSocket):
             end_by_token = close_filter.end_detected
 
         stream_failed_reason: str | None = None
-        await guard_send(EmotionMessageResponse(type="message_start").model_dump())
+        await self.guard_send(EmotionMessageResponse(type="message_start").model_dump())
         try:
             await asyncio.wait_for(_consume_stream(), timeout=CFG.LLM_STREAM_TIMEOUT)
         except asyncio.TimeoutError:
@@ -313,10 +296,10 @@ async def ws_emotion(websocket: WebSocket):
         except Exception as e:
             stream_failed_reason = f"stream_failed:{safe_str(e)}"
         finally:
-            await guard_send(EmotionMessageResponse(type="message_end").model_dump())
+            await self.guard_send(EmotionMessageResponse(type="message_end").model_dump())
 
         if stream_failed_reason:
-            await guard_send({"type": "error", "message": stream_failed_reason, "turn_dropped": True})
+            await self.guard_send({"type": "error", "message": stream_failed_reason, "turn_dropped": True})
             return False
 
         # [[CONFIRM_CLOSE]]는 STEP 12(마무리)에서만 유효.
@@ -331,13 +314,13 @@ async def ws_emotion(websocket: WebSocket):
 
         assistant_text = "".join(assistant_chunks).strip()
         if not assistant_text:
-            await guard_send({"type": "error", "message": "empty_assistant_response", "turn_dropped": True})
+            await self.guard_send({"type": "error", "message": "empty_assistant_response", "turn_dropped": True})
             return False
 
         try:
             await session_with_db(
                 session_commit_full_turn,
-                session_id,
+                self.session_id,
                 user_text,
                 assistant_text,
                 user_order,
@@ -345,49 +328,48 @@ async def ws_emotion(websocket: WebSocket):
                 add_activity_marker=want_activity,
             )
         except TurnLimitReached:
-            await guard_send({"type": "limit", "message": "max turns reached"})
+            await self.guard_send({"type": "limit", "message": "max turns reached"})
             return False
         except Exception:
             logger.exception("WS assistant-step commit failed")
-            await guard_send({"type": "error", "message": "server_error:assistant_step_commit"})
+            await self.guard_send({"type": "error", "message": "server_error:assistant_step_commit"})
             return False
 
         if want_activity:
-            activity_fired = True
+            self.activity_fired = True
 
-        await guard_send(
+        await self.guard_send(
             EmotionMessageResponse(type="message", message=assistant_text).model_dump()
         )
 
         if end_by_token:
             close_payload = EmotionCloseRequest()
-            return await finalize_close(close_payload, trigger_analysis_card=True)
+            return await self.finalize_close(close_payload, trigger_analysis_card=True)
 
         if want_activity:
-            if recommend_fuse_tripped:
-                await guard_send({"type": "error", "message": "recommend_unavailable"})
+            if self.recommend_fuse_tripped:
+                await self.guard_send({"type": "error", "message": "recommend_unavailable"})
             else:
                 try:
                     items = await asyncio.wait_for(
-                        post_action_recommend_tasks_async(session_id, 5),
+                        post_action_recommend_tasks_async(self.session_id, 5),
                         timeout=CFG.RECOMMEND_TIMEOUT,
                     )
                 except Exception as e:
-                    recommend_fuse_tripped = True
+                    self.recommend_fuse_tripped = True
                     logger.warning("task recommend failed | %s", safe_str(e))
-                    await guard_send({"type": "error", "message": "recommend_unavailable"})
+                    await self.guard_send({"type": "error", "message": "recommend_unavailable"})
                 else:
                     if items:
-                        await guard_send(
+                        await self.guard_send(
                             TaskRecommendResponse(type="task_recommend_ok", items=items).model_dump()
                         )
 
         return False
 
-    send_task = asyncio.create_task(outbound.sender())
+    # ── 세션 오픈 직후, 사용자 입력 없이 서버가 먼저 인사 메시지를 보냄 ──
 
-    # ── 세션 오픈 직후, 사용자 입력 없이 서버가 먼저 인사 메시지를 보냄
-    async def _send_opening_greeting() -> None:
+    async def send_opening_greeting(self) -> None:
         # DB 기반 선택(카운터 조회/증가)이 실패해도 인사말 자체는 항상 나가야 하므로,
         # 실패 시 DB에 의존하지 않는 무작위 선택으로 폴백한다.
         try:
@@ -395,13 +377,13 @@ async def ws_emotion(websocket: WebSocket):
         except Exception:
             logger.exception(
                 "WS opening greeting selection failed, falling back to random pick | session_id=%s",
-                session_id,
+                self.session_id,
             )
             try:
                 greeting_text = random.choice(greeting_get_greeting_messages())
             except Exception:
                 logger.exception(
-                    "WS opening greeting fallback pick failed | session_id=%s", session_id
+                    "WS opening greeting fallback pick failed | session_id=%s", self.session_id
                 )
                 return
 
@@ -409,30 +391,30 @@ async def ws_emotion(websocket: WebSocket):
         await asyncio.sleep(delay)
 
         try:
-            await guard_send(EmotionMessageResponse(type="message_start").model_dump())
-            await guard_send(
+            await self.guard_send(EmotionMessageResponse(type="message_start").model_dump())
+            await self.guard_send(
                 EmotionMessageResponse(type="message", message=greeting_text).model_dump()
             )
-            await guard_send(EmotionMessageResponse(type="message_end").model_dump())
+            await self.guard_send(EmotionMessageResponse(type="message_end").model_dump())
         except Exception:
-            logger.exception("WS opening greeting send failed | session_id=%s", session_id)
+            logger.exception("WS opening greeting send failed | session_id=%s", self.session_id)
             return
 
         # 클라이언트에는 이미 전달된 상태이므로, 이후 DB 커밋(기록/카운터) 실패는
         # 인사말 누락으로 이어지지 않는다 — 별도로 로그만 남긴다.
         try:
-            await session_with_db(session_commit_opening_message, session_id, greeting_text)
+            await session_with_db(session_commit_opening_message, self.session_id, greeting_text)
         except Exception:
             logger.exception(
                 "WS opening greeting commit failed (message already sent) | session_id=%s",
-                session_id,
+                self.session_id,
             )
 
-    # ── 연결 직후 인증된 사용자 기준으로 세션 자동 오픈
-    async def _bootstrap_open_if_possible():
-        nonlocal session_id, sys_fp, auth_user_id
+    # ── 연결 직후 인증된 사용자 기준으로 세션 자동 오픈 ──────────────────
+
+    async def bootstrap_open_if_possible(self) -> bool:
         try:
-            uid = auth_user_id
+            uid = self.auth_user_id
             if not uid:
                 return False
 
@@ -446,7 +428,7 @@ async def ws_emotion(websocket: WebSocket):
                 user_exists = await session_with_db(lambda db: db.get(User, uid) is not None)
                 if not user_exists:
                     logger.warning("bootstrap: user not found | user_id=%s", uid)
-                    await websocket.close(code=4401, reason="user_not_found")
+                    await self.websocket.close(code=4401, reason="user_not_found")
                     return
 
             try:
@@ -455,208 +437,263 @@ async def ws_emotion(websocket: WebSocket):
                 logger.warning("bootstrap commit FK failed; retrying as anonymous | %s", safe_str(ie))
                 session = await session_with_db(session_create_emotion_session, None)
 
-            session_id = session.session_id  # ← 세션 아이디 보관
+            self.session_id = session.session_id  # ← 세션 아이디 보관
 
             system_prompt = get_system_prompt()
-            sys_fp = leak_guard.fingerprint(system_prompt)
-            await guard_send(
-                EmotionOpenResponse(type="open_ok", session_id=session_id, turns=0).model_dump(),
+            self.sys_fp = self.leak_guard.fingerprint(system_prompt)
+            await self.guard_send(
+                EmotionOpenResponse(type="open_ok", session_id=self.session_id, turns=0).model_dump(),
             )
             llm_info = get_backend_llm_info()
             logger.info(
                 "WS connected | session_id=%s user_id=%s provider=%s model=%s",
-                session_id,
+                self.session_id,
                 uid,
                 llm_info.provider,
                 llm_info.model,
             )
-            logger.info("WS bootstrap open_ok sent | session_id=%s", session_id)
-            await _send_opening_greeting()
+            logger.info("WS bootstrap open_ok sent | session_id=%s", self.session_id)
+            await self.send_opening_greeting()
         except Exception:
             logger.exception("WS bootstrap open failed")
-            await close_ws(code=1011, reason="bootstrap_failed")
+            await self.close_ws(code=1011, reason="bootstrap_failed")
             return False
         return True
 
-    # Auth token is required; bootstrap immediately.
-    ok = await _bootstrap_open_if_possible()
-    if not ok:
-        with suppress(Exception):
-            send_task.cancel()
-            await asyncio.gather(send_task, return_exceptions=True)
-        return
+    # ── 메시지 타입별 디스패치 ────────────────────────────────────────
 
-    try:
-        while not shutdown.is_set():
-            # 수신을 먼저 기다림
-            try:
-                msg = await protocol_ws_recv_safe(
-                    websocket,
-                    timeout=CFG.WS_IDLE_TIMEOUT,
-                    raise_on_timeout=True,
-                    strict_json=True,
-                )
-            except ProtocolIdleTimeout:
-                await guard_send({"type": "error", "message": "idle_timeout"})
-                break
-            except WebSocketDisconnect:
-                break
-            except ProtocolInvalidPayload as e:
-                await guard_send({"type": "error", "message": str(e)})
-                await close_ws(code=1007, reason=str(e))
-                break
-            except Exception as e:
-                logger.warning("WS recv failed | %s", safe_str(e))
-                await guard_send({"type": "error", "message": "recv_failed"})
-                break
-            if msg is None or shutdown.is_set():
-                continue
+    async def dispatch(self, msg: dict) -> bool:
+        """수신 메시지 1건을 타입별로 처리한다. True 반환 시 루프 종료."""
+        try:
+            logger.debug("WS PARSED | %s", msg.get("type"))
+        except Exception:
+            pass
 
-            # 파싱된 메시지 타입 로깅
-            try:
-                logger.debug("WS PARSED | %s", msg.get("type"))
-            except Exception:
-                pass
+        typ = msg.get("type")
 
-            typ = msg.get("type")
+        if typ == MSG_PING:
+            await self.guard_send({"type": MSG_PONG})
+            return False
 
-            if typ == MSG_PING:
-                await guard_send({"type": MSG_PONG})
-                continue
+        # ── 세션 열기
+        if typ == MSG_OPEN:
+            if not self.auth_user_id:
+                await self.guard_send({"type": "error", "message": "auth_required"})
+                await self.close_ws(code=4401, reason="auth_required")
+                return True
 
-            # ── 세션 열기
-            if typ == MSG_OPEN:
-                if not auth_user_id:
-                    await guard_send({"type": "error", "message": "auth_required"})
-                    await close_ws(code=4401, reason="auth_required")
-                    break
-
-                if session_id:
-                    await guard_send(EmotionOpenResponse(
-                        type="open_ok",
-                        session_id=session_id,
-                        turns=0,
-                    ).model_dump())
-                    continue
-                try:
-                    payload = EmotionOpenRequest(**msg)
-                except Exception as e:
-                    await guard_send({"type": "error", "message": f"bad open payload: {e}"})
-                    continue
-
-                uid = auth_user_id
-
-                try:
-                    session = await session_with_db(session_create_emotion_session, uid)
-                except IntegrityError as ie:
-                    logger.warning("open commit FK failed; retrying anonymous | %s", safe_str(ie))
-                    session = await session_with_db(session_create_emotion_session, None)
-
-                session_id = session.session_id
-
-                system_prompt = get_system_prompt()
-                sys_fp = leak_guard.fingerprint(system_prompt)
-
-                await guard_send(EmotionOpenResponse(
+            if self.session_id:
+                await self.guard_send(EmotionOpenResponse(
                     type="open_ok",
-                    session_id=session_id,
+                    session_id=self.session_id,
                     turns=0,
                 ).model_dump())
+                return False
+            try:
+                EmotionOpenRequest(**msg)
+            except Exception as e:
+                await self.guard_send({"type": "error", "message": f"bad open payload: {e}"})
+                return False
 
-            # ── 사용자 메시지 처리
-            elif typ == MSG_MESSAGE:
-                if await _handle_message(msg):
-                    break
+            uid = self.auth_user_id
 
-            # ── 세션 종료
-            elif typ == MSG_CLOSE:
-                if not session_id:
-                    await guard_send({"type": "error", "message": "no session"})
-                    continue
+            try:
+                session = await session_with_db(session_create_emotion_session, uid)
+            except IntegrityError as ie:
+                logger.warning("open commit FK failed; retrying anonymous | %s", safe_str(ie))
+                session = await session_with_db(session_create_emotion_session, None)
 
+            self.session_id = session.session_id
+
+            system_prompt = get_system_prompt()
+            self.sys_fp = self.leak_guard.fingerprint(system_prompt)
+
+            await self.guard_send(EmotionOpenResponse(
+                type="open_ok",
+                session_id=self.session_id,
+                turns=0,
+            ).model_dump())
+            return False
+
+        # ── 사용자 메시지 처리
+        if typ == MSG_MESSAGE:
+            return await self.handle_message(msg)
+
+        # ── 세션 종료
+        if typ == MSG_CLOSE:
+            if not self.session_id:
+                await self.guard_send({"type": "error", "message": "no session"})
+                return False
+
+            try:
+                payload = EmotionCloseRequest(**msg)
+            except Exception as e:
+                await self.guard_send({"type": "error", "message": f"bad close payload: {e}"})
+                return False
+
+            return await self.finalize_close(payload)
+
+        if typ == MSG_CONFIRM_CLOSE:
+            if not self.session_id:
+                await self.guard_send({"type": "error", "message": "no session"})
+                return False
+
+            try:
+                ConfirmCloseRequest(**msg)
+                payload = EmotionCloseRequest(
+                    emotion_label=msg.get("emotion_label"),
+                    topic=msg.get("topic"),
+                    trigger_summary=msg.get("trigger_summary"),
+                    insight_summary=msg.get("insight_summary"),
+                )
+            except Exception as e:
+                await self.guard_send({"type": "error", "message": f"bad confirm close payload: {e}"})
+                return False
+
+            return await self.finalize_close(payload, trigger_analysis_card=True)
+
+        if typ == MSG_CANCEL_CLOSE:
+            if not self.session_id:
+                await self.guard_send({"type": "error", "message": "no session"})
+                return False
+
+            await self.enter_close_cooldown(send_ack=True)
+            return False
+
+        # ── 태스크 추천
+        if typ == MSG_TASK_RECOMMEND:
+            if not self.session_id:
+                await self.guard_send({"type": "error", "message": "no session"})
+                return False
+
+            try:
+                payload = TaskRecommendRequest(**msg)
+            except Exception as e:
+                await self.guard_send({"type": "error", "message": f"bad task payload: {e}"})
+                return False
+
+            if self.recommend_fuse_tripped:
+                await self.guard_send({"type": "error", "message": "recommend_unavailable"})
+                return False
+
+            try:
+                recs = await asyncio.wait_for(
+                    post_action_recommend_tasks_async(self.session_id, payload.max_items or 5),
+                    timeout=CFG.RECOMMEND_TIMEOUT,
+                )
+            except Exception as e:
+                self.recommend_fuse_tripped = True
+                logger.error("task recommend failed | %s", safe_str(e))
+                await self.guard_send({"type": "error", "message": f"recommend failed: {safe_str(e)}"})
+                return False
+
+            await self.guard_send(TaskRecommendResponse(
+                type="task_recommend_ok",
+                items=recs,
+            ).model_dump())
+            return False
+
+        await self.guard_send({"type": "error", "message": f"unknown type: {typ}"})
+        return False
+
+    # ── 연결 전체 생명주기 ────────────────────────────────────────────
+
+    async def run(self) -> None:
+        websocket = self.websocket
+
+        # Pre-accept JWT validation (header/query)
+        raw_token = (
+            protocol_extract_bearer_token(websocket)
+            or protocol_extract_token_fallback(websocket)
+            or protocol_extract_cookie_token(websocket)
+        )
+        self.auth_user_id = protocol_decode_user_id_from_token(raw_token)
+        if raw_token and not self.auth_user_id:
+            await websocket.close(code=4401, reason="invalid_token")
+            return
+        try:
+            with session_scope() as db:
+                self.auth_user_id = resolve_emotion_user_id(db, self.auth_user_id)
+        except HTTPException:
+            await websocket.close(code=4401, reason="auth_required")
+            return
+        except Exception:
+            await websocket.close(code=1011, reason="auth_resolve_failed")
+            return
+
+        subproto = websocket.headers.get("sec-websocket-protocol")
+        await websocket.accept(subprotocol=subproto if subproto else None)
+
+        self.outbound = OutboundWSChannel(
+            websocket=websocket,
+            heartbeat_sec=CFG.WS_HEARTBEAT_SEC,
+            send_buffer=CFG.WS_SEND_BUFFER,
+            shutdown=self.shutdown,
+            logger=logger,
+            close_ws=self.close_ws,
+            send_backpressure_error=SendBackpressure,
+            ping_message={"type": MSG_PING},
+        )
+
+        self.send_task = asyncio.create_task(self.outbound.sender())
+
+        # Auth token is required; bootstrap immediately.
+        ok = await self.bootstrap_open_if_possible()
+        if not ok:
+            with suppress(Exception):
+                self.send_task.cancel()
+                await asyncio.gather(self.send_task, return_exceptions=True)
+            return
+
+        try:
+            while not self.shutdown.is_set():
+                # 수신을 먼저 기다림
                 try:
-                    payload = EmotionCloseRequest(**msg)
-                except Exception as e:
-                    await guard_send({"type": "error", "message": f"bad close payload: {e}"})
-                    continue
-
-                if await finalize_close(payload):
-                    break
-
-            elif typ == MSG_CONFIRM_CLOSE:
-                if not session_id:
-                    await guard_send({"type": "error", "message": "no session"})
-                    continue
-
-                try:
-                    ConfirmCloseRequest(**msg)
-                    payload = EmotionCloseRequest(
-                        emotion_label=msg.get("emotion_label"),
-                        topic=msg.get("topic"),
-                        trigger_summary=msg.get("trigger_summary"),
-                        insight_summary=msg.get("insight_summary"),
+                    msg = await protocol_ws_recv_safe(
+                        websocket,
+                        timeout=CFG.WS_IDLE_TIMEOUT,
+                        raise_on_timeout=True,
+                        strict_json=True,
                     )
+                except ProtocolIdleTimeout:
+                    await self.guard_send({"type": "error", "message": "idle_timeout"})
+                    break
+                except WebSocketDisconnect:
+                    break
+                except ProtocolInvalidPayload as e:
+                    await self.guard_send({"type": "error", "message": str(e)})
+                    await self.close_ws(code=1007, reason=str(e))
+                    break
                 except Exception as e:
-                    await guard_send({"type": "error", "message": f"bad confirm close payload: {e}"})
+                    logger.warning("WS recv failed | %s", safe_str(e))
+                    await self.guard_send({"type": "error", "message": "recv_failed"})
+                    break
+                if msg is None or self.shutdown.is_set():
                     continue
 
-                if await finalize_close(payload, trigger_analysis_card=True):
+                if await self.dispatch(msg):
                     break
 
-            elif typ == MSG_CANCEL_CLOSE:
-                if not session_id:
-                    await guard_send({"type": "error", "message": "no session"})
-                    continue
+        except WebSocketDisconnect:
+            self.shutdown.set()
+        except SendBackpressure:
+            logger.warning("WS closed due to send backpressure")
+        except Exception:
+            logger.exception("WS fatal error")
+            with suppress(Exception):
+                await streaming_ws_send_safe(websocket, {"type": "error", "message": "fatal"}, logger=logger)
+        finally:
+            self.shutdown.set()
+            with suppress(Exception):
+                self.send_task.cancel()
+                await asyncio.gather(self.send_task, return_exceptions=True)
+            with suppress(Exception):
+                await websocket.close()
 
-                await enter_close_cooldown(send_ack=True)
 
-            # ── 태스크 추천
-            elif typ == MSG_TASK_RECOMMEND:
-                if not session_id:
-                    await guard_send({"type": "error", "message": "no session"})
-                    continue
+# ──────────────────────────────────────────────────────────────────────────────
+# 라우터
 
-                try:
-                    payload = TaskRecommendRequest(**msg)
-                except Exception as e:
-                    await guard_send({"type": "error", "message": f"bad task payload: {e}"})
-                    continue
-
-                if recommend_fuse_tripped:
-                    await guard_send({"type": "error", "message": "recommend_unavailable"})
-                    continue
-
-                try:
-                    recs = await asyncio.wait_for(
-                        post_action_recommend_tasks_async(session_id, payload.max_items or 5),
-                        timeout=CFG.RECOMMEND_TIMEOUT,
-                    )
-                except Exception as e:
-                    recommend_fuse_tripped = True
-                    logger.error("task recommend failed | %s", safe_str(e))
-                    await guard_send({"type": "error", "message": f"recommend failed: {safe_str(e)}"})
-                    continue
-
-                await guard_send(TaskRecommendResponse(
-                    type="task_recommend_ok",
-                    items=recs,
-                ).model_dump())
-
-            else:
-                await guard_send({"type": "error", "message": f"unknown type: {typ}"})
-
-    except WebSocketDisconnect:
-        shutdown.set()
-    except SendBackpressure:
-        logger.warning("WS closed due to send backpressure")
-    except Exception:
-        logger.exception("WS fatal error")
-        with suppress(Exception):
-            await streaming_ws_send_safe(websocket, {"type": "error", "message": "fatal"}, logger=logger)
-    finally:
-        shutdown.set()
-        with suppress(Exception):
-            send_task.cancel()
-            await asyncio.gather(send_task, return_exceptions=True)
-        with suppress(Exception):
-            await websocket.close()
+@router.websocket("/ws/emotion")
+async def ws_emotion(websocket: WebSocket) -> None:
+    await _EmotionWSHandler(websocket).run()
