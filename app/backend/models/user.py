@@ -9,6 +9,7 @@ class User(SQLModel, table=True):
     name: str
     email: str = Field(index=True, unique=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    deletion_requested_at: Optional[datetime] = None
     __tablename__ = "user"
 
 
