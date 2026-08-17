@@ -7,26 +7,24 @@ app/main.py에 include_router로 등록해서 사용.
 """
 
 import asyncio
-import hashlib
-import hmac
 import json
 import logging
 import os
-import time
-from datetime import datetime, timezone
-from typing import Any, Optional
-from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
+
+from app.backend.services.deploy_discord import _build_discord_embed, _send_discord, _send_discord_file
+from app.backend.services.deploy_notify_utils import _handle_http_error, _now_utc, _safe_json, _short_sha
+from app.backend.services.deploy_pr_history import _build_commit_history_txt, _fetch_pr_commits
+from app.backend.services.deploy_security import _signature_required_and_valid
+from app.backend.services.render_deploy import RENDER_API_BASE, _poll_render_deploy
 
 logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────
 # 환경변수
 # ──────────────────────────────────────────────
-GITHUB_WEBHOOK_SECRET: str = os.getenv("GITHUB_WEBHOOK_SECRET", "")
-
 # GitHub는 브랜치 필터링 없이 모든 push 이벤트를 이 엔드포인트로 보내므로,
 # main → 운영 / develop → 테스트로 라우팅하는 건 코드에서 처리한다.
 BRANCH_ENV_MAP = {"main": "prod", "develop": "test"}
@@ -48,253 +46,10 @@ ENV_CONFIGS: dict[str, dict[str, str]] = {
     },
 }
 
-RENDER_API_BASE = "https://api.render.com/v1"
-DEPLOY_POLL_INTERVAL = 10   # 초
-DEPLOY_POLL_TIMEOUT = 600   # 최대 10분
-GITHUB_API_HOST = "api.github.com"
-
 router = APIRouter(tags=["deploy"])
 
 
-# ──────────────────────────────────────────────
-# 유틸리티
-# ──────────────────────────────────────────────
-def _verify_signature(payload_bytes: bytes, signature: str, secret: str) -> bool:
-    expected = "sha256=" + hmac.new(
-        secret.encode(), payload_bytes, hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
-
-
-def _signature_required_and_valid(raw_body: bytes, signature: str) -> bool:
-    """GITHUB_WEBHOOK_SECRET이 설정된 경우, 서명이 없거나 틀리면 거부.
-
-    이전엔 `signature` 헤더 자체가 없으면 검증을 통째로 스킵해서
-    헤더를 안 보내는 것만으로 인증을 우회할 수 있었음.
-    """
-    if not GITHUB_WEBHOOK_SECRET:
-        return True
-    if not signature:
-        return False
-    return _verify_signature(raw_body, signature, GITHUB_WEBHOOK_SECRET)
-
-
-def _is_github_api_url(url: str) -> bool:
-    """commits_url은 PR 웹훅 페이로드에서 그대로 들어오는 값이라,
-    GitHub API 호스트가 아니면 거부해서 SSRF를 막음."""
-    parsed = urlparse(url)
-    return parsed.scheme == "https" and parsed.hostname == GITHUB_API_HOST
-
-
-def _short_sha(sha: str) -> str:
-    return sha[:7] if sha else "unknown"
-
-
-def _now_utc() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-
-def _safe_json(resp: httpx.Response) -> dict[str, Any]:
-    """Render 응답이 2xx여도 본문이 JSON이 아닐 수 있어(공백, 평문 등) 안전하게 파싱한다.
-    실패해도 예외를 던지지 않고 {}를 반환 — 트리거 자체는 raise_for_status()를
-    통과했으므로 이미 성공했다고 봐야 하고, 이후 로직은 deploy_id 없이 처리된다."""
-    if not resp.content:
-        return {}
-    try:
-        return resp.json()
-    except json.JSONDecodeError:
-        logger.warning(f"Render 응답이 JSON이 아님 (status={resp.status_code}): {resp.text[:200]!r}")
-        return {}
-
-
-def _handle_http_error(e: Exception) -> str:
-    if isinstance(e, httpx.HTTPStatusError):
-        code = e.response.status_code
-        msgs = {
-            401: "인증 실패 — API 키 확인",
-            403: "권한 없음 — 토큰 권한 범위 확인",
-            404: "리소스 없음 — 서비스 ID 또는 URL 확인",
-            429: "Rate limit 초과 — 잠시 후 재시도",
-        }
-        return f"Error {code}: {msgs.get(code, e.response.text[:200])}"
-    if isinstance(e, httpx.TimeoutException):
-        return "Error: 요청 타임아웃"
-    if isinstance(e, httpx.ConnectError):
-        return "Error: 연결 실패"
-    return f"Error: {type(e).__name__}: {e}"
-
-
-# ──────────────────────────────────────────────
-# Render 상태 폴링
-# ──────────────────────────────────────────────
-async def _poll_render_deploy(deploy_id: str, api_key: str, service_id: str) -> dict[str, Any]:
-    headers = {"Authorization": f"Bearer {api_key}"}
-    url = f"{RENDER_API_BASE}/services/{service_id}/deploys/{deploy_id}"
-    deadline = time.time() + DEPLOY_POLL_TIMEOUT
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        while time.time() < deadline:
-            await asyncio.sleep(DEPLOY_POLL_INTERVAL)
-            try:
-                resp = await client.get(url, headers=headers)
-                resp.raise_for_status()
-                status = _safe_json(resp).get("status", "")
-
-                if status == "live":
-                    svc_resp = await client.get(
-                        f"{RENDER_API_BASE}/services/{service_id}",
-                        headers=headers
-                    )
-                    svc_data = _safe_json(svc_resp) if svc_resp.status_code == 200 else {}
-                    deploy_url = svc_data.get("serviceDetails", {}).get("url", "")
-                    return {"status": "live", "deploy_url": deploy_url, "error": ""}
-
-                if status in ("build_failed", "update_failed", "canceled", "deactivated"):
-                    return {"status": "failed", "deploy_url": "", "error": f"Render 상태: {status}"}
-
-            except Exception as e:
-                return {"status": "failed", "deploy_url": "", "error": _handle_http_error(e)}
-
-    return {"status": "failed", "deploy_url": "", "error": "배포 타임아웃 (10분 초과)"}
-
-
-# ──────────────────────────────────────────────
-# Discord 알림
-# ──────────────────────────────────────────────
-def _build_discord_embed(
-    success: bool,
-    commit_sha: str,
-    commit_message: str,
-    author: str,
-    error_detail: str,
-    deploy_url: Optional[str],
-    env_label: str,
-) -> dict[str, Any]:
-    short = _short_sha(commit_sha)
-    now = _now_utc()
-
-    if success:
-        fields = [
-            {"name": "커밋", "value": f"`{short}` — {commit_message[:100]}", "inline": False},
-            {"name": "작성자", "value": author, "inline": True},
-            {"name": "시각", "value": now, "inline": True},
-        ]
-        if deploy_url:
-            fields.append({"name": "🔗 배포 URL", "value": deploy_url, "inline": False})
-        return {"embeds": [{
-            "title": f"✅ [{env_label}] 배포 성공",
-            "description": f"`{short}` 커밋이 {env_label} 서버에 성공적으로 배포됐어.",
-            "color": 0x57F287,
-            "fields": fields,
-            "footer": {"text": "Deep Me Deploy Bot"},
-        }]}
-    else:
-        return {"embeds": [{
-            "title": f"❌ [{env_label}] 배포 실패",
-            "description": f"`{short}` 커밋 {env_label} 서버 배포 중 오류 발생.",
-            "color": 0xED4245,
-            "fields": [
-                {"name": "커밋", "value": f"`{short}` — {commit_message[:100]}", "inline": False},
-                {"name": "작성자", "value": author, "inline": True},
-                {"name": "시각", "value": now, "inline": True},
-                {"name": "오류", "value": error_detail[:500] or "알 수 없는 오류", "inline": False},
-            ],
-            "footer": {"text": "Deep Me Deploy Bot"},
-        }]}
-
-
-async def _send_discord(embed_payload: dict[str, Any], webhook_url: str) -> None:
-    if not webhook_url:
-        logger.warning("DISCORD_WEBHOOK_URL 미설정 — 알림 건너뜀")
-        return
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                webhook_url,
-                json=embed_payload,
-                headers={"Content-Type": "application/json"}
-            )
-            resp.raise_for_status()
-            logger.info("Discord 알림 전송 완료")
-    except Exception as e:
-        logger.error(f"Discord 알림 실패: {_handle_http_error(e)}")
-
-
-async def _send_discord_file(
-    embed_payload: dict[str, Any],
-    filename: str,
-    file_content: str,
-    webhook_url: str,
-) -> None:
-    if not webhook_url:
-        logger.warning("DISCORD_WEBHOOK_URL 미설정 — 알림 건너뜀")
-        return
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                webhook_url,
-                data={"payload_json": json.dumps(embed_payload)},
-                files={"file": (filename, file_content.encode("utf-8"), "text/plain")},
-            )
-            resp.raise_for_status()
-            logger.info(f"Discord 파일 첨부 알림 전송 완료: {filename}")
-    except Exception as e:
-        logger.error(f"Discord 파일 첨부 알림 실패: {_handle_http_error(e)}")
-
-
-# ──────────────────────────────────────────────
-# PR 커밋 기록
-# ──────────────────────────────────────────────
-async def _fetch_pr_commits(commits_url: str) -> list[dict[str, Any]]:
-    if not _is_github_api_url(commits_url):
-        raise ValueError(f"commits_url이 GitHub API 호스트가 아님: {commits_url}")
-
-    commits: list[dict[str, Any]] = []
-    url: Optional[str] = commits_url + "?per_page=100"
-    headers = {"Accept": "application/vnd.github+json"}
-    async with httpx.AsyncClient(timeout=30) as client:
-        while url:
-            resp = await client.get(url, headers=headers)
-            resp.raise_for_status()
-            commits.extend(resp.json())
-            url = None
-            for part in resp.headers.get("Link", "").split(","):
-                if 'rel="next"' in part:
-                    next_url = part.split(";")[0].strip().strip("<>")
-                    if _is_github_api_url(next_url):
-                        url = next_url
-    return commits
-
-
-def _build_commit_history_txt(
-    pr_number: int,
-    pr_title: str,
-    head_branch: str,
-    base_branch: str,
-    merged_by: str,
-    commits: list[dict[str, Any]],
-) -> str:
-    lines = [
-        f"PR #{pr_number}: {head_branch} → {base_branch}",
-        f"제목: {pr_title}",
-        f"Merged by: {merged_by} | {_now_utc()}",
-        f"총 커밋 수: {len(commits)}",
-        "─" * 50,
-    ]
-    for i, c in enumerate(commits, 1):
-        sha = _short_sha(c.get("sha", ""))
-        msg = (c.get("commit", {}).get("message", "") or "").split("\n")[0]
-        author = (
-            (c.get("author") or {}).get("login")
-            or c.get("commit", {}).get("author", {}).get("name", "unknown")
-        )
-        date_raw = c.get("commit", {}).get("author", {}).get("date", "")
-        date = date_raw[:10] if date_raw else "unknown"
-        lines.append(f"[{i}] {sha} — {msg[:80]} ({author}, {date})")
-    return "\n".join(lines)
-
-
-async def _run_pr_pipeline(payload: dict[str, Any], signature: str, raw_body: bytes) -> None:
+async def _run_pr_pipeline(payload: dict, signature: str, raw_body: bytes) -> None:
     # 1. 서명 검증
     if not _signature_required_and_valid(raw_body, signature):
         logger.warning("GitHub 웹훅 서명 검증 실패 — 무시")
@@ -358,7 +113,7 @@ async def _run_pr_pipeline(payload: dict[str, Any], signature: str, raw_body: by
 # ──────────────────────────────────────────────
 # 파이프라인 (백그라운드 실행)
 # ──────────────────────────────────────────────
-async def _run_pipeline(payload: dict[str, Any], signature: str, raw_body: bytes) -> None:
+async def _run_pipeline(payload: dict, signature: str, raw_body: bytes) -> None:
     # 1. 서명 검증
     if not _signature_required_and_valid(raw_body, signature):
         logger.warning("GitHub 웹훅 서명 검증 실패 — 무시")

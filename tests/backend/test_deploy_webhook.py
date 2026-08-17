@@ -7,7 +7,9 @@ import hmac
 import httpx
 import pytest
 
-from app.backend.routers import deploy_webhook as dw
+from app.backend.services import deploy_notify_utils as notify_utils
+from app.backend.services import deploy_pr_history as pr_history
+from app.backend.services import deploy_security as security
 
 
 def _sign(body: bytes, secret: str) -> str:
@@ -16,21 +18,21 @@ def _sign(body: bytes, secret: str) -> str:
 
 class TestSignatureRequiredAndValid:
     def test_missing_signature_header_is_rejected_when_secret_configured(self, monkeypatch):
-        monkeypatch.setattr(dw, "GITHUB_WEBHOOK_SECRET", "my-secret")
-        assert dw._signature_required_and_valid(b"{}", "") is False
+        monkeypatch.setattr(security, "GITHUB_WEBHOOK_SECRET", "my-secret")
+        assert security._signature_required_and_valid(b"{}", "") is False
 
     def test_wrong_signature_is_rejected(self, monkeypatch):
-        monkeypatch.setattr(dw, "GITHUB_WEBHOOK_SECRET", "my-secret")
-        assert dw._signature_required_and_valid(b"{}", "sha256=deadbeef") is False
+        monkeypatch.setattr(security, "GITHUB_WEBHOOK_SECRET", "my-secret")
+        assert security._signature_required_and_valid(b"{}", "sha256=deadbeef") is False
 
     def test_correct_signature_is_accepted(self, monkeypatch):
-        monkeypatch.setattr(dw, "GITHUB_WEBHOOK_SECRET", "my-secret")
+        monkeypatch.setattr(security, "GITHUB_WEBHOOK_SECRET", "my-secret")
         body = b'{"ref": "refs/heads/main"}'
-        assert dw._signature_required_and_valid(body, _sign(body, "my-secret")) is True
+        assert security._signature_required_and_valid(body, _sign(body, "my-secret")) is True
 
     def test_no_secret_configured_skips_verification(self, monkeypatch):
-        monkeypatch.setattr(dw, "GITHUB_WEBHOOK_SECRET", "")
-        assert dw._signature_required_and_valid(b"{}", "") is True
+        monkeypatch.setattr(security, "GITHUB_WEBHOOK_SECRET", "")
+        assert security._signature_required_and_valid(b"{}", "") is True
 
 
 class TestIsGithubApiUrl:
@@ -42,7 +44,7 @@ class TestIsGithubApiUrl:
         ],
     )
     def test_accepts_github_api_host(self, url):
-        assert dw._is_github_api_url(url) is True
+        assert security._is_github_api_url(url) is True
 
     @pytest.mark.parametrize(
         "url",
@@ -54,7 +56,7 @@ class TestIsGithubApiUrl:
         ],
     )
     def test_rejects_non_github_api_host(self, url):
-        assert dw._is_github_api_url(url) is False
+        assert security._is_github_api_url(url) is False
 
 
 class TestSafeJson:
@@ -64,15 +66,15 @@ class TestSafeJson:
 
     def test_returns_empty_dict_for_empty_content(self):
         resp = httpx.Response(status_code=200, content=b"")
-        assert dw._safe_json(resp) == {}
+        assert notify_utils._safe_json(resp) == {}
 
     def test_parses_valid_json(self):
         resp = httpx.Response(status_code=200, content=b'{"deploy": {"id": "dep-123"}}')
-        assert dw._safe_json(resp) == {"deploy": {"id": "dep-123"}}
+        assert notify_utils._safe_json(resp) == {"deploy": {"id": "dep-123"}}
 
     def test_returns_empty_dict_instead_of_raising_for_non_json_content(self):
         resp = httpx.Response(status_code=200, content=b"\n")
-        assert dw._safe_json(resp) == {}
+        assert notify_utils._safe_json(resp) == {}
 
 
 class TestFetchPrCommitsRejectsForeignHost:
@@ -80,7 +82,7 @@ class TestFetchPrCommitsRejectsForeignHost:
         def _boom(*args, **kwargs):
             raise AssertionError("httpx should not be called for a disallowed host")
 
-        monkeypatch.setattr(dw.httpx, "AsyncClient", _boom)
+        monkeypatch.setattr(pr_history.httpx, "AsyncClient", _boom)
 
         with pytest.raises(ValueError):
-            asyncio.run(dw._fetch_pr_commits("https://attacker.example/steal"))
+            asyncio.run(pr_history._fetch_pr_commits("https://attacker.example/steal"))
