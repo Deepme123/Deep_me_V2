@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from app.backend.core.jwt import decode_access_token
+from app.core.jwt import decode_access_token
 from app.backend.services.close_policy import CANCEL_CLOSE_MESSAGE_TYPE
 from app.backend.services.ws_utils import ensure_uuid, safe_str
 

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session
 
 from app.db.session import get_session
-from app.backend.dependencies.auth import get_current_user
+from app.core.auth import get_current_user
 from app.desire.crud.need_card import (
     get_last_need_card_result_by_user,
     get_need_card_history_by_user,

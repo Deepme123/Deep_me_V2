@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 from app.analyze import models as m
 from app.analyze import schemas as sc
 from app.analyze.routers.cards import _get_session_or_404
-from app.backend.dependencies.auth import get_current_user
+from app.core.auth import get_current_user
 from app.db.session import get_session as get_db
 
 router = APIRouter(prefix="/api", tags=["satisfaction"])
