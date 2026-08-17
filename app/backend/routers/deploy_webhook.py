@@ -94,6 +94,19 @@ def _now_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
+def _safe_json(resp: httpx.Response) -> dict[str, Any]:
+    """Render 응답이 2xx여도 본문이 JSON이 아닐 수 있어(공백, 평문 등) 안전하게 파싱한다.
+    실패해도 예외를 던지지 않고 {}를 반환 — 트리거 자체는 raise_for_status()를
+    통과했으므로 이미 성공했다고 봐야 하고, 이후 로직은 deploy_id 없이 처리된다."""
+    if not resp.content:
+        return {}
+    try:
+        return resp.json()
+    except json.JSONDecodeError:
+        logger.warning(f"Render 응답이 JSON이 아님 (status={resp.status_code}): {resp.text[:200]!r}")
+        return {}
+
+
 def _handle_http_error(e: Exception) -> str:
     if isinstance(e, httpx.HTTPStatusError):
         code = e.response.status_code
@@ -125,14 +138,14 @@ async def _poll_render_deploy(deploy_id: str, api_key: str, service_id: str) -> 
             try:
                 resp = await client.get(url, headers=headers)
                 resp.raise_for_status()
-                status = resp.json().get("status", "")
+                status = _safe_json(resp).get("status", "")
 
                 if status == "live":
                     svc_resp = await client.get(
                         f"{RENDER_API_BASE}/services/{service_id}",
                         headers=headers
                     )
-                    svc_data = svc_resp.json() if svc_resp.status_code == 200 else {}
+                    svc_data = _safe_json(svc_resp) if svc_resp.status_code == 200 else {}
                     deploy_url = svc_data.get("serviceDetails", {}).get("url", "")
                     return {"status": "live", "deploy_url": deploy_url, "error": ""}
 
@@ -398,7 +411,7 @@ async def _run_pipeline(payload: dict[str, Any], signature: str, raw_body: bytes
             if cfg["deploy_hook"]:
                 resp = await client.post(cfg["deploy_hook"])
                 resp.raise_for_status()
-                data = resp.json() if resp.content else {}
+                data = _safe_json(resp)
                 deploy_id = data.get("deploy", {}).get("id", "") if isinstance(data, dict) else ""
             else:
                 resp = await client.post(
@@ -406,7 +419,7 @@ async def _run_pipeline(payload: dict[str, Any], signature: str, raw_body: bytes
                     headers={"Authorization": f"Bearer {cfg['api_key']}"},
                 )
                 resp.raise_for_status()
-                data = resp.json() if resp.content else {}
+                data = _safe_json(resp)
                 deploy_id = data.get("id", "") if isinstance(data, dict) else ""
             logger.info(f"Render 배포 트리거 완료 — deploy_id: {deploy_id}")
     except Exception as e:

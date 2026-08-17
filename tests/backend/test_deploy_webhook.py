@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import hmac
 
+import httpx
 import pytest
 
 from app.backend.routers import deploy_webhook as dw
@@ -54,6 +55,24 @@ class TestIsGithubApiUrl:
     )
     def test_rejects_non_github_api_host(self, url):
         assert dw._is_github_api_url(url) is False
+
+
+class TestSafeJson:
+    """Render가 2xx 응답인데도 body가 JSON이 아닌 경우(공백/평문 등)를 대비한
+    _safe_json이 예외 없이 {}를 반환하는지 확인 — 배포 트리거 자체는 성공했는데
+    파싱 실패로 실패 처리되던 버그의 회귀 테스트."""
+
+    def test_returns_empty_dict_for_empty_content(self):
+        resp = httpx.Response(status_code=200, content=b"")
+        assert dw._safe_json(resp) == {}
+
+    def test_parses_valid_json(self):
+        resp = httpx.Response(status_code=200, content=b'{"deploy": {"id": "dep-123"}}')
+        assert dw._safe_json(resp) == {"deploy": {"id": "dep-123"}}
+
+    def test_returns_empty_dict_instead_of_raising_for_non_json_content(self):
+        resp = httpx.Response(status_code=200, content=b"\n")
+        assert dw._safe_json(resp) == {}
 
 
 class TestFetchPrCommitsRejectsForeignHost:
