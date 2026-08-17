@@ -75,8 +75,9 @@ GOOGLE_CLIENT_SECRET=
 GOOGLE_REDIRECT_URI=http://localhost:8000/auth/callback   # GET /auth/callback 리디렉트 대상
 
 # 액세스 토큰을 쿠키로도 내려줄지 (웹 혼용 환경 전용, 기본 비활성)
+# 이 쿠키의 secure 플래그도 위 SECURE_COOKIE를 그대로 공유한다(2026-08-18
+# 리팩터링 전엔 COOKIE_SECURE라는 별도 변수가 있었고 기본값도 달랐음).
 AUTH_SET_COOKIE_ON_POST=false
-COOKIE_SECURE=false                           # AUTH_SET_COOKIE_ON_POST=true일 때만 의미 있음
 ```
 
 ### 2.4 WebSocket / 세션

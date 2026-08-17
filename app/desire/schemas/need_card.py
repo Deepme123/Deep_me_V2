@@ -11,7 +11,9 @@ class NeedCardRequest(BaseModel):
     """User conversation payload for need analysis."""
 
     session_id: UUID = Field(..., description="EmotionSession ID to link results to")
-    conversation_text: str = Field(..., description="Full conversation text to analyze")
+    conversation_text: str = Field(
+        ..., max_length=20000, description="Full conversation text to analyze"
+    )
 
 
 class NeedScore(BaseModel):

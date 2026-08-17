@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import List, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class EmotionSessionCreate(BaseModel):
@@ -32,7 +32,7 @@ class EmotionSessionRead(BaseModel):
 class EmotionStepCreate(BaseModel):
     session_id: UUID
     step_order: int
-    step_type: str
+    step_type: Literal["user", "assistant"]
     user_input: str
     gpt_response: str
     created_at: Optional[datetime] = None
@@ -57,8 +57,8 @@ class EmotionStepGenerateInput(BaseModel):
     user_id: Optional[UUID] = None         # ???╕ьЕШ???ДьИШ
     step_type: str
     user_input: str
-    temperature: Optional[float] = 0.72
-    max_completion_tokens: Optional[int] = 500
+    temperature: Optional[float] = Field(default=0.72, ge=0.0, le=2.0)
+    max_completion_tokens: Optional[int] = Field(default=500, ge=1, le=2000)
     insight_tag: Optional[str] = None
     system_prompt: Optional[str] = None
 
@@ -99,7 +99,7 @@ class CancelCloseRequest(BaseModel):
 
 class TaskRecommendRequest(BaseModel):
     type: Literal["task_recommend"] = "task_recommend"
-    max_items: Optional[int] = 5
+    max_items: Optional[int] = Field(default=5, ge=1, le=20)
 
 
 class EmotionOpenResponse(BaseModel):
