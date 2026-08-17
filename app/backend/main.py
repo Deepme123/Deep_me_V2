@@ -13,7 +13,7 @@ from app.backend.core.rate_limit import limiter as rate_limiter, RATELIMIT_ENABL
 from app.backend.core.deletion_scheduler import start_scheduler, shutdown_scheduler
 
 # 모델 모듈 임포트(테이블 등록 보장용)
-from app.backend.models import emotion as _m_emotion  # noqa: F401
+from app.core.models import emotion as _m_emotion  # noqa: F401
 from app.backend.models import task as _m_task  # noqa: F401
 from app.backend.models import refresh_token as _m_refresh  # noqa: F401
 

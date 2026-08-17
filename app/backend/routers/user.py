@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlmodel import Session, select
 
 from app.backend.core.tokens import clear_refresh_cookie
-from app.backend.dependencies.auth import get_current_user
+from app.core.auth import get_current_user
 from app.backend.models.refresh_token import RefreshToken
 from app.backend.models.user import User
 from app.backend.services.account_deletion import ACCOUNT_DELETION_GRACE_MINUTES

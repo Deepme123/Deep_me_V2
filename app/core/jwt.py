@@ -1,4 +1,3 @@
-# app/core/jwt.py
 from __future__ import annotations
 
 import os

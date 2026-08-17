@@ -27,7 +27,7 @@ user_model = importlib.import_module("app.backend.models.user")
 GreetingMessageStat = importlib.import_module(
     "app.backend.models.greeting_message"
 ).GreetingMessageStat
-EmotionStep = importlib.import_module("app.backend.models.emotion").EmotionStep
+EmotionStep = importlib.import_module("app.core.models.emotion").EmotionStep
 
 
 @pytest.fixture

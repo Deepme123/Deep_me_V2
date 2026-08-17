@@ -16,7 +16,7 @@ if str(ROOT_DIR) not in sys.path:
 
 cards = importlib.import_module("app.analyze.routers.cards")
 sc = importlib.import_module("app.analyze.schemas")
-emotion_models = importlib.import_module("app.backend.models.emotion")
+emotion_models = importlib.import_module("app.core.models.emotion")
 
 
 class FakeExecResult:

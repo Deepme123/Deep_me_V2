@@ -26,7 +26,7 @@ from app.backend.core.tokens import (
 )
 # 프로젝트에 사용자 인증 의존성이 있다면 사용 (예: get_current_user)
 try:
-    from app.backend.dependencies.auth import get_current_user  # 존재 시 사용
+    from app.core.auth import get_current_user  # 존재 시 사용
 except Exception:
     get_current_user = None  # 미존재 시 /logout에서 대체 처리
 

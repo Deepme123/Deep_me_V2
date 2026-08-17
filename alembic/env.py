@@ -22,7 +22,8 @@ if config.config_file_name is not None:
 config.set_main_option("sqlalchemy.url", get_database_url())
 
 # Import all models so SQLModel.metadata is populated.
-from app.backend.models import user, task, refresh_token, emotion, greeting_message  # noqa: F401,E402
+from app.backend.models import user, task, refresh_token, greeting_message  # noqa: F401,E402
+from app.core.models import emotion  # noqa: F401,E402
 from app.analyze import models as analyze_models  # noqa: F401,E402
 from app.desire import models as desire_models  # noqa: F401,E402
 

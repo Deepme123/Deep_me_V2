@@ -56,17 +56,13 @@ app/backend/
 ├── main.py                  # FastAPI 앱 생성, CORS, 레이트리미터, 라우터 등록
 ├── core/
 │   ├── tokens.py            # JWT 생성/검증, 리프레시 토큰 해시/쿠키
-│   ├── jwt.py                # decode_access_token 등 디코딩 헬퍼
 │   ├── prompt_loader.py      # 시스템/태스크 프롬프트 로드 (resources/*.txt)
 │   ├── greeting_loader.py    # 인사 문구 목록 로드 (resources/greeting_messages.txt)
 │   ├── logging_config.py     # 로깅 설정, Discord 에러 웹훅 전송
+│   ├── deletion_scheduler.py # 회원 탈퇴 유예 삭제 백그라운드 스케줄러(APScheduler)
 │   └── rate_limit.py         # slowapi 레이트 리미터
-├── dependencies/
-│   └── auth.py               # get_current_user 등 인증 의존성
 ├── models/
 │   ├── user.py                # User SQLModel
-│   ├── emotion.py             # EmotionSession, EmotionStep SQLModel
-│   ├── emotion_step.py        # EmotionStep 재노출 (models.emotion에서 import)
 │   ├── greeting_message.py    # GreetingMessageStat (인사 문구 선택 횟수 카운터)
 │   ├── task.py                 # Task SQLModel
 │   └── refresh_token.py       # RefreshToken SQLModel
@@ -94,7 +90,7 @@ app/backend/
 │   ├── convo_policy.py         # 대화 턴 수 제한, 액티비티 턴 판정
 │   ├── task_recommend.py       # 태스크 추천 컨텍스트 로드/저장
 │   ├── task_llm_service.py     # 태스크 추천 LLM 호출
-│   ├── task_generator.py       # 태스크 초안 생성 헬퍼
+│   ├── account_deletion.py     # 회원 탈퇴 유예 삭제 로직 (delete_account/sweep_due_account_deletions)
 │   └── web_test_user.py        # 토큰 없을 때 웹 테스트용 익명/폴백 유저 처리
 └── resources/
     ├── system_prompt.txt        # 감정 대화 시스템 프롬프트
@@ -154,11 +150,17 @@ app/desire/
 
 ### 2.4 Core (`app/core/`)
 
-세 서비스가 공유하는 LLM 추상화 레이어와 설정입니다.
+세 서비스(backend/analyze/desire)가 공유하는 계층입니다. LLM 추상화·설정 외에,
+인증 의존성과 감정 세션 도메인 모델도 이곳에 있습니다 — analyze/desire는
+`app.backend` 내부를 직접 import하지 않고 `app.core`만 참조합니다.
 
 ```
 app/core/
+├── auth.py                # get_current_user/get_current_user_optional (FastAPI Depends)
+├── jwt.py                  # 액세스 토큰 검증(decode_access_token)
 ├── llm_settings.py       # LLM_MODEL/TEMPERATURE/MAX_TOKENS/TIMEOUT 공용 로더 (레거시 이름 폴백 포함)
+├── models/
+│   └── emotion.py          # EmotionSession, EmotionStep — backend/analyze/desire 공유 도메인 모델
 └── llm/
     ├── factory.py         # LLM_PROVIDER 값에 따라 프로바이더 생성
     ├── base.py             # BaseLLMProvider 추상 클래스
@@ -167,6 +169,12 @@ app/core/
     ├── openai_provider.py     # OpenAI 구현체
     └── anthropic_provider.py  # Anthropic 구현체
 ```
+
+backend→analyze(`account_deletion.py`), backend→desire(`ws_post_actions.py`),
+desire→analyze(`reflection_writer.py`)의 역방향 참조는 여전히 존재하지만, 이는
+회원 탈퇴 시 연관 데이터 정리나 세션 종료 후 후처리 트리거처럼 상위 오케스트레이션
+성격의 호출이라 함수 내부 지연(lazy) import로 처리되어 있고 모듈 최상위 순환
+의존은 없습니다.
 
 ### 2.5 DB (`app/db/`)
 
