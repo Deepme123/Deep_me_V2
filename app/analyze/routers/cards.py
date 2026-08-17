@@ -13,7 +13,7 @@ from app.analyze.services import risk as risk_service
 from app.analyze.services.card_content import has_meaningful_content
 from app.analyze.services.llm_card import analyze_dialogue_to_card
 from app.core.auth import get_current_user
-from app.backend.models.emotion import EmotionStep
+from app.core.models.emotion import EmotionStep
 
 router = APIRouter(prefix="/api", tags=["cards"])
 

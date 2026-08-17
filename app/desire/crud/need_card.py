@@ -11,7 +11,7 @@ def get_last_need_card_result_by_user(
     session: Session,
     user_id: UUID,
 ) -> Optional[NeedCardResult]:
-    from app.backend.models.emotion import EmotionSession
+    from app.core.models.emotion import EmotionSession
 
     stmt = (
         select(NeedCardResult)
@@ -29,7 +29,7 @@ def get_need_card_result_by_session(
     user_id: UUID,
 ) -> Optional[NeedCardResult]:
     """특정 세션의 분석 결과를 가져온다. 그 세션이 user_id 소유가 아니면 None."""
-    from app.backend.models.emotion import EmotionSession
+    from app.core.models.emotion import EmotionSession
 
     stmt = (
         select(NeedCardResult)
@@ -47,7 +47,7 @@ def get_need_card_history_by_user(
     limit: int = 20,
     offset: int = 0,
 ) -> tuple[list[NeedCardResult], int]:
-    from app.backend.models.emotion import EmotionSession
+    from app.core.models.emotion import EmotionSession
     from sqlmodel import func
 
     base = (

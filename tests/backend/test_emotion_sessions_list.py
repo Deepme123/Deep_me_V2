@@ -20,7 +20,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 emotion_router = importlib.import_module("app.backend.routers.emotion")
-emotion_models = importlib.import_module("app.backend.models.emotion")
+emotion_models = importlib.import_module("app.core.models.emotion")
 user_model = importlib.import_module("app.backend.models.user")
 db_session_module = importlib.import_module("app.db.session")
 

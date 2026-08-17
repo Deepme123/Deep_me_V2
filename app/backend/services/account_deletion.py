@@ -6,11 +6,10 @@ from datetime import datetime, timedelta
 
 from sqlmodel import Session, select
 
-from app.analyze.models import AnalysisCard, SatisfactionRating
-from app.backend.models.emotion import EmotionSession
 from app.backend.models.refresh_token import RefreshToken
 from app.backend.models.task import Task
 from app.backend.models.user import User
+from app.core.models.emotion import EmotionSession
 
 log = logging.getLogger(__name__)
 
@@ -25,6 +24,10 @@ def delete_account(db: Session, user: User) -> None:
     NULL 처리해 레코드를 보존한다. EmotionStep/NeedCardResult/NeedCardScore/
     UserNeedSelection은 DB의 ON DELETE CASCADE로 자동 정리된다.
     """
+    # backend가 analyze의 삭제 대상 모델을 알아야 하는 지점이라 지연 import로
+    # 처리 — ws_post_actions.py/reflection_writer.py의 기존 관례와 동일.
+    from app.analyze.models import AnalysisCard, SatisfactionRating
+
     session_ids = db.exec(
         select(EmotionSession.session_id).where(EmotionSession.user_id == user.user_id)
     ).all()

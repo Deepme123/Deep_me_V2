@@ -69,7 +69,7 @@ async def analyze_need_cards(
     소유자의 과거 욕구 선택 이력을 조회해 프롬프트에 섞어 넣기 때문에
     타인의 이력이 응답에 간접적으로 반영될 수 있다.
     """
-    from app.backend.models.emotion import EmotionSession
+    from app.core.models.emotion import EmotionSession
 
     session = db.get(EmotionSession, payload.session_id)
     if session is None or session.user_id != UUID(user_id):
