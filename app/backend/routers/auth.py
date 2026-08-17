@@ -17,6 +17,7 @@ from app.backend.models.user import User
 from app.backend.models.refresh_token import RefreshToken
 from app.backend.services.auth_service import refresh_tokens
 from app.backend.core.tokens import (
+    SECURE_COOKIE,
     create_access_token,
     create_refresh_token,
     new_refresh_jti,
@@ -42,7 +43,9 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "720"
 
 # AT를 쿠키로도 내려줄지(웹 혼용 환경에서만 권장; 기본 False)
 AUTH_SET_COOKIE_ON_POST = os.getenv("AUTH_SET_COOKIE_ON_POST", "false").lower() == "true"
-COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"  # 배포시 true 권장
+# 쿠키 secure 플래그는 리프레시 토큰 쿠키와 동일한 SECURE_COOKIE(app.backend.core.tokens)를
+# 공유한다 — 예전엔 COOKIE_SECURE(기본 false)/SECURE_COOKIE(기본 true)가 따로 있어
+# 배포 시 하나만 설정하면 나머지 쿠키가 의도와 다르게 나갈 위험이 있었다.
 COOKIE_MAX_AGE = 60 * ACCESS_TOKEN_EXPIRE_MINUTES
 
 # 구글 엔드포인트
@@ -95,7 +98,7 @@ def _set_access_cookie_if_enabled(response: Response, jwt_token: str) -> None:
             key="access_token",
             value=jwt_token,
             httponly=True,
-            secure=COOKIE_SECURE,
+            secure=SECURE_COOKIE,
             max_age=COOKIE_MAX_AGE,
             path="/",
         )
@@ -350,7 +353,7 @@ async def refresh_token_endpoint(
         response=response,
         db=db,
         set_access_cookie=AUTH_SET_COOKIE_ON_POST,
-        access_cookie_secure=COOKIE_SECURE,
+        access_cookie_secure=SECURE_COOKIE,
         access_cookie_max_age=COOKIE_MAX_AGE,
     )
     return RefreshResponse(**data)
