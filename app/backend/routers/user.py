@@ -32,13 +32,17 @@ def delete_me(
     user_id: str = Depends(get_current_user),
     db: Session = Depends(get_session),
 ):
-    """회원 탈퇴를 예약한다. 즉시 삭제하지 않고 유예 기간(기본 1시간) 뒤
+    """회원 탈퇴를 예약한다. 즉시 삭제하지 않고 유예 기간(기본 5일) 뒤
     백그라운드 스케줄러(`app/backend/core/deletion_scheduler.py`)가 실제
     삭제(`app/backend/services/account_deletion.py`)를 수행한다.
 
     호출 즉시 리프레시 토큰을 모두 무효화하고 쿠키를 지워 재로그인을 막는다.
     단, 이미 발급된 액세스 토큰은 만료 전까지 계속 유효할 수 있다 — 즉시
     세션 무효화가 필요하면 추후 별도 처리가 필요하다.
+
+    또한 email을 반납 처리하므로, 유예 기간 중 같은 구글 계정으로 재로그인해도
+    기존 계정으로는 접근할 수 없고 새 계정으로 생성된다(탈퇴 취소 기능은 의도적으로
+    미구현).
     """
     user = db.get(User, UUID(user_id))
     if not user:
@@ -48,6 +52,11 @@ def delete_me(
         user.deletion_requested_at = datetime.utcnow()
         if body is not None:
             user.deletion_reason = body.reason_code
+        # email을 반납 처리해서, 유예 기간 중 같은 구글 계정으로 재로그인해도
+        # _get_or_create_user(app/backend/routers/auth.py)가 이 탈퇴 예약된
+        # row를 찾지 못하고 새 User를 생성하도록 한다 (unique 제약 때문에
+        # 원래 email을 그대로 둔 채로는 새 계정을 만들 수 없음).
+        user.email = f"deleted+{user.user_id}@deepme.invalid"
         db.add(user)
 
     for row in db.exec(

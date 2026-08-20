@@ -13,8 +13,8 @@ from app.core.models.emotion import EmotionSession
 
 log = logging.getLogger(__name__)
 
-# 탈퇴 요청 후 실제 삭제까지 대기하는 유예 기간(분).
-ACCOUNT_DELETION_GRACE_MINUTES = int(os.getenv("ACCOUNT_DELETION_GRACE_MINUTES", "60"))
+# 탈퇴 요청 후 실제 삭제까지 대기하는 유예 기간(분). 기본 5일(60*24*5=7200분).
+ACCOUNT_DELETION_GRACE_MINUTES = int(os.getenv("ACCOUNT_DELETION_GRACE_MINUTES", "7200"))
 
 
 def delete_account(db: Session, user: User) -> None:

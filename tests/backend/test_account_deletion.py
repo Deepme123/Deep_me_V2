@@ -20,6 +20,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 user_router_module = importlib.import_module("app.backend.routers.user")
+auth_router_module = importlib.import_module("app.backend.routers.auth")
 user_model = importlib.import_module("app.backend.models.user")
 emotion_models = importlib.import_module("app.core.models.emotion")
 task_model = importlib.import_module("app.backend.models.task")
@@ -99,6 +100,11 @@ class TestDeleteAccount:
             assert preserved is not None
             assert preserved.rating == 5
             assert preserved.session_id is None
+
+
+class TestGracePeriodDefault:
+    def test_default_grace_period_is_five_days(self):
+        assert account_deletion.ACCOUNT_DELETION_GRACE_MINUTES == 60 * 24 * 5
 
 
 class TestSweepDueAccountDeletions:
@@ -201,6 +207,71 @@ class TestDeleteMeEndpoint:
         response = client.delete("/me")
 
         assert response.status_code == 404
+
+    def test_invalidates_email_so_relogin_creates_new_user(self, engine):
+        original_email = f"{uuid4()}@example.com"
+        with Session(engine) as db:
+            user = user_model.User(name="이메일반납", email=original_email)
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            user_id = user.user_id
+
+        client = _build_client(engine, user_id)
+        client.delete("/me")
+
+        with Session(engine) as db:
+            reloaded = db.get(user_model.User, user_id)
+            assert reloaded.email != original_email
+            assert reloaded.email == f"deleted+{user_id}@deepme.invalid"
+
+            # 원래 email이 반납됐으니 같은 email로 새 User를 만들 수 있어야 한다
+            # (unique 제약에 안 걸림 = auth.py의 _get_or_create_user가 재로그인 시
+            # 새 계정을 생성할 수 있다는 뜻).
+            new_user = user_model.User(name="재가입", email=original_email)
+            db.add(new_user)
+            db.commit()
+
+    def test_relogin_with_same_google_email_creates_new_user_via_auth_flow(self, engine):
+        """탈퇴 예약 후 같은 구글 계정(email)으로 재로그인하면
+        auth.py의 _get_or_create_user가 새 User를 만드는지 확인하는 회귀 테스트."""
+        original_email = f"{uuid4()}@example.com"
+        with Session(engine) as db:
+            user = user_model.User(name="탈퇴후재로그인", email=original_email)
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            user_id = user.user_id
+
+        client = _build_client(engine, user_id)
+        client.delete("/me")
+
+        with Session(engine) as db:
+            new_user = auth_router_module._get_or_create_user(
+                db, email=original_email, name="새로가입"
+            )
+            assert new_user.user_id != user_id
+            old_user = db.get(user_model.User, user_id)
+            assert old_user.deletion_requested_at is not None
+
+    def test_repeat_call_does_not_change_email_again(self, engine):
+        with Session(engine) as db:
+            user = user_model.User(name="이메일유지", email=f"{uuid4()}@example.com")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            user_id = user.user_id
+
+        client = _build_client(engine, user_id)
+        client.delete("/me")
+
+        with Session(engine) as db:
+            email_after_first_call = db.get(user_model.User, user_id).email
+
+        client.delete("/me")
+
+        with Session(engine) as db:
+            assert db.get(user_model.User, user_id).email == email_after_first_call
 
     def test_stores_reason_code(self, engine):
         with Session(engine) as db:
