@@ -201,3 +201,54 @@ class TestDeleteMeEndpoint:
         response = client.delete("/me")
 
         assert response.status_code == 404
+
+    def test_stores_reason_code(self, engine):
+        with Session(engine) as db:
+            user = user_model.User(name="사유테스트", email=f"{uuid4()}@example.com")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            user_id = user.user_id
+
+        client = _build_client(engine, user_id)
+
+        response = client.request("DELETE", "/me", json={"reason_code": 3})
+
+        assert response.status_code == 200
+        with Session(engine) as db:
+            reloaded = db.get(user_model.User, user_id)
+            assert reloaded.deletion_reason == 3
+
+    def test_reason_code_out_of_range_is_rejected(self, engine):
+        with Session(engine) as db:
+            user = user_model.User(name="범위밖사유", email=f"{uuid4()}@example.com")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            user_id = user.user_id
+
+        client = _build_client(engine, user_id)
+
+        response = client.request("DELETE", "/me", json={"reason_code": 6})
+
+        assert response.status_code == 422
+        with Session(engine) as db:
+            reloaded = db.get(user_model.User, user_id)
+            assert reloaded.deletion_requested_at is None
+
+    def test_repeat_call_does_not_overwrite_existing_reason(self, engine):
+        with Session(engine) as db:
+            user = user_model.User(name="사유유지", email=f"{uuid4()}@example.com")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            user_id = user.user_id
+
+        client = _build_client(engine, user_id)
+
+        client.request("DELETE", "/me", json={"reason_code": 2})
+        client.request("DELETE", "/me", json={"reason_code": 5})
+
+        with Session(engine) as db:
+            reloaded = db.get(user_model.User, user_id)
+            assert reloaded.deletion_reason == 2

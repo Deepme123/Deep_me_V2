@@ -88,7 +88,7 @@ def test_head_migration_includes_analysiscard():
             "user",
             "user_need_selection",
         ]
-        assert _alembic_version(tmp_db) == "0016_account_deletion"
+        assert _alembic_version(tmp_db) == "0017_deletion_reason"
     finally:
         if tmp_db.exists():
             tmp_db.unlink()

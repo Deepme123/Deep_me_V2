@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -8,6 +9,7 @@ from app.backend.core.tokens import clear_refresh_cookie
 from app.core.auth import get_current_user
 from app.backend.models.refresh_token import RefreshToken
 from app.backend.models.user import User
+from app.backend.schemas.user import DeleteMeRequest
 from app.backend.services.account_deletion import ACCOUNT_DELETION_GRACE_MINUTES
 from app.db.session import get_session
 
@@ -26,6 +28,7 @@ def get_me_bearer(user_id: str = Depends(get_current_user)):
 @user_router.delete("/me")
 def delete_me(
     response: Response,
+    body: Optional[DeleteMeRequest] = None,
     user_id: str = Depends(get_current_user),
     db: Session = Depends(get_session),
 ):
@@ -43,6 +46,8 @@ def delete_me(
 
     if user.deletion_requested_at is None:
         user.deletion_requested_at = datetime.utcnow()
+        if body is not None:
+            user.deletion_reason = body.reason_code
         db.add(user)
 
     for row in db.exec(
