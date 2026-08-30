@@ -109,15 +109,15 @@ async def get_need_card_history(
     return NeedCardHistoryResponse(items=items, total=total)
 
 
-@router.get("/last-selection", response_model=NeedSelectionResponse)
+@router.get("/last-selection", response_model=Optional[NeedSelectionResponse])
 async def get_last_selection(
     db: Session = Depends(get_session),
     user_id: str = Depends(get_current_user),
-) -> NeedSelectionResponse:
-    """로그인 유저가 마지막으로 선택한 욕구 하나를 반환합니다."""
+) -> Optional[NeedSelectionResponse]:
+    """로그인 유저가 마지막으로 선택한 욕구 하나를 반환합니다. 선택 이력이 없으면 null을 반환합니다."""
     selection = get_last_user_need_selection(db, UUID(user_id))
     if selection is None:
-        raise HTTPException(status_code=404, detail="선택한 욕구가 없습니다.")
+        return None
 
     code = selection.selected_codes[0]
     result = _resolve_need_card_result(db, UUID(user_id), selection.session_id)
