@@ -88,7 +88,7 @@ def test_head_migration_includes_analysiscard():
             "user",
             "user_need_selection",
         ]
-        assert _alembic_version(tmp_db) == "0018_deletion_reason_multi"
+        assert _alembic_version(tmp_db) == "0019_deletion_requested_at_index"
     finally:
         if tmp_db.exists():
             tmp_db.unlink()
