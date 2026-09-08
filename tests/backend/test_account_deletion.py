@@ -91,6 +91,7 @@ class TestDeleteAccount:
         with Session(engine) as db:
             user, session, rating, step = _make_user_with_data(db)
             user_id = user.user_id
+            session_id = session.session_id
             rating_id = rating.rating_id
             step_id = step.step_id
 
@@ -98,11 +99,11 @@ class TestDeleteAccount:
 
         with Session(engine) as db:
             assert db.get(user_model.User, user_id) is None
-            assert db.get(emotion_models.EmotionSession, session.session_id) is None
+            assert db.get(emotion_models.EmotionSession, session_id) is None
             assert db.get(emotion_models.EmotionStep, step_id) is None
             assert db.exec(
                 select(analyze_models.AnalysisCard).where(
-                    analyze_models.AnalysisCard.session_id == session.session_id
+                    analyze_models.AnalysisCard.session_id == session_id
                 )
             ).first() is None
             assert db.exec(

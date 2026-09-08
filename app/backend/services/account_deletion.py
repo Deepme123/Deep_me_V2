@@ -4,6 +4,7 @@ import logging
 import os
 from datetime import datetime, timedelta
 
+from sqlalchemy import delete as sa_delete, update as sa_update
 from sqlmodel import Session, select
 
 from app.backend.models.refresh_token import RefreshToken
@@ -28,38 +29,35 @@ def delete_account(db: Session, user: User) -> None:
     # 처리 — ws_post_actions.py/reflection_writer.py의 기존 관례와 동일.
     from app.analyze.models import AnalysisCard, SatisfactionRating
 
-    session_ids = db.exec(
-        select(EmotionSession.session_id).where(EmotionSession.user_id == user.user_id)
-    ).all()
+    user_session_ids = select(EmotionSession.session_id).where(
+        EmotionSession.user_id == user.user_id
+    )
 
-    if session_ids:
-        for card in db.exec(
-            select(AnalysisCard).where(AnalysisCard.session_id.in_(session_ids))
-        ):
-            db.delete(card)
-
-        for rating in db.exec(
-            select(SatisfactionRating).where(SatisfactionRating.session_id.in_(session_ids))
-        ):
-            rating.session_id = None
-            db.add(rating)
-
-    for task in db.exec(select(Task).where(Task.user_id == user.user_id)):
-        db.delete(task)
-
-    for token in db.exec(select(RefreshToken).where(RefreshToken.user_id == user.user_id)):
-        db.delete(token)
-
-    for session in db.exec(
-        select(EmotionSession).where(EmotionSession.user_id == user.user_id)
-    ):
-        db.delete(session)
-
-    # User를 참조하는 자식 row(EmotionSession/Task/RefreshToken)의 FK에는
-    # ON DELETE CASCADE가 없고 User↔자식 relationship도 없어서, SQLAlchemy가
-    # DELETE 순서를 보장해주지 않는다. flush로 자식 삭제를 먼저 내보내
-    # "DELETE FROM user"가 앞서 나가 FK 위반이 나는 것을 막는다.
-    db.flush()
+    # 아래 문장들은 실행 즉시 DB로 나가므로, 자식 row가 모두 정리된 뒤에야
+    # commit 시점의 "DELETE FROM user"가 나간다. 순서를 바꾸면 User를 참조하는
+    # EmotionSession/Task/RefreshToken의 FK(ON DELETE CASCADE 없음) 위반이 난다.
+    db.exec(
+        sa_delete(AnalysisCard).where(AnalysisCard.session_id.in_(user_session_ids)),
+        execution_options={"synchronize_session": False},
+    )
+    db.exec(
+        sa_update(SatisfactionRating)
+        .where(SatisfactionRating.session_id.in_(user_session_ids))
+        .values(session_id=None),
+        execution_options={"synchronize_session": False},
+    )
+    db.exec(
+        sa_delete(Task).where(Task.user_id == user.user_id),
+        execution_options={"synchronize_session": False},
+    )
+    db.exec(
+        sa_delete(RefreshToken).where(RefreshToken.user_id == user.user_id),
+        execution_options={"synchronize_session": False},
+    )
+    db.exec(
+        sa_delete(EmotionSession).where(EmotionSession.user_id == user.user_id),
+        execution_options={"synchronize_session": False},
+    )
 
     db.delete(user)
     db.commit()
