@@ -115,6 +115,16 @@ async def finalize_close(
     await send_immediate(EmotionCloseResponse(type="close_ok").model_dump())
 
     if trigger_analysis_card and session_id is not None:
+        # 분석카드와 욕구카드는 서로 독립적인 LLM 호출이라 동시에 돌린다. 다만 분석카드
+        # 결과는 완료 즉시 클라이언트로 보내야 해서, gather 대신 욕구카드를 태스크로
+        # 띄워두고 분석카드를 먼저 기다린다.
+        need_card_task = asyncio.create_task(
+            asyncio.wait_for(
+                generate_need_card_async(session_id),
+                timeout=analysis_card_timeout,
+            )
+        )
+
         try:
             card = await asyncio.wait_for(
                 generate_analysis_card(session_id),
@@ -143,10 +153,7 @@ async def finalize_close(
             )
 
         try:
-            await asyncio.wait_for(
-                generate_need_card_async(session_id),
-                timeout=analysis_card_timeout,
-            )
+            await need_card_task
         except Exception as exc:
             logger.exception(
                 "need card generation failed after close | session_id=%s | %s",
