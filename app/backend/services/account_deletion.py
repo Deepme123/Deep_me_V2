@@ -55,6 +55,12 @@ def delete_account(db: Session, user: User) -> None:
     ):
         db.delete(session)
 
+    # User를 참조하는 자식 row(EmotionSession/Task/RefreshToken)의 FK에는
+    # ON DELETE CASCADE가 없고 User↔자식 relationship도 없어서, SQLAlchemy가
+    # DELETE 순서를 보장해주지 않는다. flush로 자식 삭제를 먼저 내보내
+    # "DELETE FROM user"가 앞서 나가 FK 위반이 나는 것을 막는다.
+    db.flush()
+
     db.delete(user)
     db.commit()
 

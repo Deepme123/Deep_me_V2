@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -37,6 +38,13 @@ def engine():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+    # SQLite는 FK 제약을 기본으로 강제하지 않아서, 켜두지 않으면 운영
+    # PostgreSQL에서만 터지는 FK/CASCADE 문제를 테스트가 놓친다.
+    @event.listens_for(engine, "connect")
+    def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record):
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+
     SQLModel.metadata.create_all(engine)
     return engine
 
@@ -52,6 +60,13 @@ def _make_user_with_data(db: Session):
     db.commit()
     db.refresh(session)
 
+    step = emotion_models.EmotionStep(
+        session_id=session.session_id,
+        step_order=1,
+        step_type="normal",
+        user_input="비오네",
+        gpt_response="그랬구나",
+    )
     card = analyze_models.AnalysisCard(session_id=session.session_id, summary="요약")
     rating = analyze_models.SatisfactionRating(session_id=session.session_id, rating=5)
     task = task_model.Task(user_id=user.user_id, title="할 일")
@@ -61,27 +76,30 @@ def _make_user_with_data(db: Session):
         token_hash="hash",
         expires_at=datetime.utcnow() + timedelta(days=1),
     )
+    db.add(step)
     db.add(card)
     db.add(rating)
     db.add(task)
     db.add(token)
     db.commit()
 
-    return user, session, rating
+    return user, session, rating, step
 
 
 class TestDeleteAccount:
     def test_removes_user_data_but_preserves_satisfaction_rating(self, engine):
         with Session(engine) as db:
-            user, session, rating = _make_user_with_data(db)
+            user, session, rating, step = _make_user_with_data(db)
             user_id = user.user_id
             rating_id = rating.rating_id
+            step_id = step.step_id
 
             account_deletion.delete_account(db, user)
 
         with Session(engine) as db:
             assert db.get(user_model.User, user_id) is None
             assert db.get(emotion_models.EmotionSession, session.session_id) is None
+            assert db.get(emotion_models.EmotionStep, step_id) is None
             assert db.exec(
                 select(analyze_models.AnalysisCard).where(
                     analyze_models.AnalysisCard.session_id == session.session_id
@@ -135,6 +153,31 @@ class TestSweepDueAccountDeletions:
             assert db.get(user_model.User, due_id) is None
             assert db.get(user_model.User, not_due_id) is not None
             assert db.get(user_model.User, untouched_id) is not None
+
+    def test_deletes_user_with_emotion_steps(self, engine, monkeypatch):
+        """대화 스텝이 있는 유저도 sweep이 정상 삭제하는지 확인하는 회귀 테스트.
+
+        EmotionSession.steps에 passive_deletes가 없던 시절 ORM이 DB의
+        ON DELETE CASCADE 대신 emotionstep.session_id를 NULL로 UPDATE하려
+        들어서, 운영에서 sweep이 NotNullViolation으로 5분마다 실패했다.
+        """
+        monkeypatch.setattr(account_deletion, "ACCOUNT_DELETION_GRACE_MINUTES", 60)
+
+        with Session(engine) as db:
+            user, session, _rating, step = _make_user_with_data(db)
+            user.deletion_requested_at = datetime.utcnow() - timedelta(minutes=61)
+            db.add(user)
+            db.commit()
+            user_id, session_id, step_id = user.user_id, session.session_id, step.step_id
+
+        with Session(engine) as db:
+            deleted_count = account_deletion.sweep_due_account_deletions(db)
+
+        assert deleted_count == 1
+        with Session(engine) as db:
+            assert db.get(user_model.User, user_id) is None
+            assert db.get(emotion_models.EmotionSession, session_id) is None
+            assert db.get(emotion_models.EmotionStep, step_id) is None
 
 
 def _build_client(engine, user_id):
