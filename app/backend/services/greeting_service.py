@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import random
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.backend.core.greeting_loader import get_greeting_messages
 from app.backend.models.greeting_message import GreetingMessageStat
@@ -13,10 +13,14 @@ def _pick_index(db: Session, candidate_indices: list[int]) -> int:
         return candidate_indices[0]
 
     i, j = random.sample(candidate_indices, 2)
-    stat_i = db.get(GreetingMessageStat, i)
-    stat_j = db.get(GreetingMessageStat, j)
-    count_i = stat_i.selected_count if stat_i else 0
-    count_j = stat_j.selected_count if stat_j else 0
+    counts = {
+        stat.message_index: stat.selected_count
+        for stat in db.exec(
+            select(GreetingMessageStat).where(GreetingMessageStat.message_index.in_([i, j]))
+        )
+    }
+    count_i = counts.get(i, 0)
+    count_j = counts.get(j, 0)
 
     if count_i == count_j:
         return random.choice([i, j])
