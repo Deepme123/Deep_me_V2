@@ -273,7 +273,7 @@ class TestDeleteMeEndpoint:
         with Session(engine) as db:
             assert db.get(user_model.User, user_id).email == email_after_first_call
 
-    def test_stores_reason_code(self, engine):
+    def test_stores_reason_codes(self, engine):
         with Session(engine) as db:
             user = user_model.User(name="사유테스트", email=f"{uuid4()}@example.com")
             db.add(user)
@@ -283,12 +283,12 @@ class TestDeleteMeEndpoint:
 
         client = _build_client(engine, user_id)
 
-        response = client.request("DELETE", "/me", json={"reason_code": 3})
+        response = client.request("DELETE", "/me", json={"reason_codes": [3, 1]})
 
         assert response.status_code == 200
         with Session(engine) as db:
             reloaded = db.get(user_model.User, user_id)
-            assert reloaded.deletion_reason == 3
+            assert reloaded.deletion_reasons == [1, 3]
 
     def test_reason_code_out_of_range_is_rejected(self, engine):
         with Session(engine) as db:
@@ -300,7 +300,7 @@ class TestDeleteMeEndpoint:
 
         client = _build_client(engine, user_id)
 
-        response = client.request("DELETE", "/me", json={"reason_code": 6})
+        response = client.request("DELETE", "/me", json={"reason_codes": [6]})
 
         assert response.status_code == 422
         with Session(engine) as db:
@@ -317,9 +317,9 @@ class TestDeleteMeEndpoint:
 
         client = _build_client(engine, user_id)
 
-        client.request("DELETE", "/me", json={"reason_code": 2})
-        client.request("DELETE", "/me", json={"reason_code": 5})
+        client.request("DELETE", "/me", json={"reason_codes": [2]})
+        client.request("DELETE", "/me", json={"reason_codes": [5]})
 
         with Session(engine) as db:
             reloaded = db.get(user_model.User, user_id)
-            assert reloaded.deletion_reason == 2
+            assert reloaded.deletion_reasons == [2]

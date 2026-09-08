@@ -51,7 +51,7 @@ def delete_me(
     if user.deletion_requested_at is None:
         user.deletion_requested_at = datetime.utcnow()
         if body is not None:
-            user.deletion_reason = body.reason_code
+            user.deletion_reasons = body.reason_codes
         # email을 반납 처리해서, 유예 기간 중 같은 구글 계정으로 재로그인해도
         # _get_or_create_user(app/backend/routers/auth.py)가 이 탈퇴 예약된
         # row를 찾지 못하고 새 User를 생성하도록 한다 (unique 제약 때문에
