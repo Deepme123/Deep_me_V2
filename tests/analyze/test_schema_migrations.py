@@ -77,6 +77,7 @@ def test_head_migration_includes_analysiscard():
         assert _table_names(tmp_db) == [
             "alembic_version",
             "analysiscard",
+            "deletionfeedback",
             "emotionsession",
             "emotionstep",
             "greetingmessagestat",
@@ -88,7 +89,7 @@ def test_head_migration_includes_analysiscard():
             "user",
             "user_need_selection",
         ]
-        assert _alembic_version(tmp_db) == "0018_deletion_reason_multi"
+        assert _alembic_version(tmp_db) == "0019_deletion_feedback"
     finally:
         if tmp_db.exists():
             tmp_db.unlink()
