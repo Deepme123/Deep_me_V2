@@ -18,9 +18,9 @@ from app.backend.models import task as _m_task  # noqa: F401
 from app.backend.models import refresh_token as _m_refresh  # noqa: F401
 
 # 라우터
-from app.backend.routers import emotion, auth, user, task
+from app.backend.routers import emotion, auth, user, task, deletion_feedback
 from app.backend.routers.emotion_ws import ws_router as emotion_ws_router
-from app.backend.routers import health_llm 
+from app.backend.routers import health_llm
 from app.backend.routers import deploy_webhook
 
 setup_logging()
@@ -59,6 +59,7 @@ app.include_router(emotion_ws_router)
 app.include_router(auth.auth_router)
 app.include_router(user.user_router)
 app.include_router(task.router)
+app.include_router(deletion_feedback.router)
 app.include_router(deploy_webhook.router)
 
 
