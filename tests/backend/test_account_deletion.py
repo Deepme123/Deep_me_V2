@@ -23,6 +23,7 @@ if str(ROOT_DIR) not in sys.path:
 user_router_module = importlib.import_module("app.backend.routers.user")
 auth_router_module = importlib.import_module("app.backend.routers.auth")
 user_model = importlib.import_module("app.backend.models.user")
+deletion_feedback_model = importlib.import_module("app.backend.models.deletion_feedback")
 emotion_models = importlib.import_module("app.core.models.emotion")
 task_model = importlib.import_module("app.backend.models.task")
 refresh_token_model = importlib.import_module("app.backend.models.refresh_token")
@@ -213,7 +214,7 @@ class TestDeleteMeEndpoint:
 
         client = _build_client(engine, user_id)
 
-        response = client.delete("/me")
+        response = client.request("DELETE", "/me", json={"reason_codes": [1]})
 
         assert response.status_code == 200
         assert "scheduled_deletion_at" in response.json()
@@ -234,10 +235,10 @@ class TestDeleteMeEndpoint:
 
         client = _build_client(engine, user_id)
 
-        first = client.delete("/me")
+        first = client.request("DELETE", "/me", json={"reason_codes": [1]})
         first_scheduled_at = first.json()["scheduled_deletion_at"]
 
-        second = client.delete("/me")
+        second = client.request("DELETE", "/me", json={"reason_codes": [1]})
         second_scheduled_at = second.json()["scheduled_deletion_at"]
 
         assert first.status_code == 200
@@ -247,7 +248,7 @@ class TestDeleteMeEndpoint:
     def test_returns_404_for_missing_user(self, engine):
         client = _build_client(engine, uuid4())
 
-        response = client.delete("/me")
+        response = client.request("DELETE", "/me", json={"reason_codes": [1]})
 
         assert response.status_code == 404
 
@@ -261,7 +262,7 @@ class TestDeleteMeEndpoint:
             user_id = user.user_id
 
         client = _build_client(engine, user_id)
-        client.delete("/me")
+        client.request("DELETE", "/me", json={"reason_codes": [1]})
 
         with Session(engine) as db:
             reloaded = db.get(user_model.User, user_id)
@@ -287,7 +288,7 @@ class TestDeleteMeEndpoint:
             user_id = user.user_id
 
         client = _build_client(engine, user_id)
-        client.delete("/me")
+        client.request("DELETE", "/me", json={"reason_codes": [1]})
 
         with Session(engine) as db:
             new_user = auth_router_module._get_or_create_user(
@@ -306,15 +307,32 @@ class TestDeleteMeEndpoint:
             user_id = user.user_id
 
         client = _build_client(engine, user_id)
-        client.delete("/me")
+        client.request("DELETE", "/me", json={"reason_codes": [1]})
 
         with Session(engine) as db:
             email_after_first_call = db.get(user_model.User, user_id).email
 
-        client.delete("/me")
+        client.request("DELETE", "/me", json={"reason_codes": [1]})
 
         with Session(engine) as db:
             assert db.get(user_model.User, user_id).email == email_after_first_call
+
+    def test_missing_reason_codes_is_rejected(self, engine):
+        with Session(engine) as db:
+            user = user_model.User(name="사유누락", email=f"{uuid4()}@example.com")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            user_id = user.user_id
+
+        client = _build_client(engine, user_id)
+
+        response = client.request("DELETE", "/me", json={})
+
+        assert response.status_code == 422
+        with Session(engine) as db:
+            reloaded = db.get(user_model.User, user_id)
+            assert reloaded.deletion_requested_at is None
 
     def test_stores_reason_codes(self, engine):
         with Session(engine) as db:
@@ -330,8 +348,44 @@ class TestDeleteMeEndpoint:
 
         assert response.status_code == 200
         with Session(engine) as db:
-            reloaded = db.get(user_model.User, user_id)
-            assert reloaded.deletion_reasons == [1, 3]
+            feedback = db.exec(
+                select(deletion_feedback_model.DeletionFeedback).where(
+                    deletion_feedback_model.DeletionFeedback.user_id == user_id
+                )
+            ).one()
+            assert feedback.reason_codes == [1, 3]
+
+    def test_reason_feedback_survives_user_deletion(self, engine, monkeypatch):
+        """deletionfeedback은 user row가 sweep으로 지워져도 남아 있어야 한다."""
+        monkeypatch.setattr(account_deletion, "ACCOUNT_DELETION_GRACE_MINUTES", 60)
+
+        with Session(engine) as db:
+            user = user_model.User(name="사유보존", email=f"{uuid4()}@example.com")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            user_id = user.user_id
+
+        client = _build_client(engine, user_id)
+        client.request("DELETE", "/me", json={"reason_codes": [4]})
+
+        with Session(engine) as db:
+            user = db.get(user_model.User, user_id)
+            user.deletion_requested_at = datetime.utcnow() - timedelta(minutes=61)
+            db.add(user)
+            db.commit()
+
+        with Session(engine) as db:
+            account_deletion.sweep_due_account_deletions(db)
+
+        with Session(engine) as db:
+            assert db.get(user_model.User, user_id) is None
+            feedback = db.exec(
+                select(deletion_feedback_model.DeletionFeedback).where(
+                    deletion_feedback_model.DeletionFeedback.user_id == user_id
+                )
+            ).one()
+            assert feedback.reason_codes == [4]
 
     def test_reason_code_out_of_range_is_rejected(self, engine):
         with Session(engine) as db:
@@ -364,5 +418,9 @@ class TestDeleteMeEndpoint:
         client.request("DELETE", "/me", json={"reason_codes": [5]})
 
         with Session(engine) as db:
-            reloaded = db.get(user_model.User, user_id)
-            assert reloaded.deletion_reasons == [2]
+            feedbacks = db.exec(
+                select(deletion_feedback_model.DeletionFeedback).where(
+                    deletion_feedback_model.DeletionFeedback.user_id == user_id
+                )
+            ).all()
+            assert [f.reason_codes for f in feedbacks] == [[2]]

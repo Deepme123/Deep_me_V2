@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta
-from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -7,6 +6,7 @@ from sqlmodel import Session, select
 
 from app.backend.core.tokens import clear_refresh_cookie
 from app.core.auth import get_current_user
+from app.backend.models.deletion_feedback import DeletionFeedback
 from app.backend.models.refresh_token import RefreshToken
 from app.backend.models.user import User
 from app.backend.schemas.user import DeleteMeRequest
@@ -28,7 +28,7 @@ def get_me_bearer(user_id: str = Depends(get_current_user)):
 @user_router.delete("/me")
 def delete_me(
     response: Response,
-    body: Optional[DeleteMeRequest] = None,
+    body: DeleteMeRequest,
     user_id: str = Depends(get_current_user),
     db: Session = Depends(get_session),
 ):
@@ -50,8 +50,10 @@ def delete_me(
 
     if user.deletion_requested_at is None:
         user.deletion_requested_at = datetime.utcnow()
-        if body is not None:
-            user.deletion_reasons = body.reason_codes
+        # 사유는 user row와 별개인 deletionfeedback 테이블에 즉시 기록한다 —
+        # user row는 유예 기간(기본 5일) 뒤 sweep으로 삭제되므로, user 컬럼에만
+        # 저장하면 사유가 함께 유실되어 집계가 불가능해진다.
+        db.add(DeletionFeedback(user_id=user.user_id, reason_codes=body.reason_codes))
         # email을 반납 처리해서, 유예 기간 중 같은 구글 계정으로 재로그인해도
         # _get_or_create_user(app/backend/routers/auth.py)가 이 탈퇴 예약된
         # row를 찾지 못하고 새 User를 생성하도록 한다 (unique 제약 때문에
