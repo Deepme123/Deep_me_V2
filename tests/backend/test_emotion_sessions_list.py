@@ -23,6 +23,11 @@ emotion_router = importlib.import_module("app.backend.routers.emotion")
 emotion_models = importlib.import_module("app.core.models.emotion")
 user_model = importlib.import_module("app.backend.models.user")
 db_session_module = importlib.import_module("app.db.session")
+# add_analysis_card 픽스처(conftest.py)가 쓰는 AnalysisCard가 SQLModel.metadata에
+# 등록되어 있어야 아래 engine 픽스처의 create_all()이 analysiscard 테이블도
+# 만든다. 다른 파일이 먼저 이 모델을 import해줄 때만 우연히 통과하던 문제라서
+# 이 파일 자체에서 명시적으로 import한다.
+importlib.import_module("app.analyze.models")
 
 
 @pytest.fixture
