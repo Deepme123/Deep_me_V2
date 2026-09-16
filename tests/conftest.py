@@ -1,6 +1,15 @@
 from __future__ import annotations
 
 import os
+
+# app.backend.core.rate_limit은 import되는 시점의 RATELIMIT_ENABLED 값을 모듈
+# 상수로 고정해버려서, 이후 monkeypatch.setenv로는 되돌릴 수 없다. 이 값이
+# true로 고정되면 request=None으로 엔드포인트 함수를 직접 호출하는 일부
+# 단위 테스트(test_health_llm.py 등)가 깨진다 — conftest.py는 tests/ 트리의
+# 다른 어떤 테스트 파일보다도 먼저 로드되므로, 여기서 가장 먼저 기본값을
+# 정해줘야 어느 파일이 rate_limit을 먼저 import하든 안전하다.
+os.environ.setdefault("RATELIMIT_ENABLED", "false")
+
 import sys
 from pathlib import Path
 

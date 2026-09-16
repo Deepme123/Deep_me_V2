@@ -37,7 +37,10 @@ def engine():
     return engine
 
 
-def _build_client(engine):
+ADMIN_SECRET = "test-admin-secret"
+
+
+def _build_client(engine, admin_secret=ADMIN_SECRET):
     app = FastAPI()
     app.include_router(deletion_feedback_router_module.router)
 
@@ -46,7 +49,16 @@ def _build_client(engine):
             yield session
 
     app.dependency_overrides[db_session_module.get_session] = _get_db
-    return TestClient(app)
+    client = TestClient(app)
+    client.headers.update(
+        {"X-Admin-Secret": admin_secret} if admin_secret else {}
+    )
+    return client
+
+
+@pytest.fixture(autouse=True)
+def _set_admin_secret(monkeypatch):
+    monkeypatch.setattr(deletion_feedback_router_module, "ADMIN_API_SECRET", ADMIN_SECRET)
 
 
 def _add_feedback(engine, reason_codes, created_at=None):
@@ -59,6 +71,38 @@ def _add_feedback(engine, reason_codes, created_at=None):
             )
         )
         db.commit()
+
+
+class TestAdminSecretAuth:
+    def test_missing_header_is_rejected(self, engine):
+        client = _build_client(engine, admin_secret=None)
+
+        response = client.get("/admin/deletion-feedback/summary")
+
+        assert response.status_code == 403
+
+    def test_wrong_secret_is_rejected(self, engine):
+        client = _build_client(engine, admin_secret="wrong-secret")
+
+        response = client.get("/admin/deletion-feedback/export")
+
+        assert response.status_code == 403
+
+    def test_correct_secret_is_accepted(self, engine):
+        client = _build_client(engine)
+
+        response = client.get("/admin/deletion-feedback/summary")
+
+        assert response.status_code == 200
+
+    def test_fails_closed_when_secret_not_configured(self, engine, monkeypatch):
+        monkeypatch.setattr(deletion_feedback_router_module, "ADMIN_API_SECRET", "")
+        client = _build_client(engine, admin_secret="anything")
+
+        response = client.get("/admin/deletion-feedback/summary")
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "admin_access_not_configured"
 
 
 class TestDeletionFeedbackSummary:
