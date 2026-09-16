@@ -28,6 +28,7 @@ emotion_models = importlib.import_module("app.core.models.emotion")
 task_model = importlib.import_module("app.backend.models.task")
 refresh_token_model = importlib.import_module("app.backend.models.refresh_token")
 analyze_models = importlib.import_module("app.analyze.models")
+need_card_models = importlib.import_module("app.desire.models.need_card")
 db_session_module = importlib.import_module("app.db.session")
 account_deletion = importlib.import_module("app.backend.services.account_deletion")
 
@@ -84,16 +85,41 @@ def _make_user_with_data(db: Session):
     db.add(token)
     db.commit()
 
-    return user, session, rating, step
+    need_card_result = need_card_models.NeedCardResult(session_id=session.session_id)
+    db.add(need_card_result)
+    db.commit()
+    db.refresh(need_card_result)
+
+    need_card_score = need_card_models.NeedCardScore(
+        result_id=need_card_result.result_id,
+        code="안정",
+        score=80,
+        rank=1,
+    )
+    user_need_selection = need_card_models.UserNeedSelection(
+        user_id=user.user_id,
+        selected_codes=["안정"],
+        session_id=session.session_id,
+    )
+    db.add(need_card_score)
+    db.add(user_need_selection)
+    db.commit()
+
+    return user, session, rating, step, need_card_result, need_card_score, user_need_selection
 
 
 class TestDeleteAccount:
     def test_removes_user_data_but_preserves_satisfaction_rating(self, engine):
         with Session(engine) as db:
-            user, session, rating, step = _make_user_with_data(db)
+            user, session, rating, step, need_card_result, need_card_score, user_need_selection = (
+                _make_user_with_data(db)
+            )
             user_id = user.user_id
             rating_id = rating.rating_id
             step_id = step.step_id
+            result_id = need_card_result.result_id
+            score_id = need_card_score.score_id
+            selection_id = user_need_selection.selection_id
 
             account_deletion.delete_account(db, user)
 
@@ -114,11 +140,56 @@ class TestDeleteAccount:
                     refresh_token_model.RefreshToken.user_id == user_id
                 )
             ).first() is None
+            assert db.get(need_card_models.NeedCardResult, result_id) is None
+            assert db.get(need_card_models.NeedCardScore, score_id) is None
+            assert db.get(need_card_models.UserNeedSelection, selection_id) is None
 
             preserved = db.get(analyze_models.SatisfactionRating, rating_id)
             assert preserved is not None
             assert preserved.rating == 5
             assert preserved.session_id is None
+
+
+class TestDeleteAccountWithoutDbCascade:
+    """운영에서 실제로 관찰된 스키마 드리프트를 재현하는 회귀 테스트.
+
+    모델/마이그레이션 소스는 emotionstep.session_id에 ON DELETE CASCADE를
+    선언하고 있지만, 실제 운영 DB에는 이 CASCADE가 적용돼 있지 않아
+    delete_account()가 FK 위반으로 계속 실패했다. delete_account()는 이제
+    DB cascade에 기대지 않고 EmotionStep을 명시적으로 지우므로, cascade가
+    없는 DB에서도 정상 동작해야 한다.
+    """
+
+    @pytest.fixture
+    def engine_without_emotionstep_cascade(self, engine):
+        with engine.connect() as conn:
+            original_sql = conn.exec_driver_sql(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='emotionstep'"
+            ).scalar_one()
+            drifted_sql = original_sql.replace(" ON DELETE CASCADE", "")
+            assert drifted_sql != original_sql, "테스트가 실제로 cascade를 제거하지 못함"
+
+            conn.exec_driver_sql("DROP TABLE emotionstep")
+            conn.exec_driver_sql(drifted_sql)
+            conn.commit()
+
+        return engine
+
+    def test_deletes_successfully_even_when_emotionstep_fk_lacks_cascade(
+        self, engine_without_emotionstep_cascade
+    ):
+        engine = engine_without_emotionstep_cascade
+
+        with Session(engine) as db:
+            user, session, _rating, step, *_rest = _make_user_with_data(db)
+            user_id, session_id, step_id = user.user_id, session.session_id, step.step_id
+
+            account_deletion.delete_account(db, user)
+
+        with Session(engine) as db:
+            assert db.get(user_model.User, user_id) is None
+            assert db.get(emotion_models.EmotionSession, session_id) is None
+            assert db.get(emotion_models.EmotionStep, step_id) is None
 
 
 class TestGracePeriodDefault:
@@ -165,7 +236,7 @@ class TestSweepDueAccountDeletions:
         monkeypatch.setattr(account_deletion, "ACCOUNT_DELETION_GRACE_MINUTES", 60)
 
         with Session(engine) as db:
-            user, session, _rating, step = _make_user_with_data(db)
+            user, session, _rating, step, *_rest = _make_user_with_data(db)
             user.deletion_requested_at = datetime.utcnow() - timedelta(minutes=61)
             db.add(user)
             db.commit()

@@ -10,7 +10,7 @@ from app.backend.models.deletion_feedback import DeletionFeedback
 from app.backend.models.refresh_token import RefreshToken
 from app.backend.models.task import Task
 from app.backend.models.user import User
-from app.core.models.emotion import EmotionSession
+from app.core.models.emotion import EmotionSession, EmotionStep
 
 log = logging.getLogger(__name__)
 
@@ -54,11 +54,15 @@ def delete_account(db: Session, user: User) -> None:
 
     SatisfactionRating(세션 만족도 평가)은 삭제 범위 밖이라 session_id만
     NULL 처리해 레코드를 보존한다. EmotionStep/NeedCardResult/NeedCardScore/
-    UserNeedSelection은 DB의 ON DELETE CASCADE로 자동 정리된다.
+    UserNeedSelection은 DB의 ON DELETE CASCADE에 기대지 않고 여기서 명시적으로
+    지운다 — 실제 운영 DB에서 emotionstep_session_id_fkey에 CASCADE가 없는
+    스키마 드리프트가 확인돼(마이그레이션 소스에는 CASCADE로 선언돼 있음),
+    탈퇴 스윕이 FK 위반으로 계속 실패했었다.
     """
-    # backend가 analyze의 삭제 대상 모델을 알아야 하는 지점이라 지연 import로
-    # 처리 — ws_post_actions.py/reflection_writer.py의 기존 관례와 동일.
+    # backend가 analyze/desire의 삭제 대상 모델을 알아야 하는 지점이라 지연
+    # import로 처리 — ws_post_actions.py/reflection_writer.py의 기존 관례와 동일.
     from app.analyze.models import AnalysisCard, SatisfactionRating
+    from app.desire.models.need_card import NeedCardResult, NeedCardScore, UserNeedSelection
 
     session_ids = db.exec(
         select(EmotionSession.session_id).where(EmotionSession.user_id == user.user_id)
@@ -75,6 +79,31 @@ def delete_account(db: Session, user: User) -> None:
         ):
             rating.session_id = None
             db.add(rating)
+
+        for step in db.exec(
+            select(EmotionStep).where(EmotionStep.session_id.in_(session_ids))
+        ):
+            db.delete(step)
+
+        result_ids = db.exec(
+            select(NeedCardResult.result_id).where(NeedCardResult.session_id.in_(session_ids))
+        ).all()
+
+        if result_ids:
+            for score in db.exec(
+                select(NeedCardScore).where(NeedCardScore.result_id.in_(result_ids))
+            ):
+                db.delete(score)
+
+            for result in db.exec(
+                select(NeedCardResult).where(NeedCardResult.result_id.in_(result_ids))
+            ):
+                db.delete(result)
+
+    for selection in db.exec(
+        select(UserNeedSelection).where(UserNeedSelection.user_id == user.user_id)
+    ):
+        db.delete(selection)
 
     for task in db.exec(select(Task).where(Task.user_id == user.user_id)):
         db.delete(task)
