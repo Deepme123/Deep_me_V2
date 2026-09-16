@@ -13,12 +13,10 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 
 from app.backend.models.deletion_feedback import DeletionFeedback
+from app.backend.schemas.user import VALID_REASON_CODES
 from app.db.session import get_session
 
 router = APIRouter(prefix="/admin/deletion-feedback", tags=["admin"])
-
-# app/backend/schemas/user.py의 DeleteMeRequest 검증 범위(1~5)와 동일하게 유지.
-REASON_CODE_RANGE = range(1, 6)
 
 
 @router.get("/summary")
@@ -31,7 +29,7 @@ def get_deletion_feedback_summary(db: Session = Depends(get_session)):
 
     return {
         "total": len(rows),
-        "by_reason": {str(code): counts.get(code, 0) for code in REASON_CODE_RANGE},
+        "by_reason": {str(code): counts.get(code, 0) for code in VALID_REASON_CODES},
     }
 
 
