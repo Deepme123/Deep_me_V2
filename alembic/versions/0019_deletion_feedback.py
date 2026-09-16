@@ -54,13 +54,20 @@ def upgrade() -> None:
         column("deletion_reasons"),
         column("deletion_requested_at"),
     )
+    # 사유 코드가 필수가 되기 전(커밋 7d193b6 이전)에 생성된 일부 row는
+    # deletion_requested_at이 NULL인데 deletion_reasons만 JSON null로 채워져
+    # 있어 IS NOT NULL을 통과한다. created_at이 NOT NULL이라 그대로 이관하면
+    # NotNullViolation이 나므로, 실제로 탈퇴가 예약된 row만 이관 대상으로 삼는다.
     bind = op.get_bind()
     rows = bind.execute(
         sa.select(
             user_table.c.user_id,
             user_table.c.deletion_reasons,
             user_table.c.deletion_requested_at,
-        ).where(user_table.c.deletion_reasons.is_not(None))
+        ).where(
+            user_table.c.deletion_reasons.is_not(None),
+            user_table.c.deletion_requested_at.is_not(None),
+        )
     ).fetchall()
     if rows:
         op.bulk_insert(
