@@ -45,7 +45,7 @@ def upgrade() -> None:
         "deletionfeedback",
         column("feedback_id"),
         column("user_id"),
-        column("reason_codes"),
+        column("reason_codes", sa.JSON()),
         column("created_at"),
     )
     user_table = table(
