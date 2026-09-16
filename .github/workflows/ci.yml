@@ -28,6 +28,33 @@ jobs:
       - name: Run tests
         run: pytest tests/ -v
 
+  # tests/의 각 모듈을 완전히 격리된 프로세스로 병렬 실행해서, 파일 간 암묵적
+  # 순서 의존(예: importlib.reload로 인한 전역 상태 오염)을 감시한다.
+  # continue-on-error로 PR을 막지는 않음 — 발견해도 참고용.
+  test-isolation-audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    env:
+      JWT_SECRET_KEY: ci-test-secret-key
+      JWT_REFRESH_SECRET: ci-test-refresh-secret
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run test control tower
+        run: python scripts/test_control_tower.py
+
   migrations:
     runs-on: ubuntu-latest
 
