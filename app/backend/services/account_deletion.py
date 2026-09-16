@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 
 from sqlmodel import Session, select
 
+from app.backend.models.deletion_feedback import DeletionFeedback
 from app.backend.models.refresh_token import RefreshToken
 from app.backend.models.task import Task
 from app.backend.models.user import User
@@ -15,6 +16,37 @@ log = logging.getLogger(__name__)
 
 # 탈퇴 요청 후 실제 삭제까지 대기하는 유예 기간(분). 기본 5일(60*24*5=7200분).
 ACCOUNT_DELETION_GRACE_MINUTES = int(os.getenv("ACCOUNT_DELETION_GRACE_MINUTES", "7200"))
+
+
+def schedule_account_deletion(db: Session, user: User, reason_codes: list[int]) -> datetime:
+    """탈퇴를 예약하고 실제 삭제 예정 시각을 반환한다.
+
+    즉시 삭제하지 않고 deletion_requested_at만 기록한 뒤, 사유를 user row와
+    별개인 DeletionFeedback 테이블에 남긴다 — user row는 유예 기간 뒤
+    sweep_due_account_deletions()가 삭제하므로, user 컬럼에만 저장하면
+    사유가 함께 유실돼 집계가 불가능해진다.
+
+    리프레시 토큰을 모두 무효화해 재로그인을 막고, email을 반납 처리해서
+    유예 기간 중 같은 구글 계정으로 재로그인해도 이 탈퇴 예약된 row를
+    찾지 못하고 새 User가 생성되도록 한다(탈퇴 취소 기능은 의도적으로 없음).
+    """
+    if user.deletion_requested_at is None:
+        user.deletion_requested_at = datetime.utcnow()
+        db.add(DeletionFeedback(user_id=user.user_id, reason_codes=reason_codes))
+        user.email = f"deleted+{user.user_id}@deepme.invalid"
+        db.add(user)
+
+    for row in db.exec(
+        select(RefreshToken).where(
+            RefreshToken.user_id == user.user_id,
+            RefreshToken.revoked_at.is_(None),
+        )
+    ):
+        row.revoked_at = datetime.utcnow()
+
+    db.commit()
+
+    return user.deletion_requested_at + timedelta(minutes=ACCOUNT_DELETION_GRACE_MINUTES)
 
 
 def delete_account(db: Session, user: User) -> None:
