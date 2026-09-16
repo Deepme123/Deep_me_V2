@@ -185,6 +185,24 @@ class _EmotionWSHandler:
             logger=logger,
         )
 
+    async def _create_session_and_send_open_ok(self, uid) -> None:
+        try:
+            session = await session_with_db(session_create_emotion_session, uid)
+        except IntegrityError as ie:
+            logger.warning("WS session create FK failed; retrying anonymous | %s", safe_str(ie))
+            session = await session_with_db(session_create_emotion_session, None)
+
+        self.session_id = session.session_id
+
+        system_prompt = get_system_prompt()
+        self.sys_fp = self.leak_guard.fingerprint(system_prompt)
+
+        await self.guard_send(EmotionOpenResponse(
+            type="open_ok",
+            session_id=self.session_id,
+            turns=0,
+        ).model_dump())
+
     async def enter_close_cooldown(self, *, send_ack: bool) -> bool:
         return await post_action_enter_close_cooldown(
             session_id=self.session_id,
@@ -418,32 +436,17 @@ class _EmotionWSHandler:
             if not uid:
                 return False
 
-            # user 존재 검증 (없으면 중단)
-            try:
-                from app.backend.models.user import User  # 지연 import로 순환참조 방지
-            except Exception:
-                User = None  # type: ignore
+            # user 존재 검증 (없으면 중단) — 지연 import로 순환참조 방지
+            from app.backend.models.user import User
 
-            if uid and User:
-                user_exists = await session_with_db(lambda db: db.get(User, uid) is not None)
-                if not user_exists:
-                    logger.warning("bootstrap: user not found | user_id=%s", uid)
-                    await self.websocket.close(code=4401, reason="user_not_found")
-                    return
+            user_exists = await session_with_db(lambda db: db.get(User, uid) is not None)
+            if not user_exists:
+                logger.warning("bootstrap: user not found | user_id=%s", uid)
+                await self.websocket.close(code=4401, reason="user_not_found")
+                return False
 
-            try:
-                session = await session_with_db(session_create_emotion_session, uid)
-            except IntegrityError as ie:
-                logger.warning("bootstrap commit FK failed; retrying as anonymous | %s", safe_str(ie))
-                session = await session_with_db(session_create_emotion_session, None)
+            await self._create_session_and_send_open_ok(uid)
 
-            self.session_id = session.session_id  # ← 세션 아이디 보관
-
-            system_prompt = get_system_prompt()
-            self.sys_fp = self.leak_guard.fingerprint(system_prompt)
-            await self.guard_send(
-                EmotionOpenResponse(type="open_ok", session_id=self.session_id, turns=0).model_dump(),
-            )
             llm_info = get_backend_llm_info()
             logger.info(
                 "WS connected | session_id=%s user_id=%s provider=%s model=%s",
@@ -495,24 +498,7 @@ class _EmotionWSHandler:
                 await self.guard_send({"type": "error", "message": f"bad open payload: {e}"})
                 return False
 
-            uid = self.auth_user_id
-
-            try:
-                session = await session_with_db(session_create_emotion_session, uid)
-            except IntegrityError as ie:
-                logger.warning("open commit FK failed; retrying anonymous | %s", safe_str(ie))
-                session = await session_with_db(session_create_emotion_session, None)
-
-            self.session_id = session.session_id
-
-            system_prompt = get_system_prompt()
-            self.sys_fp = self.leak_guard.fingerprint(system_prompt)
-
-            await self.guard_send(EmotionOpenResponse(
-                type="open_ok",
-                session_id=self.session_id,
-                turns=0,
-            ).model_dump())
+            await self._create_session_and_send_open_ok(self.auth_user_id)
             return False
 
         # ── 사용자 메시지 처리
