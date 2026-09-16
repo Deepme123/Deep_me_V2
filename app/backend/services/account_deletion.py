@@ -98,7 +98,14 @@ def delete_account(db: Session, user: User) -> None:
 
 
 def sweep_due_account_deletions(db: Session) -> int:
-    """유예 기간이 지난 탈퇴 예약 유저를 찾아 실제 삭제를 수행하고, 삭제된 수를 반환한다."""
+    """유예 기간이 지난 탈퇴 예약 유저를 찾아 실제 삭제를 수행하고, 삭제된 수를 반환한다.
+
+    유저별 삭제 실패를 격리하지 않으면, 한 명이라도 삭제 중 예외(예상 못한
+    FK 제약, 일시적 DB 오류 등)가 나면 그 예외가 그대로 전파돼 이 사이클의
+    나머지 대상자 전원이 처리되지 못하고, 다음 사이클에도 같은 유저가 계속
+    걸려 전체 삭제 파이프라인이 무기한 막힐 수 있다. 유저별로 격리해서 한
+    명의 실패가 다른 유저의 삭제를 막지 않도록 한다.
+    """
     cutoff = datetime.utcnow() - timedelta(minutes=ACCOUNT_DELETION_GRACE_MINUTES)
     due_users = db.exec(
         select(User).where(
@@ -107,8 +114,17 @@ def sweep_due_account_deletions(db: Session) -> int:
         )
     ).all()
 
+    deleted = 0
     for user in due_users:
-        log.info("account deletion sweep: deleting user_id=%s", user.user_id)
-        delete_account(db, user)
+        try:
+            log.info("account deletion sweep: deleting user_id=%s", user.user_id)
+            delete_account(db, user)
+            deleted += 1
+        except Exception:
+            log.exception(
+                "account deletion sweep: failed to delete user_id=%s — skipping this cycle",
+                user.user_id,
+            )
+            db.rollback()
 
-    return len(due_users)
+    return deleted

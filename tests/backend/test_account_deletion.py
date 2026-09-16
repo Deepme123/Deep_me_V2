@@ -180,6 +180,42 @@ class TestSweepDueAccountDeletions:
             assert db.get(emotion_models.EmotionSession, session_id) is None
             assert db.get(emotion_models.EmotionStep, step_id) is None
 
+    def test_isolates_single_user_failure_so_others_still_get_deleted(self, engine, monkeypatch):
+        """유저 한 명의 삭제 중 예외가 나도, 같은 사이클의 다른 대상자는 정상 삭제돼야 한다.
+
+        격리가 없으면 for 루프가 예외 지점에서 끊겨 뒤에 대기 중인 다른
+        정상 유저까지 처리되지 못하고, 문제 유저는 다음 사이클(5분 후)에도
+        같은 자리에서 계속 실패해 전체 삭제 파이프라인이 무기한 막힐 수 있다.
+        """
+        monkeypatch.setattr(account_deletion, "ACCOUNT_DELETION_GRACE_MINUTES", 60)
+
+        with Session(engine) as db:
+            broken_user = user_model.User(name="문제유저", email=f"{uuid4()}@example.com")
+            ok_user = user_model.User(name="정상유저", email=f"{uuid4()}@example.com")
+            broken_user.deletion_requested_at = datetime.utcnow() - timedelta(minutes=61)
+            ok_user.deletion_requested_at = datetime.utcnow() - timedelta(minutes=61)
+            db.add(broken_user)
+            db.add(ok_user)
+            db.commit()
+            broken_id, ok_id = broken_user.user_id, ok_user.user_id
+
+        real_delete_account = account_deletion.delete_account
+
+        def _flaky_delete_account(db, user):
+            if user.user_id == broken_id:
+                raise RuntimeError("의도적 실패(테스트)")
+            return real_delete_account(db, user)
+
+        monkeypatch.setattr(account_deletion, "delete_account", _flaky_delete_account)
+
+        with Session(engine) as db:
+            deleted_count = account_deletion.sweep_due_account_deletions(db)
+
+        assert deleted_count == 1
+        with Session(engine) as db:
+            assert db.get(user_model.User, broken_id) is not None
+            assert db.get(user_model.User, ok_id) is None
+
 
 def _build_client(engine, user_id):
     app = FastAPI()
