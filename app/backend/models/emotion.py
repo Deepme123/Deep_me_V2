@@ -18,7 +18,16 @@ class EmotionSession(SQLModel, table=True):
     trigger_summary: Optional[str] = None
     insight_summary: Optional[str] = None
 
-    steps: List["EmotionStep"] = Relationship(back_populates="session")
+    # passive_deletes=True가 없으면 세션 삭제 시 SQLAlchemy가 DB의
+    # ON DELETE CASCADE에 맡기지 않고 자식 EmotionStep.session_id를 NULL로
+    # UPDATE하려 들어 NOT NULL 제약을 위반한다(회원 탈퇴 sweep 실패 원인).
+    steps: List["EmotionStep"] = Relationship(
+        back_populates="session",
+        sa_relationship_kwargs={
+            "cascade": "all, delete-orphan",
+            "passive_deletes": True,
+        },
+    )
 
 
 # 2. 감정 단계(스텝) 모델
