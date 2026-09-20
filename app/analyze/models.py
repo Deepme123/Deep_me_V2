@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 from datetime import datetime
 
 from sqlmodel import SQLModel, Field
-from sqlalchemy import Column, JSON, UniqueConstraint
+from sqlalchemy import Column, ForeignKey, JSON, UniqueConstraint
 
 from app.backend.models.emotion import EmotionSession
 
@@ -77,9 +77,15 @@ class SatisfactionRating(SQLModel, table=True):
         default_factory=uuid4,
         primary_key=True,
     )
-    session_id: UUID = Field(
-        foreign_key="emotionsession.session_id",
-        index=True,
+    # 탈퇴 시 세션은 삭제되지만 만족도 평가는 보존 대상이라 nullable +
+    # ON DELETE SET NULL로 둔다 (UserNeedSelection.session_id와 동일 패턴).
+    session_id: Optional[UUID] = Field(
+        default=None,
+        sa_column=Column(
+            ForeignKey("emotionsession.session_id", ondelete="SET NULL"),
+            nullable=True,
+            index=True,
+        ),
     )
     rating: int
     created_at: datetime = Field(default_factory=datetime.utcnow)
