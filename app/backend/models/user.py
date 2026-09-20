@@ -1,7 +1,8 @@
 from sqlmodel import SQLModel, Field
+from sqlalchemy import Column, JSON
 from uuid import UUID, uuid4
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 
 class User(SQLModel, table=True):
@@ -10,7 +11,10 @@ class User(SQLModel, table=True):
     email: str = Field(index=True, unique=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     deletion_requested_at: Optional[datetime] = None
-    deletion_reason: Optional[int] = None
+    deletion_reasons: Optional[List[int]] = Field(
+        default=None,
+        sa_column=Column(JSON),
+    )
     __tablename__ = "user"
 
 
