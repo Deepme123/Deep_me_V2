@@ -10,6 +10,10 @@ from app.backend.models.deletion_feedback import DeletionFeedback
 from app.backend.models.refresh_token import RefreshToken
 from app.backend.models.task import Task
 from app.backend.models.user import User
+from app.backend.services.deletion_notify import (
+    notify_deletion_completed,
+    notify_deletion_requested,
+)
 from app.core.models.emotion import EmotionSession, EmotionStep
 
 log = logging.getLogger(__name__)
@@ -30,7 +34,8 @@ def schedule_account_deletion(db: Session, user: User, reason_codes: list[int]) 
     유예 기간 중 같은 구글 계정으로 재로그인해도 이 탈퇴 예약된 row를
     찾지 못하고 새 User가 생성되도록 한다(탈퇴 취소 기능은 의도적으로 없음).
     """
-    if user.deletion_requested_at is None:
+    newly_requested = user.deletion_requested_at is None
+    if newly_requested:
         user.deletion_requested_at = datetime.utcnow()
         db.add(DeletionFeedback(user_id=user.user_id, reason_codes=reason_codes))
         user.email = f"deleted+{user.user_id}@deepme.invalid"
@@ -46,7 +51,14 @@ def schedule_account_deletion(db: Session, user: User, reason_codes: list[int]) 
 
     db.commit()
 
-    return user.deletion_requested_at + timedelta(minutes=ACCOUNT_DELETION_GRACE_MINUTES)
+    scheduled_at = user.deletion_requested_at + timedelta(minutes=ACCOUNT_DELETION_GRACE_MINUTES)
+
+    # 최초 예약일 때만, commit이 성공한 뒤에 알린다 — 반복 호출로 알림이 중복되거나
+    # 롤백된 탈퇴가 알림으로 나가는 일이 없도록. 알림 실패는 예외를 올리지 않는다.
+    if newly_requested:
+        notify_deletion_requested(user.user_id, reason_codes, scheduled_at)
+
+    return scheduled_at
 
 
 def delete_account(db: Session, user: User) -> None:
@@ -145,10 +157,14 @@ def sweep_due_account_deletions(db: Session) -> int:
 
     deleted = 0
     for user in due_users:
+        # 삭제 후에는 user 객체에 접근할 수 없으므로 알림에 쓸 값을 미리 저장해 둔다.
+        user_id = user.user_id
+        requested_at = user.deletion_requested_at
         try:
-            log.info("account deletion sweep: deleting user_id=%s", user.user_id)
+            log.info("account deletion sweep: deleting user_id=%s", user_id)
             delete_account(db, user)
             deleted += 1
+            notify_deletion_completed(user_id, requested_at, datetime.utcnow())
         except Exception:
             log.exception(
                 "account deletion sweep: failed to delete user_id=%s — skipping this cycle",

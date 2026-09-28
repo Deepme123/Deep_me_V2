@@ -1,6 +1,7 @@
 import importlib
 import os
 import sys
+import types
 from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -31,6 +32,27 @@ analyze_models = importlib.import_module("app.analyze.models")
 need_card_models = importlib.import_module("app.desire.models.need_card")
 db_session_module = importlib.import_module("app.db.session")
 account_deletion = importlib.import_module("app.backend.services.account_deletion")
+deletion_notify = importlib.import_module("app.backend.services.deletion_notify")
+
+
+class _NotifyRecorder:
+    def __init__(self):
+        self.requested = []
+        self.completed = []
+
+
+@pytest.fixture(autouse=True)
+def notifications(monkeypatch):
+    """Discord 알림 호출을 기록만 하고 실제 전송은 막는다 — 개발자 셸에
+    DISCORD_DELETION_WEBHOOK_URL이 설정돼 있어도 테스트가 진짜 알림을 보내면 안 된다."""
+    recorder = _NotifyRecorder()
+    monkeypatch.setattr(
+        account_deletion, "notify_deletion_requested", lambda *args: recorder.requested.append(args)
+    )
+    monkeypatch.setattr(
+        account_deletion, "notify_deletion_completed", lambda *args: recorder.completed.append(args)
+    )
+    return recorder
 
 
 @pytest.fixture
@@ -531,3 +553,194 @@ class TestDeleteMeEndpoint:
                 )
             ).all()
             assert [f.reason_codes for f in feedbacks] == [[2]]
+
+
+def _make_due_user(db: Session, name: str, minutes_ago: int = 61):
+    user = user_model.User(name=name, email=f"{uuid4()}@example.com")
+    user.deletion_requested_at = datetime.utcnow() - timedelta(minutes=minutes_ago)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+class _BoomClient:
+    """Discord 전송이 항상 실패하는 httpx.Client 대역."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def post(self, *args, **kwargs):
+        raise RuntimeError("discord down")
+
+
+class _SyncThread:
+    def __init__(self, target=None, args=(), kwargs=None, daemon=None):
+        self._target = target
+        self._args = args
+        self._kwargs = kwargs or {}
+
+    def start(self) -> None:
+        self._target(*self._args, **self._kwargs)
+
+
+def _use_failing_discord(monkeypatch) -> None:
+    """autouse 기록용 대역을 실제 알림 함수로 되돌리고, 전송만 실패시킨다."""
+    monkeypatch.setenv("DISCORD_DELETION_WEBHOOK_URL", "http://example.invalid/webhook")
+    monkeypatch.setattr(deletion_notify.httpx, "Client", _BoomClient)
+    monkeypatch.setattr(
+        deletion_notify, "threading", types.SimpleNamespace(Thread=_SyncThread)
+    )
+    monkeypatch.setattr(
+        account_deletion, "notify_deletion_requested", deletion_notify.notify_deletion_requested
+    )
+    monkeypatch.setattr(
+        account_deletion, "notify_deletion_completed", deletion_notify.notify_deletion_completed
+    )
+
+
+class TestDeletionRequestedNotification:
+    def test_notifies_once_with_user_id_reasons_and_scheduled_time(self, engine, notifications):
+        with Session(engine) as db:
+            user = user_model.User(name="예약알림", email=f"{uuid4()}@example.com")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            user_id = user.user_id
+
+        client = _build_client(engine, user_id)
+
+        response = client.request("DELETE", "/me", json={"reason_codes": [3, 1]})
+
+        assert response.status_code == 200
+        assert len(notifications.requested) == 1
+        notified_user_id, reason_codes, scheduled_at = notifications.requested[0]
+        assert notified_user_id == user_id
+        assert reason_codes == [1, 3]
+        assert scheduled_at.isoformat() == response.json()["scheduled_deletion_at"]
+
+    def test_repeat_call_does_not_notify_again(self, engine, notifications):
+        with Session(engine) as db:
+            user = user_model.User(name="중복알림", email=f"{uuid4()}@example.com")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            user_id = user.user_id
+
+        client = _build_client(engine, user_id)
+
+        client.request("DELETE", "/me", json={"reason_codes": [1]})
+        client.request("DELETE", "/me", json={"reason_codes": [1]})
+
+        assert len(notifications.requested) == 1
+
+    def test_no_notification_when_request_is_rejected(self, engine, notifications):
+        with Session(engine) as db:
+            user = user_model.User(name="거부알림", email=f"{uuid4()}@example.com")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            user_id = user.user_id
+
+        client = _build_client(engine, user_id)
+
+        assert client.request("DELETE", "/me", json={"reason_codes": [6]}).status_code == 422
+        assert client.request("DELETE", "/me", json={}).status_code == 422
+        assert _build_client(engine, uuid4()).request(
+            "DELETE", "/me", json={"reason_codes": [1]}
+        ).status_code == 404
+
+        assert notifications.requested == []
+
+    def test_deletion_is_scheduled_even_if_discord_fails(self, engine, monkeypatch):
+        _use_failing_discord(monkeypatch)
+        with Session(engine) as db:
+            user = user_model.User(name="전송실패", email=f"{uuid4()}@example.com")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            user_id = user.user_id
+
+        client = _build_client(engine, user_id)
+
+        response = client.request("DELETE", "/me", json={"reason_codes": [1]})
+
+        assert response.status_code == 200
+        with Session(engine) as db:
+            assert db.get(user_model.User, user_id).deletion_requested_at is not None
+
+
+class TestDeletionCompletedNotification:
+    def test_notifies_for_each_deleted_user(self, engine, monkeypatch, notifications):
+        monkeypatch.setattr(account_deletion, "ACCOUNT_DELETION_GRACE_MINUTES", 60)
+        with Session(engine) as db:
+            first = _make_due_user(db, "삭제알림1", minutes_ago=61)
+            second = _make_due_user(db, "삭제알림2", minutes_ago=90)
+            expected = {
+                first.user_id: first.deletion_requested_at,
+                second.user_id: second.deletion_requested_at,
+            }
+
+        before = datetime.utcnow()
+        with Session(engine) as db:
+            deleted_count = account_deletion.sweep_due_account_deletions(db)
+        after = datetime.utcnow()
+
+        assert deleted_count == 2
+        assert len(notifications.completed) == 2
+        for user_id, requested_at, deleted_at in notifications.completed:
+            assert requested_at == expected[user_id]
+            assert before <= deleted_at <= after
+
+    def test_no_notification_when_nothing_is_due(self, engine, monkeypatch, notifications):
+        monkeypatch.setattr(account_deletion, "ACCOUNT_DELETION_GRACE_MINUTES", 60)
+        with Session(engine) as db:
+            _make_due_user(db, "유예남음", minutes_ago=1)
+
+        with Session(engine) as db:
+            deleted_count = account_deletion.sweep_due_account_deletions(db)
+
+        assert deleted_count == 0
+        assert notifications.completed == []
+
+    def test_no_notification_for_user_whose_deletion_failed(
+        self, engine, monkeypatch, notifications
+    ):
+        monkeypatch.setattr(account_deletion, "ACCOUNT_DELETION_GRACE_MINUTES", 60)
+        with Session(engine) as db:
+            broken_id = _make_due_user(db, "삭제실패").user_id
+            ok_id = _make_due_user(db, "삭제성공").user_id
+
+        real_delete_account = account_deletion.delete_account
+
+        def _flaky_delete_account(db, user):
+            if user.user_id == broken_id:
+                raise RuntimeError("의도적 실패(테스트)")
+            return real_delete_account(db, user)
+
+        monkeypatch.setattr(account_deletion, "delete_account", _flaky_delete_account)
+
+        with Session(engine) as db:
+            deleted_count = account_deletion.sweep_due_account_deletions(db)
+
+        assert deleted_count == 1
+        assert [args[0] for args in notifications.completed] == [ok_id]
+
+    def test_user_is_deleted_even_if_discord_fails(self, engine, monkeypatch):
+        _use_failing_discord(monkeypatch)
+        monkeypatch.setattr(account_deletion, "ACCOUNT_DELETION_GRACE_MINUTES", 60)
+        with Session(engine) as db:
+            user_id = _make_due_user(db, "전송실패삭제").user_id
+
+        with Session(engine) as db:
+            deleted_count = account_deletion.sweep_due_account_deletions(db)
+
+        assert deleted_count == 1
+        with Session(engine) as db:
+            assert db.get(user_model.User, user_id) is None
