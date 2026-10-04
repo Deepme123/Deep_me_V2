@@ -92,11 +92,6 @@ class ConfirmCloseRequest(BaseModel):
     type: Literal["confirm_close"] = "confirm_close"
 
 
-class CancelCloseRequest(BaseModel):
-    # User declines the current close suggestion and keeps the session open.
-    type: Literal["cancel_close"] = "cancel_close"
-
-
 class TaskRecommendRequest(BaseModel):
     type: Literal["task_recommend"] = "task_recommend"
     max_items: Optional[int] = Field(default=5, ge=1, le=20)
@@ -117,19 +112,6 @@ class EmotionMessageResponse(BaseModel):
 class EmotionCloseResponse(BaseModel):
     # Final close acknowledgement after the session close has been persisted.
     type: Literal["close_ok"] = "close_ok"
-
-
-class SuggestCloseResponse(BaseModel):
-    # Server asks the client to confirm whether the session should close now.
-    type: Literal["suggest_close"] = "suggest_close"
-
-
-class AnalysisCardStatusResponse(BaseModel):
-    type: Literal["analysis_card_status"] = "analysis_card_status"
-    session_id: UUID
-    status: Literal["pending", "ready", "failed"]
-    card_id: Optional[UUID] = None
-    message: Optional[str] = None
 
 
 class TaskRecommendResponse(BaseModel):
