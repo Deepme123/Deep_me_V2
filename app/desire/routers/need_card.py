@@ -79,7 +79,7 @@ async def analyze_need_cards(
 
 
 @router.get("/history", response_model=NeedCardHistoryResponse)
-async def get_need_card_history(
+def get_need_card_history(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_session),
@@ -110,7 +110,7 @@ async def get_need_card_history(
 
 
 @router.get("/last-selection", response_model=Optional[NeedSelectionResponse])
-async def get_last_selection(
+def get_last_selection(
     db: Session = Depends(get_session),
     user_id: str = Depends(get_current_user),
 ) -> Optional[NeedSelectionResponse]:
@@ -125,7 +125,7 @@ async def get_last_selection(
 
 
 @router.post("/selection", response_model=NeedSelectionResponse)
-async def post_selected_need_cards(
+def post_selected_need_cards(
     payload: NeedSelectionRequest,
     db: Session = Depends(get_session),
     user_id: str = Depends(get_current_user),

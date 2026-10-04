@@ -1,3 +1,4 @@
+import inspect
 import os
 from uuid import uuid4
 
@@ -106,3 +107,17 @@ def test_history_response_shape(engine, user_id):
         assert [need["code"] for need in item["top4"]] == expected_codes
         assert [need["rank"] for need in item["top4"]] == [1, 2, 3, 4]
         assert all(need["reflection_message"] for need in item["top4"])
+
+
+@pytest.mark.parametrize(
+    "handler",
+    [
+        need_card_router.get_need_card_history,
+        need_card_router.get_last_selection,
+        need_card_router.post_selected_need_cards,
+    ],
+)
+def test_sync_db_handlers_are_not_coroutines(handler):
+    """동기 DB 호출만 하는 핸들러는 def여야 스레드풀에서 실행된다.
+    async def로 두면 쿼리 동안 이벤트 루프(WebSocket 스트리밍 포함)가 멈춘다."""
+    assert not inspect.iscoroutinefunction(handler)
