@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta
 from typing import Dict, Any
 
 from jose import jwt, JWTError
@@ -11,16 +10,7 @@ SECRET_KEY: str | None = os.getenv("JWT_SECRET_KEY")
 if not SECRET_KEY:
     raise RuntimeError("JWT_SECRET_KEY 환경변수가 설정되지 않았습니다.")
 ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
-EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 # ───────────────────────────────────────────────
-
-def create_access_token(user_id: str, expires_delta: timedelta | None = None) -> str:
-    """
-    user_id(문자열)로 JWT Access Token을 발급한다.
-    """
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=EXPIRE_MINUTES))
-    payload: Dict[str, Any] = {"sub": user_id, "exp": expire, "typ": "access"}
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 def verify_access_token(token: str) -> Dict[str, Any]:
     """

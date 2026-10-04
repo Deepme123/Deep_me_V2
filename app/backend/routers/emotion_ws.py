@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from sqlmodel import Session
 from uuid import UUID
 import asyncio
 import logging
@@ -76,7 +75,7 @@ from app.backend.core.prompt_loader import get_system_prompt, get_task_prompt
 from app.backend.services.convo_policy import is_activity_turn  # test patch point
 from app.backend.services.close_policy import (
     CANCEL_CLOSE_STEP_TYPE,
-    RESERVED_CONFIRM_CLOSE_TOKEN,
+    RESERVED_CONFIRM_CLOSE_TOKEN,  # 테스트가 emotion_ws 모듈을 통해 참조
     StreamingConfirmCloseFilter,
     build_cancel_close_ok_message,
 )

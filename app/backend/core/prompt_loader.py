@@ -1,12 +1,9 @@
-from pathlib import Path
-import logging
 from functools import lru_cache
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-_CWD_BASE_DIR = Path.cwd() / "app" / "backend"
-_DEFAULT_PROMPT_PATH = BASE_DIR / "resources" / "system_prompt.txt"
-_CWD_PROMPT_PATH = _CWD_BASE_DIR / "resources" / "system_prompt.txt"
-PROMPT_PATH = _DEFAULT_PROMPT_PATH if _DEFAULT_PROMPT_PATH.exists() else _CWD_PROMPT_PATH
+from app.core.resource_files import read_prompt, resolve_resource_path
+
+PROMPT_PATH = resolve_resource_path("backend", "system_prompt.txt")
+TASK_PROMPT_PATH = resolve_resource_path("backend", "task_prompt.txt")
 
 FALLBACK_PROMPT = (
     "너는 감정 기반 챗봇이야. 사용자의 감정을 존중하고, 공감적 질문을 통해 "
@@ -19,33 +16,14 @@ FALLBACK_TASK_PROMPT = (
 )
 
 
-def _load_system_prompt(path: Path) -> str:
-    try:
-        txt = path.read_text(encoding="utf-8")
-        return txt.strip()
-    except FileNotFoundError:
-        logging.warning("[PromptLoader] system_prompt.txt not found. Using fallback.")
-        return FALLBACK_PROMPT
-
-
 @lru_cache(maxsize=1)
 def get_system_prompt() -> str:
-    return _load_system_prompt(PROMPT_PATH)
-
-
-_DEFAULT_TASK_PROMPT_PATH = BASE_DIR / "resources" / "task_prompt.txt"
-_CWD_TASK_PROMPT_PATH = _CWD_BASE_DIR / "resources" / "task_prompt.txt"
-TASK_PROMPT_PATH = _DEFAULT_TASK_PROMPT_PATH if _DEFAULT_TASK_PROMPT_PATH.exists() else _CWD_TASK_PROMPT_PATH
+    return read_prompt(PROMPT_PATH, FALLBACK_PROMPT)
 
 
 @lru_cache(maxsize=1)
 def get_task_prompt() -> str:
-    try:
-        txt = TASK_PROMPT_PATH.read_text(encoding="utf-8")
-        return txt.strip()
-    except FileNotFoundError:
-        logging.warning("[PromptLoader] task_prompt.txt not found. Using fallback.")
-        return FALLBACK_TASK_PROMPT
+    return read_prompt(TASK_PROMPT_PATH, FALLBACK_TASK_PROMPT)
 
 
 SYSTEM_PROMPT = get_system_prompt()

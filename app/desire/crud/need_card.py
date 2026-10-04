@@ -2,8 +2,9 @@ from uuid import UUID
 from typing import List, Optional
 
 from sqlalchemy.orm import selectinload
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
+from app.core.models.emotion import EmotionSession
 from app.desire.models.need_card import NeedCardResult, NeedCardScore, UserNeedSelection
 from app.desire.schemas.need_card import NeedScore
 
@@ -12,8 +13,6 @@ def get_last_need_card_result_by_user(
     session: Session,
     user_id: UUID,
 ) -> Optional[NeedCardResult]:
-    from app.core.models.emotion import EmotionSession
-
     stmt = (
         select(NeedCardResult)
         .join(EmotionSession, NeedCardResult.session_id == EmotionSession.session_id)
@@ -30,8 +29,6 @@ def get_need_card_result_by_session(
     user_id: UUID,
 ) -> Optional[NeedCardResult]:
     """특정 세션의 분석 결과를 가져온다. 그 세션이 user_id 소유가 아니면 None."""
-    from app.core.models.emotion import EmotionSession
-
     stmt = (
         select(NeedCardResult)
         .join(EmotionSession, NeedCardResult.session_id == EmotionSession.session_id)
@@ -48,9 +45,6 @@ def get_need_card_history_by_user(
     limit: int = 20,
     offset: int = 0,
 ) -> tuple[list[NeedCardResult], int]:
-    from app.core.models.emotion import EmotionSession
-    from sqlmodel import func
-
     base = (
         select(NeedCardResult)
         .join(EmotionSession, NeedCardResult.session_id == EmotionSession.session_id)
