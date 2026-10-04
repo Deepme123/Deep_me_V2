@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List
 from uuid import UUID
 
 from fastapi.concurrency import run_in_threadpool

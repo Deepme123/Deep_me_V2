@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from sqlmodel import SQLModel, Field, Relationship
-from sqlalchemy import Column, ForeignKey, Index, JSON
+from sqlalchemy import Column, ForeignKey, JSON
 
 
 class NeedCardResult(SQLModel, table=True):
