@@ -2,11 +2,9 @@ from pathlib import Path
 import logging
 from functools import lru_cache
 
-BASE_DIR = Path(__file__).resolve().parent.parent  # app/backend/
-_CWD_BASE_DIR = Path.cwd() / "app" / "backend"
-_DEFAULT_GREETING_PATH = BASE_DIR / "resources" / "greeting_messages.txt"
-_CWD_GREETING_PATH = _CWD_BASE_DIR / "resources" / "greeting_messages.txt"
-GREETING_PATH = _DEFAULT_GREETING_PATH if _DEFAULT_GREETING_PATH.exists() else _CWD_GREETING_PATH
+from app.core.resource_files import resolve_resource_path
+
+GREETING_PATH = resolve_resource_path("backend", "greeting_messages.txt")
 
 FALLBACK_GREETING_MESSAGES = [
     "안녕! 오늘 기분은 어때? 🌿",
