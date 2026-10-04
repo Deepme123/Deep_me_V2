@@ -1,6 +1,7 @@
 from uuid import UUID
 from typing import List, Optional
 
+from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app.desire.models.need_card import NeedCardResult, NeedCardScore, UserNeedSelection
@@ -56,8 +57,12 @@ def get_need_card_history_by_user(
         .where(EmotionSession.user_id == user_id)
     )
     total = session.exec(select(func.count()).select_from(base.subquery())).one()
+    # 라우터가 행마다 row.scores를 읽으므로 한 번에 로딩해 N+1을 피한다.
     rows = session.exec(
-        base.order_by(NeedCardResult.created_at.desc()).limit(limit).offset(offset)
+        base.options(selectinload(NeedCardResult.scores))
+        .order_by(NeedCardResult.created_at.desc())
+        .limit(limit)
+        .offset(offset)
     ).all()
     return list(rows), total
 
