@@ -96,27 +96,26 @@ def list_sessions(
         .where(has_user_step)
         .where(has_card | (EmotionSession.ended_at != None))  # noqa: E711
         .order_by(EmotionSession.started_at.desc())
-        .limit(limit)
-        .offset(offset)
     )
     sessions = db.exec(stmt).all()
 
     # 카드가 존재하지만 내용이 완전히 비어있는 세션(수동 생성 API의 과거 버그로
     # 생성된 레거시 데이터 등)도 클릭 시 빈 화면이 되므로 함께 제외한다.
+    # 이 판정은 SQL로 표현할 수 없어 파이썬에서 하므로, limit/offset도 SQL이
+    # 아니라 걸러낸 결과에 적용한다 — SQL에서 먼저 자르면 뒤에 세션이 더 있어도
+    # 페이지가 limit보다 적게 나가고, 앱은 그걸 마지막 페이지로 판단한다.
     session_ids = [s.session_id for s in sessions]
-    if not session_ids:
-        return sessions
-    cards = db.exec(
-        select(AnalysisCard).where(AnalysisCard.session_id.in_(session_ids))
-    ).all()
-    empty_card_session_ids = {
-        card.session_id
-        for card in cards
-        if not has_meaningful_content(card.model_dump())
-    }
-    if not empty_card_session_ids:
-        return sessions
-    return [s for s in sessions if s.session_id not in empty_card_session_ids]
+    if session_ids:
+        cards = db.exec(
+            select(AnalysisCard).where(AnalysisCard.session_id.in_(session_ids))
+        ).all()
+        empty_card_session_ids = {
+            card.session_id
+            for card in cards
+            if not has_meaningful_content(card.model_dump())
+        }
+        sessions = [s for s in sessions if s.session_id not in empty_card_session_ids]
+    return sessions[offset : offset + limit]
 
 
 @router.get("/sessions/{session_id}", response_model=EmotionSessionRead)

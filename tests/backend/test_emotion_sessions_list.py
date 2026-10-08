@@ -1,7 +1,7 @@
 import importlib
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -200,3 +200,35 @@ def test_list_sessions_includes_sessions_with_analysis_card(engine, add_analysis
     body = response.json()
     assert len(body) == 1
     assert body[0]["session_id"] == kept_id
+
+
+def test_list_sessions_paginates_after_filtering_empty_cards(engine, add_analysis_card):
+    """빈 카드 세션은 페이지를 자르기 전에 걸러져야 한다. 자른 뒤에 걸러내면
+    뒤에 세션이 더 있어도 페이지가 limit보다 적게 나가고, 앱은 그걸 마지막
+    페이지로 판단해 이후 기록을 불러오지 않는다."""
+    with Session(engine) as db:
+        user, first = _make_user_and_session(db)
+        user_id = user.user_id
+        base = datetime(2026, 1, 1)
+        expected_ids = []
+        for i in range(15):
+            session = first if i == 0 else emotion_models.EmotionSession(user_id=user_id)
+            session.started_at = base + timedelta(days=i)
+            session.ended_at = session.started_at + timedelta(hours=1)
+            db.add(session)
+            db.commit()
+            db.refresh(session)
+            _add_step(db, session.session_id, order=1, user_input="안녕")
+            if i == 12:
+                add_analysis_card(db, session.session_id)  # 최신순 3번째만 빈 카드
+            else:
+                expected_ids.append(str(session.session_id))
+        expected_ids.reverse()  # 최신순
+
+    client = _build_client(engine, user_id)
+
+    first_page = client.get("/emotion/sessions", params={"limit": 10, "offset": 0}).json()
+    second_page = client.get("/emotion/sessions", params={"limit": 10, "offset": 10}).json()
+
+    assert [s["session_id"] for s in first_page] == expected_ids[:10]
+    assert [s["session_id"] for s in second_page] == expected_ids[10:]
