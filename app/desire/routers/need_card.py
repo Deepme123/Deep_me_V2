@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session
 
 from app.db.session import get_session
-from app.backend.dependencies.auth import get_current_user
+from app.core.auth import get_current_user
 from app.desire.crud.need_card import (
     get_last_need_card_result_by_user,
     get_need_card_history_by_user,
@@ -69,7 +69,7 @@ async def analyze_need_cards(
     소유자의 과거 욕구 선택 이력을 조회해 프롬프트에 섞어 넣기 때문에
     타인의 이력이 응답에 간접적으로 반영될 수 있다.
     """
-    from app.backend.models.emotion import EmotionSession
+    from app.core.models.emotion import EmotionSession
 
     session = db.get(EmotionSession, payload.session_id)
     if session is None or session.user_id != UUID(user_id):
@@ -79,7 +79,7 @@ async def analyze_need_cards(
 
 
 @router.get("/history", response_model=NeedCardHistoryResponse)
-async def get_need_card_history(
+def get_need_card_history(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_session),
@@ -109,15 +109,15 @@ async def get_need_card_history(
     return NeedCardHistoryResponse(items=items, total=total)
 
 
-@router.get("/last-selection", response_model=NeedSelectionResponse)
-async def get_last_selection(
+@router.get("/last-selection", response_model=Optional[NeedSelectionResponse])
+def get_last_selection(
     db: Session = Depends(get_session),
     user_id: str = Depends(get_current_user),
-) -> NeedSelectionResponse:
-    """로그인 유저가 마지막으로 선택한 욕구 하나를 반환합니다."""
+) -> Optional[NeedSelectionResponse]:
+    """로그인 유저가 마지막으로 선택한 욕구 하나를 반환합니다. 선택 이력이 없으면 null을 반환합니다."""
     selection = get_last_user_need_selection(db, UUID(user_id))
     if selection is None:
-        raise HTTPException(status_code=404, detail="선택한 욕구가 없습니다.")
+        return None
 
     code = selection.selected_codes[0]
     result = _resolve_need_card_result(db, UUID(user_id), selection.session_id)
@@ -125,7 +125,7 @@ async def get_last_selection(
 
 
 @router.post("/selection", response_model=NeedSelectionResponse)
-async def post_selected_need_cards(
+def post_selected_need_cards(
     payload: NeedSelectionRequest,
     db: Session = Depends(get_session),
     user_id: str = Depends(get_current_user),

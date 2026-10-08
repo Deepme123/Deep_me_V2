@@ -56,6 +56,13 @@ def test_websocket_accepts_access_token_cookie(monkeypatch):
         )
         return fake_db.session
 
+    def fake_pick_greeting_message(_db):
+        return 0, "테스트 인사말"
+
+    def fake_commit_opening_message(_db, session_id_arg, assistant_text):
+        assert fake_db.session is not None
+        assert fake_db.session.session_id == session_id_arg
+
     monkeypatch.setattr(emotion_ws, "session_scope", fake_session_scope)
     monkeypatch.setattr(emotion_ws, "session_with_db", fake_with_db)
     monkeypatch.setattr(emotion_ws, "session_create_emotion_session", fake_create_emotion_session)
@@ -70,6 +77,10 @@ def test_websocket_accepts_access_token_cookie(monkeypatch):
         "get_backend_llm_info",
         lambda: SimpleNamespace(provider="test", model="fake"),
     )
+    monkeypatch.setattr(emotion_ws, "greeting_pick_greeting_message", fake_pick_greeting_message)
+    monkeypatch.setattr(emotion_ws, "session_commit_opening_message", fake_commit_opening_message)
+    monkeypatch.setattr(emotion_ws.CFG, "GREETING_DELAY_MIN_SEC", 0.0)
+    monkeypatch.setattr(emotion_ws.CFG, "GREETING_DELAY_MAX_SEC", 0.0)
 
     app = FastAPI()
     app.include_router(emotion_ws.router)
@@ -80,7 +91,10 @@ def test_websocket_accepts_access_token_cookie(monkeypatch):
         headers={"cookie": "access_token=cookie-token"},
     ) as ws:
         open_event = ws.receive_json()
+        greeting_events = [ws.receive_json() for _ in range(3)]
 
     assert open_event["type"] == "open_ok"
     assert open_event["session_id"] == str(session_id)
+    assert [e["type"] for e in greeting_events] == ["message_start", "message", "message_end"]
+    assert greeting_events[1]["message"] == "테스트 인사말"
 

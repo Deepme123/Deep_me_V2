@@ -7,7 +7,7 @@ from urllib.parse import quote_plus
 
 import sqlalchemy as sa
 from sqlalchemy.engine import url as sa_url
-from sqlmodel import SQLModel, create_engine
+from sqlmodel import create_engine
 
 log = logging.getLogger(__name__)
 
@@ -97,10 +97,6 @@ def get_session():
 
     with Session(get_engine()) as s:
         yield s
-
-
-def create_all_tables() -> None:
-    SQLModel.metadata.create_all(get_engine())
 
 
 def get_existing_tables(*, schema: str | None = None) -> set[str]:

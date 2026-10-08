@@ -136,10 +136,11 @@ def test_last_selection_falls_back_when_selection_has_no_session_id():
     assert response.json()["reflection_message"] == "이번엔 '소속'이라는 너의 바람이 조용히 마음을 두드린 걸지도 몰라."
 
 
-def test_last_selection_returns_404_when_no_selection():
+def test_last_selection_returns_null_when_no_selection():
     client = _build_client(str(uuid4()))
 
     with patch.object(need_card_router, "get_last_user_need_selection", return_value=None):
         response = client.get("/need-cards/last-selection")
 
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json() is None

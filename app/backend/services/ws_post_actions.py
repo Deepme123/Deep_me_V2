@@ -9,7 +9,7 @@ from uuid import UUID
 from fastapi.encoders import jsonable_encoder
 
 from app.db.session import session_scope
-from app.backend.models.emotion import EmotionSession
+from app.core.models.emotion import EmotionSession
 from app.backend.schemas.emotion import EmotionCloseRequest, EmotionCloseResponse
 from app.backend.services.task_recommend import recommend_tasks_from_session_core
 from app.backend.services.ws_utils import safe_str
@@ -36,7 +36,7 @@ async def recommend_tasks_async(session_id: UUID, max_items: int) -> list[dict]:
 def _load_need_card_conversation_text(session_id: UUID) -> str:
     from sqlmodel import select
 
-    from app.backend.models.emotion import EmotionStep
+    from app.core.models.emotion import EmotionStep
 
     with session_scope() as db:
         rows = db.exec(

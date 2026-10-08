@@ -8,7 +8,7 @@ from uuid import UUID
 from sqlmodel import Session, select
 
 from app.db.session import session_scope
-from app.backend.models.emotion import EmotionSession, EmotionStep
+from app.core.models.emotion import EmotionSession, EmotionStep
 from app.backend.schemas.emotion import EmotionCloseRequest
 from app.backend.services.convo_policy import ACTIVITY_STEP_TYPE, is_activity_turn
 from app.backend.services.ws_utils import transcript_rows_to_conversation
@@ -126,6 +126,22 @@ def commit_full_turn(
         )
         db.add(marker)
 
+    db.commit()
+
+
+def commit_opening_message(db: Session, session_id: UUID, assistant_text: str) -> None:
+    """세션 오픈 직후, 사용자 입력 없이 서버가 먼저 보내는 인사 메시지를 assistant 전용
+    스텝(step_order=1)으로 저장한다. 세션이 막 생성된 직후에만 호출되므로 항상 1번이 된다."""
+    step = EmotionStep(
+        session_id=session_id,
+        step_order=1,
+        step_type="assistant",
+        user_input="",
+        gpt_response=assistant_text,
+        created_at=datetime.utcnow(),
+        insight_tag=None,
+    )
+    db.add(step)
     db.commit()
 
 

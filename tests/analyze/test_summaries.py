@@ -19,8 +19,8 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 summaries_router = importlib.import_module("app.analyze.routers.summaries")
-auth_module = importlib.import_module("app.backend.dependencies.auth")
-emotion_models = importlib.import_module("app.backend.models.emotion")
+auth_module = importlib.import_module("app.core.auth")
+emotion_models = importlib.import_module("app.core.models.emotion")
 user_model = importlib.import_module("app.backend.models.user")
 
 

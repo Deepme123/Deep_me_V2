@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlmodel import Session, select
 
 from app.db.session import session_scope
-from app.backend.models.emotion import EmotionSession, EmotionStep
+from app.core.models.emotion import EmotionSession, EmotionStep
 from app.backend.models.task import Task
 from app.backend.services.task_llm_service import (
     TaskDraft,

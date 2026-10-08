@@ -5,7 +5,7 @@ import re
 from typing import Iterable
 from uuid import UUID
 
-from app.backend.models.emotion import EmotionStep
+from app.core.models.emotion import EmotionStep
 
 
 def safe_str(value: object) -> str:

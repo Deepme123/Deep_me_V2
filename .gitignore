@@ -45,3 +45,6 @@ docs/
 docs/handover
 !docs/API.md
 CLAUDE.md
+
+# graphify (지식그래프 산출물, 로컬 전용)
+graphify-out/

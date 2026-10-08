@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from app.desire.core.needs_definitions import NEEDS_METADATA, NeedCode
 
@@ -11,7 +11,9 @@ class NeedCardRequest(BaseModel):
     """User conversation payload for need analysis."""
 
     session_id: UUID = Field(..., description="EmotionSession ID to link results to")
-    conversation_text: str = Field(..., description="Full conversation text to analyze")
+    conversation_text: str = Field(
+        ..., max_length=20000, description="Full conversation text to analyze"
+    )
 
 
 class NeedScore(BaseModel):

@@ -9,7 +9,7 @@ from datetime import datetime
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from app.backend.models.emotion import EmotionStep
+from app.core.models.emotion import EmotionStep
 
 # 정책 상수
 ACTIVITY_STEP_TYPE = os.getenv("ACTIVITY_STEP_TYPE", "activity_suggest")

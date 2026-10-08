@@ -9,10 +9,6 @@ from pydantic import BaseModel, Field, model_validator
 
 # ===== Session =====
 
-class SessionCreate(BaseModel):
-    user_id: UUID
-
-
 class SessionOut(BaseModel):
     session_id: UUID
     user_id: UUID
@@ -86,14 +82,6 @@ class CardOut(BaseModel):
     exportable: bool = True
 
 
-class SummaryOut(BaseModel):
-    summary: Optional[str] = None
-    core_emotions: Optional[List[EmotionEntry]] = None
-    tags: Optional[List[str]] = None
-    created_at: datetime
-    risk_level: Optional[str] = None
-
-
 # ===== 만족도 평가 =====
 
 class SatisfactionRatingCreate(BaseModel):
@@ -136,13 +124,6 @@ class AutoCardCreate(AutoCardRequestBase):
     conversation_log: List[ConversationTurn] = Field(
         default_factory=list,
         description="기존 방식: 호출자가 대화 로그를 직접 전달",
-    )
-
-
-class SessionAutoCardCreate(AutoCardRequestBase):
-    session_id: UUID = Field(
-        ...,
-        description="세션 기반 방식: 서버가 session_id로 대화 로그를 조회",
     )
 
 

@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from app.backend.core.jwt import decode_access_token
+from app.core.jwt import decode_access_token
 from app.backend.services.close_policy import CANCEL_CLOSE_MESSAGE_TYPE
 from app.backend.services.ws_utils import ensure_uuid, safe_str
 
@@ -67,6 +67,68 @@ def decode_user_id_from_token(token: str | None) -> UUID | None:
         return None
 
 
+# 타입 없이 키워드만 보내도 해당 메시지로 인정하는 타입들
+_BARE_KEYWORD_TYPES = frozenset(
+    {MSG_PING, MSG_OPEN, MSG_CLOSE, MSG_CONFIRM_CLOSE, MSG_CANCEL_CLOSE}
+)
+# type 없는 JSON을 message로 정규화할 때 함께 넘겨주는 키
+_MESSAGE_PASSTHROUGH_KEYS = (
+    "step_type",
+    "emotion_label",
+    "topic",
+    "trigger_summary",
+    "insight_summary",
+    "max_items",
+    "access_token",
+)
+
+
+def _normalize_json_payload(obj: object) -> dict | None:
+    """JSON 페이로드를 프로토콜 메시지로 바꾼다. 메시지로 볼 수 없으면 None."""
+    if not isinstance(obj, dict):
+        return None
+    if "type" in obj:
+        return obj
+    if "user_input" not in obj and "text" not in obj:
+        return None
+    normalized = {"type": MSG_MESSAGE, "text": obj.get("user_input") or obj.get("text") or ""}
+    normalized.update({key: obj[key] for key in _MESSAGE_PASSTHROUGH_KEYS if key in obj})
+    return normalized
+
+
+def _parse_query_string(stripped: str) -> dict | None:
+    """`type=message&text=hi` 형태를 dict로 바꾼다. type이 없으면 None."""
+    if "=" not in stripped or "&" not in stripped:
+        return None
+    try:
+        query = parse_qs(stripped, keep_blank_values=True)
+    except Exception:
+        return None
+    obj = {key: (value[0] if value else value) for key, value in query.items()}
+    return obj if "type" in obj else None
+
+
+def _parse_text_frame(text: str, *, strict_json: bool) -> dict:
+    stripped = text.strip()
+
+    if stripped.startswith(("{", "[")):
+        try:
+            obj = json.loads(stripped)
+        except Exception:
+            if strict_json:
+                raise InvalidPayload("invalid_json")
+        else:
+            message = _normalize_json_payload(obj)
+            if message is not None:
+                return message
+
+    lowered = stripped.lower()
+    if lowered in _BARE_KEYWORD_TYPES:
+        return {"type": lowered}
+
+    return _parse_query_string(stripped) or {"type": MSG_MESSAGE, "text": stripped}
+
+
 async def ws_recv_safe(
     websocket: WebSocket,
     *,
@@ -101,60 +163,10 @@ async def ws_recv_safe(
         raise WebSocketDisconnect(event.get("code"))
 
     text = event.get("text")
-    data = event.get("bytes")
-
     if text is not None:
-        stripped = text.strip()
+        return _parse_text_frame(text, strict_json=strict_json)
 
-        if stripped and (stripped.startswith("{") or stripped.startswith("[")):
-            try:
-                obj = json.loads(stripped)
-                if isinstance(obj, dict):
-                    if "type" in obj:
-                        return obj
-                    if "user_input" in obj or "text" in obj:
-                        text_value = obj.get("user_input") or obj.get("text") or ""
-                        normalized = {"type": MSG_MESSAGE, "text": text_value}
-                        for key in (
-                            "step_type",
-                            "emotion_label",
-                            "topic",
-                            "trigger_summary",
-                            "insight_summary",
-                            "max_items",
-                            "access_token",
-                        ):
-                            if key in obj:
-                                normalized[key] = obj[key]
-                        return normalized
-            except Exception:
-                if strict_json:
-                    raise InvalidPayload("invalid_json")
-
-        lowered = stripped.lower()
-        if lowered == MSG_PING:
-            return {"type": MSG_PING}
-        if lowered == MSG_OPEN:
-            return {"type": MSG_OPEN}
-        if lowered == MSG_CLOSE:
-            return {"type": MSG_CLOSE}
-        if lowered == MSG_CONFIRM_CLOSE:
-            return {"type": MSG_CONFIRM_CLOSE}
-        if lowered == MSG_CANCEL_CLOSE:
-            return {"type": MSG_CANCEL_CLOSE}
-
-        if "=" in stripped and "&" in stripped:
-            try:
-                query = parse_qs(stripped, keep_blank_values=True)
-                obj = {key: (value[0] if isinstance(value, list) and value else value) for key, value in query.items()}
-                if "type" in obj:
-                    return obj
-            except Exception:
-                pass
-
-        return {"type": MSG_MESSAGE, "text": stripped}
-
-    if data is not None:
+    if event.get("bytes") is not None:
         raise InvalidPayload("binary_frames_not_allowed")
 
     return None

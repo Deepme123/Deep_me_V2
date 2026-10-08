@@ -6,7 +6,7 @@ from typing import Optional
 from sqlmodel import Session, select
 
 from app.analyze import models as m
-from app.backend.models.emotion import EmotionSession
+from app.core.models.emotion import EmotionSession
 
 
 def list_summaries(

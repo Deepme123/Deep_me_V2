@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List
 from uuid import UUID
 
 from fastapi.concurrency import run_in_threadpool
@@ -166,7 +166,7 @@ def _build_personalization_hint(selections: List[UserNeedSelection]) -> str:
 
 
 def _resolve_personalization_hint(db: Session, session_id: UUID) -> str:
-    from app.backend.models.emotion import EmotionSession
+    from app.core.models.emotion import EmotionSession
 
     try:
         session_row = db.get(EmotionSession, session_id)

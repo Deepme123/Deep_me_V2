@@ -21,7 +21,7 @@ if str(ROOT_DIR) not in sys.path:
 cards_router = importlib.import_module("app.analyze.routers.cards")
 summaries_router = importlib.import_module("app.analyze.routers.summaries")
 models = importlib.import_module("app.analyze.models")
-emotion_models = importlib.import_module("app.backend.models.emotion")
+emotion_models = importlib.import_module("app.core.models.emotion")
 user_model = importlib.import_module("app.backend.models.user")
 
 

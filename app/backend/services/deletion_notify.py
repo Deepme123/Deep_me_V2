@@ -20,27 +20,12 @@ from uuid import UUID
 
 import httpx
 
+from app.backend.services.deploy_notify_utils import _handle_http_error
+
 logger = logging.getLogger(__name__)
 
 _TIMEOUT_SEC = 10
 _FOOTER = {"text": "Deep Me Account Bot"}
-
-
-def _handle_http_error(e: Exception) -> str:
-    if isinstance(e, httpx.HTTPStatusError):
-        code = e.response.status_code
-        msgs = {
-            401: "인증 실패 — API 키 확인",
-            403: "권한 없음 — 토큰 권한 범위 확인",
-            404: "리소스 없음 — 서비스 ID 또는 URL 확인",
-            429: "Rate limit 초과 — 잠시 후 재시도",
-        }
-        return f"Error {code}: {msgs.get(code, e.response.text[:200])}"
-    if isinstance(e, httpx.TimeoutException):
-        return "Error: 요청 타임아웃"
-    if isinstance(e, httpx.ConnectError):
-        return "Error: 연결 실패"
-    return f"Error: {type(e).__name__}: {e}"
 
 
 def _webhook_url() -> str:

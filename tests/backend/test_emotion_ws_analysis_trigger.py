@@ -195,6 +195,24 @@ def ws_harness(monkeypatch):
         # (테스트 웹소켓 종료 타이밍과 겹쳐) 간헐적으로 CancelledError를 유발했다.
         return None
 
+    def fake_pick_greeting_message(_db):
+        return 0, "테스트 인사말"
+
+    def fake_commit_opening_message(_db, session_id, assistant_text):
+        assert store.session is not None
+        assert store.session.session_id == session_id
+        store.steps.append(
+            SimpleNamespace(
+                session_id=session_id,
+                step_order=1,
+                step_type="assistant",
+                user_input="",
+                gpt_response=assistant_text,
+                created_at=_utcnow(),
+                insight_tag=None,
+            )
+        )
+
     monkeypatch.setattr(emotion_ws, "session_scope", fake_session_scope)
     monkeypatch.setattr(ws_post_actions, "generate_need_card_async", fake_generate_need_card_async)
     monkeypatch.setattr(emotion_ws, "session_with_db", fake_with_db)
@@ -210,6 +228,10 @@ def ws_harness(monkeypatch):
     monkeypatch.setattr(emotion_ws, "is_activity_turn", lambda **_kwargs: False)
     monkeypatch.setattr(emotion_ws, "stream_noa_response", fake_stream_noa_response)
     monkeypatch.setattr(emotion_ws.CFG, "MIN_CLOSE_ORDER", 0)
+    monkeypatch.setattr(emotion_ws, "greeting_pick_greeting_message", fake_pick_greeting_message)
+    monkeypatch.setattr(emotion_ws, "session_commit_opening_message", fake_commit_opening_message)
+    monkeypatch.setattr(emotion_ws.CFG, "GREETING_DELAY_MIN_SEC", 0.0)
+    monkeypatch.setattr(emotion_ws.CFG, "GREETING_DELAY_MAX_SEC", 0.0)
 
     app = FastAPI()
     app.include_router(emotion_ws.router)
@@ -222,6 +244,9 @@ def _open_ws(client: TestClient):
     with client.websocket_connect("/ws/emotion") as ws:
         open_event = ws.receive_json()
         assert open_event["type"] == "open_ok"
+        greeting_events = [ws.receive_json() for _ in range(3)]
+        assert [e["type"] for e in greeting_events] == ["message_start", "message", "message_end"]
+        assert greeting_events[1]["message"] == "테스트 인사말"
         yield ws
 
 
@@ -302,6 +327,7 @@ def test_analysis_card_generation_sees_transcript_committed_before_ready_event(
     async def fakepost_action_generate_analysis_card_async(session_id):
         store.generated_card_session_ids.append(session_id)
         assert [(step.step_type, step.user_input, step.gpt_response) for step in store.steps] == [
+            ("assistant", "", "테스트 인사말"),
             ("user", "Please wrap this up.", ""),
             ("assistant", "", "ignored"),
         ]

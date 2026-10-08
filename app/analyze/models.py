@@ -8,7 +8,7 @@ from datetime import datetime
 from sqlmodel import SQLModel, Field
 from sqlalchemy import Column, ForeignKey, JSON, UniqueConstraint
 
-from app.backend.models.emotion import EmotionSession
+from app.core.models.emotion import EmotionSession
 
 class AnalysisCard(SQLModel, table=True):
     __tablename__ = "analysiscard"

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import importlib
 import os
 import sys
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from slowapi.errors import RateLimitExceeded
 
 os.environ.setdefault("JWT_SECRET_KEY", "test-rate-limit-secret")
 os.environ.setdefault("JWT_REFRESH_SECRET", "test-rate-limit-refresh-secret")
@@ -18,20 +22,27 @@ if str(ROOT) not in sys.path:
 
 @pytest.fixture(scope="function")
 def client_with_rate_limit(monkeypatch):
-    """Rate Limiting이 활성화된 상태에서 app 생성"""
+    """Rate Limiting이 활성화된 상태에서, main.py를 건드리지 않는 독립된 app으로
+    health_llm 라우터만 검증한다.
+
+    app.backend.main을 통째로 reload하면 이미 임포트된 다른 라우터 모듈들과
+    router 객체가 꼬여 다른 테스트 파일에 부작용을 일으키므로(참고:
+    test_deletion_feedback_rate_limit.py) main.py는 건드리지 않는다.
+
+    rate_limit/health_llm 모듈 reload는 sys.modules에 캐싱된 같은 모듈 객체를
+    다시 실행하는 방식이라, 테스트가 끝난 뒤 RATELIMIT_ENABLED=false로 되돌려
+    다시 reload해두지 않으면 진짜(slowapi) 리미터가 프로세스가 끝날 때까지
+    health_llm 모듈에 남아있게 된다. 그러면 health_llm 함수를 TestClient 없이
+    직접 호출하는 다른 테스트 파일(test_health_llm_router.py 등)이 request=None
+    때문에 깨진다 — 실제로 이 teardown이 빠져 있던 버전에서 재현 및 확인됨.
+    """
     monkeypatch.setenv("RATELIMIT_ENABLED", "true")
 
-    import importlib
-    import app.backend.core.rate_limit
-    import app.backend.routers.health_llm
-    import app.backend.main
+    import app.backend.core.rate_limit as rate_limit_module
+    import app.backend.routers.health_llm as health_llm_module
 
-    importlib.reload(app.backend.core.rate_limit)
-    importlib.reload(app.backend.routers.health_llm)
-    importlib.reload(app.backend.main)
-
-    # LLM 호출 없이 테스트할 수 있도록 health_llm 모듈의 LLM 함수 교체
-    import app.backend.routers.health_llm as hlm
+    importlib.reload(rate_limit_module)
+    importlib.reload(health_llm_module)
 
     def _fake_generate(**kwargs):
         return "pong"
@@ -39,11 +50,22 @@ def client_with_rate_limit(monkeypatch):
     def _fake_stream(**kwargs):
         yield "pong"
 
-    monkeypatch.setattr(hlm, "generate_noa_response", _fake_generate)
-    monkeypatch.setattr(hlm, "stream_noa_response", _fake_stream)
+    monkeypatch.setattr(health_llm_module, "generate_noa_response", _fake_generate)
+    monkeypatch.setattr(health_llm_module, "stream_noa_response", _fake_stream)
 
-    from app.backend.main import app
-    return TestClient(app)
+    app = FastAPI()
+    app.state.limiter = rate_limit_module.limiter
+    app.add_exception_handler(
+        RateLimitExceeded,
+        lambda request, exc: JSONResponse({"detail": "rate_limit_exceeded"}, status_code=429),
+    )
+    app.include_router(health_llm_module.router)
+
+    yield TestClient(app)
+
+    os.environ["RATELIMIT_ENABLED"] = "false"
+    importlib.reload(rate_limit_module)
+    importlib.reload(health_llm_module)
 
 
 def test_health_llm_ok(client_with_rate_limit):

@@ -13,14 +13,14 @@ from app.backend.core.rate_limit import limiter as rate_limiter, RATELIMIT_ENABL
 from app.backend.core.deletion_scheduler import start_scheduler, shutdown_scheduler
 
 # 모델 모듈 임포트(테이블 등록 보장용)
-from app.backend.models import emotion as _m_emotion  # noqa: F401
+from app.core.models import emotion as _m_emotion  # noqa: F401
 from app.backend.models import task as _m_task  # noqa: F401
 from app.backend.models import refresh_token as _m_refresh  # noqa: F401
 
 # 라우터
 from app.backend.routers import emotion, auth, user, task, deletion_feedback
 from app.backend.routers.emotion_ws import ws_router as emotion_ws_router
-from app.backend.routers import health_llm 
+from app.backend.routers import health_llm
 from app.backend.routers import deploy_webhook
 
 setup_logging()
@@ -85,6 +85,7 @@ def _start_account_deletion_scheduler() -> None:
 @app.on_event("shutdown")
 def _stop_account_deletion_scheduler() -> None:
     shutdown_scheduler()
+
 
 
 @app.get("/health")

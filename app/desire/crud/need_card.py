@@ -1,8 +1,10 @@
 from uuid import UUID
 from typing import List, Optional
 
-from sqlmodel import Session, select
+from sqlalchemy.orm import selectinload
+from sqlmodel import Session, func, select
 
+from app.core.models.emotion import EmotionSession
 from app.desire.models.need_card import NeedCardResult, NeedCardScore, UserNeedSelection
 from app.desire.schemas.need_card import NeedScore
 
@@ -11,8 +13,6 @@ def get_last_need_card_result_by_user(
     session: Session,
     user_id: UUID,
 ) -> Optional[NeedCardResult]:
-    from app.backend.models.emotion import EmotionSession
-
     stmt = (
         select(NeedCardResult)
         .join(EmotionSession, NeedCardResult.session_id == EmotionSession.session_id)
@@ -29,8 +29,6 @@ def get_need_card_result_by_session(
     user_id: UUID,
 ) -> Optional[NeedCardResult]:
     """특정 세션의 분석 결과를 가져온다. 그 세션이 user_id 소유가 아니면 None."""
-    from app.backend.models.emotion import EmotionSession
-
     stmt = (
         select(NeedCardResult)
         .join(EmotionSession, NeedCardResult.session_id == EmotionSession.session_id)
@@ -47,17 +45,18 @@ def get_need_card_history_by_user(
     limit: int = 20,
     offset: int = 0,
 ) -> tuple[list[NeedCardResult], int]:
-    from app.backend.models.emotion import EmotionSession
-    from sqlmodel import func
-
     base = (
         select(NeedCardResult)
         .join(EmotionSession, NeedCardResult.session_id == EmotionSession.session_id)
         .where(EmotionSession.user_id == user_id)
     )
     total = session.exec(select(func.count()).select_from(base.subquery())).one()
+    # 라우터가 행마다 row.scores를 읽으므로 한 번에 로딩해 N+1을 피한다.
     rows = session.exec(
-        base.order_by(NeedCardResult.created_at.desc()).limit(limit).offset(offset)
+        base.options(selectinload(NeedCardResult.scores))
+        .order_by(NeedCardResult.created_at.desc())
+        .limit(limit)
+        .offset(offset)
     ).all()
     return list(rows), total
 

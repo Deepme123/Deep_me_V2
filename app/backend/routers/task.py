@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
 from app.db.session import get_session
-from app.backend.dependencies.auth import get_current_user
+from app.core.auth import get_current_user
 from app.backend.models.task import Task
 from app.backend.models.user import User
 from app.backend.schemas.task import TaskRecommendBySessionRequest

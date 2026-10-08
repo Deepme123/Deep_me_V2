@@ -14,7 +14,7 @@ from app.backend.services.deletion_notify import (
     notify_deletion_completed,
     notify_deletion_requested,
 )
-from app.backend.models.emotion import EmotionSession, EmotionStep
+from app.core.models.emotion import EmotionSession, EmotionStep
 
 log = logging.getLogger(__name__)
 
