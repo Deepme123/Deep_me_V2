@@ -89,7 +89,7 @@ def test_head_migration_includes_analysiscard():
             "user",
             "user_need_selection",
         ]
-        assert _alembic_version(tmp_db) == "0019_deletion_feedback"
+        assert _alembic_version(tmp_db) == "0020_add_greeting_message_stat"
     finally:
         if tmp_db.exists():
             tmp_db.unlink()
