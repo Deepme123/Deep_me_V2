@@ -209,7 +209,11 @@ alembic/
     ├── 0012_need_card_score_rationale.py           # need_card_score.rationale 컬럼 추가
     ├── 0013_need_card_score_reflection_message.py  # need_card_score.reflection_message 컬럼 추가
     ├── 0014_user_need_selection_session_id.py      # user_need_selection.session_id 컬럼 추가
-    └── 0015_add_greeting_message_stat.py           # greetingmessagestat 테이블 추가
+    ├── 0016_account_deletion.py                    # user.deletion_requested_at, satisfactionrating FK SET NULL
+    ├── 0017_deletion_reason.py                     # user.deletion_reason 컬럼 추가
+    ├── 0018_deletion_reason_multi.py               # deletion_reason → deletion_reasons(JSON 배열)
+    ├── 0019_deletion_feedback.py                   # deletionfeedback 테이블 추가, user.deletion_reasons 제거
+    └── 0020_add_greeting_message_stat.py           # greetingmessagestat 테이블 추가 (원래 0015, 운영 체인에 맞춰 끝으로 이동)
 ```
 
 ### 4.2 마이그레이션 명령어

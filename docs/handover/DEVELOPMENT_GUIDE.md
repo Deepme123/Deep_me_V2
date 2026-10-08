@@ -189,13 +189,14 @@ alembic history      # 전체 마이그레이션 이력
 ```
 
 **현재 마이그레이션 버전:**
-- `0015_add_greeting_message_stat` (최신, 2026-08-04)
+- `0020_add_greeting_message_stat` (최신)
   - 0001~0005: 기본 스키마, `emotioncard`, `need_card_result`/`need_card_score`, JSONB 컬럼들
   - 0006~0007: `situation_steps` 컬럼, `user_need_selection` 테이블
   - 0008~0009: `emotioncard` → `analysiscard` 테이블명 변경, `session_id` UNIQUE 제약
   - 0010~0011: `thoughts` JSONB 변경, `satisfactionrating` 테이블 추가
   - 0012~0014: `need_card_score.rationale`/`reflection_message`, `user_need_selection.session_id`
-  - 0015: 세션 오픈 인사 문구 선택 횟수 카운터(`greetingmessagestat`) 테이블 추가
+  - 0016~0019: 회원 탈퇴(지연 삭제, 탈퇴 사유, `deletionfeedback` 테이블)
+  - 0020: 세션 오픈 인사 문구 선택 횟수 카운터(`greetingmessagestat`) 테이블 추가 (원래 0015였으나 운영 체인에 맞춰 끝으로 이동, 0015 번호는 비어 있음)
 
 전체 목록은 `DATABASE.md` 4.1절 참조.
 
