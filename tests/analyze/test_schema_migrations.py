@@ -93,3 +93,58 @@ def test_head_migration_includes_analysiscard():
     finally:
         if tmp_db.exists():
             tmp_db.unlink()
+
+
+def test_greeting_message_stat_created_after_0019():
+    # 운영 DB 상황: 0015 없이 0019까지 적용돼 greetingmessagestat이 없다.
+    tmp_db = _new_tmp_db("greeting-missing")
+    try:
+        _run_alembic(tmp_db, "0019_deletion_feedback")
+        assert "greetingmessagestat" not in _table_names(tmp_db)
+
+        _run_alembic(tmp_db, "head")
+
+        conn = sqlite3.connect(tmp_db)
+        try:
+            rows = conn.execute(
+                "select message_index, selected_count from greetingmessagestat order by message_index"
+            ).fetchall()
+        finally:
+            conn.close()
+        assert rows == [(i, 0) for i in range(10)]
+    finally:
+        if tmp_db.exists():
+            tmp_db.unlink()
+
+
+def test_greeting_message_stat_migration_keeps_existing_table():
+    # 테스트 서버 DB 상황: 과거 0015로 이미 테이블이 있고 카운터가 쌓여 있다.
+    tmp_db = _new_tmp_db("greeting-existing")
+    try:
+        _run_alembic(tmp_db, "0019_deletion_feedback")
+        conn = sqlite3.connect(tmp_db)
+        try:
+            conn.execute(
+                "create table greetingmessagestat ("
+                "message_index integer not null primary key, "
+                "selected_count integer not null default 0)"
+            )
+            conn.execute("insert into greetingmessagestat values (3, 7)")
+            conn.commit()
+        finally:
+            conn.close()
+
+        _run_alembic(tmp_db, "head")
+
+        conn = sqlite3.connect(tmp_db)
+        try:
+            rows = conn.execute(
+                "select message_index, selected_count from greetingmessagestat"
+            ).fetchall()
+        finally:
+            conn.close()
+        assert rows == [(3, 7)]
+        assert _alembic_version(tmp_db) == "0020_add_greeting_message_stat"
+    finally:
+        if tmp_db.exists():
+            tmp_db.unlink()
