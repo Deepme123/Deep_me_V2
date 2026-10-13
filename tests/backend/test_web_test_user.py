@@ -30,6 +30,12 @@ def engine():
     return engine
 
 
+@pytest.fixture(autouse=True)
+def _isolate_render_service(monkeypatch):
+    # Render 셸·CI 등 외부에서 RENDER_SERVICE_NAME이 들어와도 결과가 바뀌지 않도록 격리한다.
+    monkeypatch.delenv("RENDER_SERVICE_NAME", raising=False)
+
+
 @pytest.fixture
 def db(engine):
     with Session(engine) as session:
@@ -83,3 +89,37 @@ def test_no_auth_allowed_when_flag_on_and_app_env_development(db, monkeypatch):
     result = resolve_emotion_user_id(db, None)
 
     assert isinstance(result, UUID)
+
+
+def test_no_auth_allowed_on_render_test_service_without_app_env(db, monkeypatch):
+    monkeypatch.setenv("EMOTION_NO_AUTH_WEB_TEST", "true")
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.setenv("RENDER_SERVICE_NAME", "deep-me-v2-test")
+
+    result = resolve_emotion_user_id(db, None)
+
+    assert isinstance(result, UUID)
+
+
+def test_no_auth_rejected_on_render_test_service_when_flag_off(db, monkeypatch):
+    monkeypatch.setenv("EMOTION_NO_AUTH_WEB_TEST", "false")
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.setenv("RENDER_SERVICE_NAME", "deep-me-v2-test")
+
+    with pytest.raises(HTTPException) as exc_info:
+        resolve_emotion_user_id(db, None)
+
+    assert exc_info.value.status_code == 401
+
+
+# 운영 서비스나 이름이 비슷한 서비스로 우회가 열리지 않는지 고정한다.
+@pytest.mark.parametrize("service", ["deep-me-v2", "deep-me-v2-test-old", "deep-me-v2-tes", ""])
+def test_no_auth_rejected_on_other_render_services(db, monkeypatch, service):
+    monkeypatch.setenv("EMOTION_NO_AUTH_WEB_TEST", "true")
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.setenv("RENDER_SERVICE_NAME", service)
+
+    with pytest.raises(HTTPException) as exc_info:
+        resolve_emotion_user_id(db, None)
+
+    assert exc_info.value.status_code == 401

@@ -85,6 +85,9 @@ Google Access 토큰으로 로그인합니다 (userinfo 엔드포인트 조회, 
 결정론적인 웹 테스트용 익명 유저(`WEB_TEST_USER_EMAIL`)로 폴백합니다
 (`web_test_user.resolve_emotion_user_id`) — 기본값은 `false`이므로 토큰이
 없으면 `401`입니다.
+이 폴백은 `APP_ENV`가 `development`/`local`이거나, Render 테스트 서비스
+(`RENDER_SERVICE_NAME=deep-me-v2-test`)에서 실행 중일 때만 동작합니다.
+웹소켓(`/ws/emotion`)도 같은 함수를 사용합니다.
 
 ### `GET /emotion/sessions/active`
 
