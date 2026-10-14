@@ -113,8 +113,9 @@ RATELIMIT_ENABLED=true             # false면 전체 레이트리밋 비활성 (
 ### 2.5 CORS
 
 ```env
-CORS_ALLOW_ORIGINS=https://deep-me-v1.onrender.com,http://localhost:3000,http://localhost:5173
+CORS_ALLOW_ORIGINS=https://deep-me-v1.onrender.com,http://localhost:3000,http://localhost:5173,https://bentleypark.github.io
 ```
+`https://bentleypark.github.io`는 감정대화 웹테스트 페이지(GitHub Pages)입니다. 이 값을 환경변수로 직접 지정하면 코드 기본값은 무시되므로 이 출처도 함께 넣어야 합니다.
 
 운영 도메인이 변경되면 이 값을 업데이트해야 합니다.
 

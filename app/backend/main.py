@@ -37,7 +37,11 @@ if RATELIMIT_ENABLED:
     app.add_exception_handler(RateLimitExceeded, lambda request, exc: JSONResponse({"detail": "rate_limit_exceeded"}, status_code=429))
 
 # CORS
-_default_origins = "https://deep-me-v1.onrender.com,http://localhost:3000,http://localhost:5173"
+# bentleypark.github.io: 감정대화 웹테스트 페이지(deepme-chat-test, GitHub Pages)
+_default_origins = (
+    "https://deep-me-v1.onrender.com,http://localhost:3000,http://localhost:5173,"
+    "https://bentleypark.github.io"
+)
 origins = [
     o.strip()
     for o in os.getenv("CORS_ALLOW_ORIGINS", _default_origins).split(",")
