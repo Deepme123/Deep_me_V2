@@ -37,7 +37,8 @@ def engine():
 @pytest.fixture(autouse=True)
 def _isolate_runtime(monkeypatch, engine):
     monkeypatch.delenv("APP_ENV", raising=False)
-    monkeypatch.setenv("RENDER_SERVICE_NAME", "deep-me-v2-test")
+    monkeypatch.delenv("RENDER_SERVICE_NAME", raising=False)
+    monkeypatch.setenv("RENDER_SERVICE_ID", "srv-d9j0musm0tmc73a7ntv0")
 
     # 대화 경로(prompt_loader)도 같은 DB를 보게 해 저장 → 즉시 반영을 검증한다.
     @contextmanager
@@ -121,9 +122,18 @@ def test_unknown_prompt_type_rejected(client):
     assert client.get("/prompts/other").status_code == 422
 
 
-@pytest.mark.parametrize("service", ["deep-me-v2", "deep-me-v2-test-old", ""])
-def test_all_routes_404_outside_test_runtime(client, monkeypatch, service):
-    monkeypatch.setenv("RENDER_SERVICE_NAME", service)
+# 운영 서비스(srv-d267fau3jp1c73cmcr1g / Deep_me_V2)를 포함해 테스트 서비스가 아니면 404.
+@pytest.mark.parametrize(
+    "service_id, service_name",
+    [
+        ("srv-d267fau3jp1c73cmcr1g", "Deep_me_V2"),
+        ("srv-d9j0musm0tmc73a7ntv0x", "Deep_me_test_server_old"),
+        ("", ""),
+    ],
+)
+def test_all_routes_404_outside_test_runtime(client, monkeypatch, service_id, service_name):
+    monkeypatch.setenv("RENDER_SERVICE_ID", service_id)
+    monkeypatch.setenv("RENDER_SERVICE_NAME", service_name)
 
     assert client.get("/prompts/system").status_code == 404
     assert client.put("/prompts/system", json={"content": "x"}).status_code == 404

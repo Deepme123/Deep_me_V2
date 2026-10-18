@@ -86,7 +86,8 @@ Google Access 토큰으로 로그인합니다 (userinfo 엔드포인트 조회, 
 (`web_test_user.resolve_emotion_user_id`) — 기본값은 `false`이므로 토큰이
 없으면 `401`입니다.
 이 폴백은 `APP_ENV`가 `development`/`local`이거나, Render 테스트 서비스
-(`RENDER_SERVICE_NAME=deep-me-v2-test`)에서 실행 중일 때만 동작합니다.
+(`RENDER_SERVICE_ID=srv-d9j0musm0tmc73a7ntv0` 또는
+`RENDER_SERVICE_NAME=Deep_me_test_server`)에서 실행 중일 때만 동작합니다.
 웹소켓(`/ws/emotion`)도 같은 함수를 사용합니다.
 
 ### `GET /emotion/sessions/active`
@@ -695,7 +696,8 @@ GitHub push/PR merge 이벤트를 받아 Render 배포를 트리거하고 Discor
 
 감정대화 시스템 프롬프트(`system`)와 태스크 추천 프롬프트(`task`)를 조회·수정합니다
 (`app/backend/routers/prompts.py`). **인증이 없으므로** 테스트 런타임
-(`RENDER_SERVICE_NAME=deep-me-v2-test` 또는 `APP_ENV=development/local`)에서만
+(Render 테스트 서비스 `Deep_me_test_server`/`srv-d9j0musm0tmc73a7ntv0` 또는
+`APP_ENV=development/local`, `app/backend/core/runtime_env.py`)에서만
 동작하고, 그 외(운영 서버 포함)에서는 모든 경로가 `404`입니다. 저장한 프롬프트는
 `promptrevision` 테이블에 이력으로 쌓이고 저장 즉시 다음 대화부터 적용되며,
 재배포 후에도 유지됩니다. 운영 서버는 저장값을 읽지 않고 항상 파일 프롬프트를 씁니다.

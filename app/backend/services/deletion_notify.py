@@ -34,7 +34,7 @@ def _webhook_url() -> str:
 
 
 def _env_label() -> str:
-    # Render가 서비스마다 자동으로 주입한다(deep-me-v2 / deep-me-v2-test).
+    # Render가 서비스마다 자동으로 주입한다(운영 Deep_me_V2 / 테스트 Deep_me_test_server).
     return os.getenv("RENDER_SERVICE_NAME", "local")
 
 

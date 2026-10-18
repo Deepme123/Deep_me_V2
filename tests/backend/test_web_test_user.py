@@ -32,8 +32,9 @@ def engine():
 
 @pytest.fixture(autouse=True)
 def _isolate_render_service(monkeypatch):
-    # Render 셸·CI 등 외부에서 RENDER_SERVICE_NAME이 들어와도 결과가 바뀌지 않도록 격리한다.
+    # Render 셸·CI 등 외부에서 RENDER_SERVICE_NAME/ID가 들어와도 결과가 바뀌지 않도록 격리한다.
     monkeypatch.delenv("RENDER_SERVICE_NAME", raising=False)
+    monkeypatch.delenv("RENDER_SERVICE_ID", raising=False)
 
 
 @pytest.fixture
@@ -94,7 +95,7 @@ def test_no_auth_allowed_when_flag_on_and_app_env_development(db, monkeypatch):
 def test_no_auth_allowed_on_render_test_service_without_app_env(db, monkeypatch):
     monkeypatch.setenv("EMOTION_NO_AUTH_WEB_TEST", "true")
     monkeypatch.delenv("APP_ENV", raising=False)
-    monkeypatch.setenv("RENDER_SERVICE_NAME", "deep-me-v2-test")
+    monkeypatch.setenv("RENDER_SERVICE_NAME", "Deep_me_test_server")
 
     result = resolve_emotion_user_id(db, None)
 
@@ -104,7 +105,31 @@ def test_no_auth_allowed_on_render_test_service_without_app_env(db, monkeypatch)
 def test_no_auth_rejected_on_render_test_service_when_flag_off(db, monkeypatch):
     monkeypatch.setenv("EMOTION_NO_AUTH_WEB_TEST", "false")
     monkeypatch.delenv("APP_ENV", raising=False)
-    monkeypatch.setenv("RENDER_SERVICE_NAME", "deep-me-v2-test")
+    monkeypatch.setenv("RENDER_SERVICE_NAME", "Deep_me_test_server")
+
+    with pytest.raises(HTTPException) as exc_info:
+        resolve_emotion_user_id(db, None)
+
+    assert exc_info.value.status_code == 401
+
+
+def test_no_auth_allowed_on_render_test_service_id(db, monkeypatch):
+    # 서비스 이름이 대시보드에서 바뀌어도 불변인 서비스 ID로 판정된다.
+    monkeypatch.setenv("EMOTION_NO_AUTH_WEB_TEST", "true")
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.setenv("RENDER_SERVICE_ID", "srv-d9j0musm0tmc73a7ntv0")
+    monkeypatch.setenv("RENDER_SERVICE_NAME", "renamed-test-server")
+
+    result = resolve_emotion_user_id(db, None)
+
+    assert isinstance(result, UUID)
+
+
+def test_no_auth_rejected_on_production_service_id(db, monkeypatch):
+    monkeypatch.setenv("EMOTION_NO_AUTH_WEB_TEST", "true")
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.setenv("RENDER_SERVICE_ID", "srv-d267fau3jp1c73cmcr1g")
+    monkeypatch.setenv("RENDER_SERVICE_NAME", "Deep_me_V2")
 
     with pytest.raises(HTTPException) as exc_info:
         resolve_emotion_user_id(db, None)
@@ -113,7 +138,7 @@ def test_no_auth_rejected_on_render_test_service_when_flag_off(db, monkeypatch):
 
 
 # 운영 서비스나 이름이 비슷한 서비스로 우회가 열리지 않는지 고정한다.
-@pytest.mark.parametrize("service", ["deep-me-v2", "deep-me-v2-test-old", "deep-me-v2-tes", ""])
+@pytest.mark.parametrize("service", ["Deep_me_V2", "Deep_me_test_server_old", "Deep_me_test_serve", ""])
 def test_no_auth_rejected_on_other_render_services(db, monkeypatch, service):
     monkeypatch.setenv("EMOTION_NO_AUTH_WEB_TEST", "true")
     monkeypatch.delenv("APP_ENV", raising=False)
