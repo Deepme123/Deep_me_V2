@@ -16,6 +16,7 @@ from app.backend.core.deletion_scheduler import start_scheduler, shutdown_schedu
 from app.core.models import emotion as _m_emotion  # noqa: F401
 from app.backend.models import task as _m_task  # noqa: F401
 from app.backend.models import refresh_token as _m_refresh  # noqa: F401
+from app.backend.models import prompt_revision as _m_prompt_revision  # noqa: F401
 
 # 라우터
 from app.backend.routers import emotion, auth, user, task, deletion_feedback

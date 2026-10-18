@@ -83,13 +83,14 @@ def test_head_migration_includes_analysiscard():
             "greetingmessagestat",
             "need_card_result",
             "need_card_score",
+            "promptrevision",
             "refreshtoken",
             "satisfactionrating",
             "task",
             "user",
             "user_need_selection",
         ]
-        assert _alembic_version(tmp_db) == "0020_add_greeting_message_stat"
+        assert _alembic_version(tmp_db) == "0021_add_prompt_revision"
     finally:
         if tmp_db.exists():
             tmp_db.unlink()
@@ -144,7 +145,7 @@ def test_greeting_message_stat_migration_keeps_existing_table():
         finally:
             conn.close()
         assert rows == [(3, 7)]
-        assert _alembic_version(tmp_db) == "0020_add_greeting_message_stat"
+        assert _alembic_version(tmp_db) == "0021_add_prompt_revision"
     finally:
         if tmp_db.exists():
             tmp_db.unlink()
