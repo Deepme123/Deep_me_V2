@@ -39,5 +39,78 @@ class PromptLoaderTests(unittest.TestCase):
         self.assertIn("STEP 12 응답 맨 끝에는 반드시 `[[CONFIRM_CLOSE]]`를 붙인다.", result)
 
 
+
+# ---- 테스트 런타임 DB 오버라이드 (/prompts API로 저장한 프롬프트) ----
+
+import pytest  # noqa: E402
+from contextlib import contextmanager  # noqa: E402
+from sqlalchemy.pool import StaticPool  # noqa: E402
+from sqlmodel import Session, SQLModel, create_engine  # noqa: E402
+
+from app.backend.models.prompt_revision import PromptRevision  # noqa: E402
+
+
+@pytest.fixture
+def override_db(monkeypatch):
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    SQLModel.metadata.create_all(engine)
+
+    @contextmanager
+    def _scope():
+        with Session(engine) as s:
+            yield s
+
+    monkeypatch.setattr(prompt_loader, "session_scope", _scope)
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("RENDER_SERVICE_NAME", raising=False)
+    prompt_loader.get_system_prompt.cache_clear()
+    yield engine
+    prompt_loader.get_system_prompt.cache_clear()
+
+
+def _add_revision(engine, content, prompt_type="system"):
+    with Session(engine) as s:
+        s.add(PromptRevision(prompt_type=prompt_type, content=content))
+        s.commit()
+
+
+def test_db_override_used_on_render_test_service(override_db, monkeypatch):
+    monkeypatch.setenv("RENDER_SERVICE_NAME", "deep-me-v2-test")
+    _add_revision(override_db, "old")
+    _add_revision(override_db, "new")
+
+    assert prompt_loader.get_system_prompt() == "new"
+
+
+def test_db_override_ignored_on_production(override_db, monkeypatch):
+    # 운영 서비스가 테스트 서버와 DB를 공유하더라도 오버라이드를 읽지 않아야 한다.
+    monkeypatch.setenv("RENDER_SERVICE_NAME", "deep-me-v2")
+    _add_revision(override_db, "override")
+
+    assert prompt_loader.get_system_prompt() == prompt_loader.get_file_prompt("system")
+
+
+def test_reset_revision_falls_back_to_file(override_db, monkeypatch):
+    monkeypatch.setenv("RENDER_SERVICE_NAME", "deep-me-v2-test")
+    _add_revision(override_db, "override")
+    _add_revision(override_db, None)
+
+    assert prompt_loader.get_system_prompt() == prompt_loader.get_file_prompt("system")
+
+
+def test_db_failure_falls_back_to_file(monkeypatch):
+    monkeypatch.setenv("RENDER_SERVICE_NAME", "deep-me-v2-test")
+
+    @contextmanager
+    def _broken():
+        raise RuntimeError("db down")
+        yield
+
+    monkeypatch.setattr(prompt_loader, "session_scope", _broken)
+    assert prompt_loader.get_db_override("system") is None
+
+
 if __name__ == "__main__":
     unittest.main()
