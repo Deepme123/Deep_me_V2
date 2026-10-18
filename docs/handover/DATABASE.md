@@ -26,6 +26,7 @@
 | `need_card_score` | 욕구 분석 8개 점수 행 (result_id 연결) |
 | `user_need_selection` | 사용자가 최종 선택한 욕구 코드 (session_id 연결 가능) |
 | `greetingmessagestat` | 세션 오픈 인사 문구별 선택 횟수 카운터 |
+| `promptrevision` | 테스트 서버 프롬프트 연구용 수정 이력 (append-only, 테스트 런타임에서만 읽힘) |
 
 ---
 
@@ -183,6 +184,21 @@ message_index   INTEGER  PK   -- greeting_messages.txt의 줄 순서
 selected_count  INTEGER  DEFAULT 0
 ```
 
+### 3.12 `promptrevision`
+
+`/prompts` API(테스트 런타임 전용)로 저장한 시스템/태스크 프롬프트 이력입니다.
+수정·삭제 없이 행을 추가만 하며, `prompt_type`별 가장 최근 행이 현재 적용 중인
+프롬프트입니다. `content`가 NULL인 행은 파일 기본값(`resources/*.txt`)으로의
+초기화를 뜻합니다. 운영 서버는 DB를 공유하더라도 이 테이블을 읽지 않습니다
+(`app/backend/core/prompt_loader.py`의 `get_db_override`).
+
+```sql
+revision_id  SERIAL       PK
+prompt_type  VARCHAR(16)  INDEX  -- 'system' | 'task'
+content      TEXT         NULL   -- NULL = 파일 기본값으로 초기화
+created_at   TIMESTAMP
+```
+
 ---
 
 ## 4. 마이그레이션
@@ -213,7 +229,8 @@ alembic/
     ├── 0017_deletion_reason.py                     # user.deletion_reason 컬럼 추가
     ├── 0018_deletion_reason_multi.py               # deletion_reason → deletion_reasons(JSON 배열)
     ├── 0019_deletion_feedback.py                   # deletionfeedback 테이블 추가, user.deletion_reasons 제거
-    └── 0020_add_greeting_message_stat.py           # greetingmessagestat 테이블 추가 (원래 0015, 운영 체인에 맞춰 끝으로 이동)
+    ├── 0020_add_greeting_message_stat.py           # greetingmessagestat 테이블 추가 (원래 0015, 운영 체인에 맞춰 끝으로 이동)
+    └── 0021_add_prompt_revision.py                 # promptrevision 테이블 추가 (테스트 서버 프롬프트 연구용)
 ```
 
 ### 4.2 마이그레이션 명령어
@@ -315,4 +332,5 @@ user
  └──< user_need_selection (user_id, CASCADE DELETE)
 
 greetingmessagestat  -- 독립 테이블, FK 없음 (greeting_messages.txt 인덱스 기준)
+promptrevision       -- 독립 테이블, FK 없음 (테스트 런타임 프롬프트 이력)
 ```

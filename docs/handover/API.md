@@ -691,7 +691,41 @@ GitHub push/PR merge 이벤트를 받아 Render 배포를 트리거하고 Discor
 
 ---
 
-## 9. 공통 에러 응답
+## 9. 프롬프트 연구 API (`/prompts`, 테스트 런타임 전용)
+
+감정대화 시스템 프롬프트(`system`)와 태스크 추천 프롬프트(`task`)를 조회·수정합니다
+(`app/backend/routers/prompts.py`). **인증이 없으므로** 테스트 런타임
+(`RENDER_SERVICE_NAME=deep-me-v2-test` 또는 `APP_ENV=development/local`)에서만
+동작하고, 그 외(운영 서버 포함)에서는 모든 경로가 `404`입니다. 저장한 프롬프트는
+`promptrevision` 테이블에 이력으로 쌓이고 저장 즉시 다음 대화부터 적용되며,
+재배포 후에도 유지됩니다. 운영 서버는 저장값을 읽지 않고 항상 파일 프롬프트를 씁니다.
+
+| 엔드포인트 | 설명 |
+|------------|------|
+| `GET /prompts/{system\|task}` | 현재 적용 중인 프롬프트 |
+| `PUT /prompts/{system\|task}` | 프롬프트 저장 (body `{ "content": "..." }`, 앞뒤 공백 제거, 최대 50KB, 20/min) |
+| `DELETE /prompts/{system\|task}` | 파일 기본값(`resources/*.txt`)으로 초기화 (이력에 남음, 20/min) |
+| `GET /prompts/{system\|task}/history?limit=50` | 저장 이력 최신순 (`limit` 1~200) |
+
+**Response (GET/PUT/DELETE):**
+```json
+{
+  "type": "system",
+  "content": "...",
+  "sha256": "hex",
+  "updated_at": "2026-10-18T00:00:00+00:00",
+  "source": "db"
+}
+```
+`source`는 `db`(저장된 프롬프트) 또는 `file`(파일 기본값)입니다.
+
+**Response (history):** `[{ "revision_id": 3, "content": "..." | null, "sha256": "hex" | null, "created_at": "...", "is_reset": false }]`
+
+**에러:** `400 content_empty`, `400 content_too_large`, `422`(알 수 없는 프롬프트 타입)
+
+---
+
+## 10. 공통 에러 응답
 
 ```json
 { "detail": "에러 메시지" }
