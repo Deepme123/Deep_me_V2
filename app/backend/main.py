@@ -19,7 +19,7 @@ from app.backend.models import refresh_token as _m_refresh  # noqa: F401
 from app.backend.models import prompt_revision as _m_prompt_revision  # noqa: F401
 
 # 라우터
-from app.backend.routers import emotion, auth, user, task, deletion_feedback
+from app.backend.routers import emotion, auth, user, task, deletion_feedback, prompts
 from app.backend.routers.emotion_ws import ws_router as emotion_ws_router
 from app.backend.routers import health_llm
 from app.backend.routers import deploy_webhook
@@ -65,6 +65,7 @@ app.include_router(auth.auth_router)
 app.include_router(user.user_router)
 app.include_router(task.router)
 app.include_router(deletion_feedback.router)
+app.include_router(prompts.router)  # 테스트 런타임 전용 (그 외 404)
 app.include_router(deploy_webhook.router)
 
 
