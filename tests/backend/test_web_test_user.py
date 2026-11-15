@@ -92,20 +92,20 @@ def test_no_auth_allowed_when_flag_on_and_app_env_development(db, monkeypatch):
     assert isinstance(result, UUID)
 
 
-def test_no_auth_allowed_on_render_test_service_without_app_env(db, monkeypatch):
+# 웹테스트 페이지는 Google 로그인으로 토큰을 받으므로 Render 테스트 서비스에서도 우회를 열지 않는다.
+@pytest.mark.parametrize(
+    "service_id, service_name",
+    [
+        ("", "Deep_me_test_server"),
+        ("srv-d9j0musm0tmc73a7ntv0", "renamed-test-server"),
+        ("srv-d9j0musm0tmc73a7ntv0", "Deep_me_test_server"),
+    ],
+)
+def test_no_auth_rejected_on_render_test_service_even_when_flag_on(db, monkeypatch, service_id, service_name):
     monkeypatch.setenv("EMOTION_NO_AUTH_WEB_TEST", "true")
     monkeypatch.delenv("APP_ENV", raising=False)
-    monkeypatch.setenv("RENDER_SERVICE_NAME", "Deep_me_test_server")
-
-    result = resolve_emotion_user_id(db, None)
-
-    assert isinstance(result, UUID)
-
-
-def test_no_auth_rejected_on_render_test_service_when_flag_off(db, monkeypatch):
-    monkeypatch.setenv("EMOTION_NO_AUTH_WEB_TEST", "false")
-    monkeypatch.delenv("APP_ENV", raising=False)
-    monkeypatch.setenv("RENDER_SERVICE_NAME", "Deep_me_test_server")
+    monkeypatch.setenv("RENDER_SERVICE_ID", service_id)
+    monkeypatch.setenv("RENDER_SERVICE_NAME", service_name)
 
     with pytest.raises(HTTPException) as exc_info:
         resolve_emotion_user_id(db, None)
@@ -113,12 +113,10 @@ def test_no_auth_rejected_on_render_test_service_when_flag_off(db, monkeypatch):
     assert exc_info.value.status_code == 401
 
 
-def test_no_auth_allowed_on_render_test_service_id(db, monkeypatch):
-    # 서비스 이름이 대시보드에서 바뀌어도 불변인 서비스 ID로 판정된다.
+def test_no_auth_allowed_when_flag_on_and_app_env_local_on_render_test_service(db, monkeypatch):
     monkeypatch.setenv("EMOTION_NO_AUTH_WEB_TEST", "true")
-    monkeypatch.delenv("APP_ENV", raising=False)
-    monkeypatch.setenv("RENDER_SERVICE_ID", "srv-d9j0musm0tmc73a7ntv0")
-    monkeypatch.setenv("RENDER_SERVICE_NAME", "renamed-test-server")
+    monkeypatch.setenv("APP_ENV", "local")
+    monkeypatch.setenv("RENDER_SERVICE_NAME", "Deep_me_test_server")
 
     result = resolve_emotion_user_id(db, None)
 
