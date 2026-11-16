@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 PROMPT_PATH = resolve_resource_path("backend", "system_prompt.txt")
 TASK_PROMPT_PATH = resolve_resource_path("backend", "task_prompt.txt")
+JUDGE_PROMPT_PATH = resolve_resource_path("backend", "judge_prompt.txt")
 
 FALLBACK_PROMPT = (
     "너는 감정 기반 챗봇이야. 사용자의 감정을 존중하고, 공감적 질문을 통해 "
@@ -23,11 +24,15 @@ FALLBACK_TASK_PROMPT = (
     "Keep each task gentle, specific, realistic, and safe to start immediately. "
     "Avoid anything medical, dangerous, shaming, or overly demanding."
 )
+# 판단기 프롬프트가 없으면 판단 호출 자체를 건너뛴다(빈 문자열 = 비활성).
+FALLBACK_JUDGE_PROMPT = ""
 
 
 def get_file_prompt(prompt_type: str) -> str:
     if prompt_type == "task":
         return read_prompt(TASK_PROMPT_PATH, FALLBACK_TASK_PROMPT)
+    if prompt_type == "judge":
+        return read_prompt(JUDGE_PROMPT_PATH, FALLBACK_JUDGE_PROMPT)
     return read_prompt(PROMPT_PATH, FALLBACK_PROMPT)
 
 
@@ -62,3 +67,8 @@ def get_system_prompt() -> str:
 @lru_cache(maxsize=1)
 def get_task_prompt() -> str:
     return get_db_override("task") or get_file_prompt("task")
+
+
+@lru_cache(maxsize=1)
+def get_judge_prompt() -> str:
+    return get_db_override("judge") or get_file_prompt("judge")

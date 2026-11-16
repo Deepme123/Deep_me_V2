@@ -49,9 +49,11 @@ def _isolate_runtime(monkeypatch, engine):
     monkeypatch.setattr(prompt_loader, "session_scope", _scope)
     prompt_loader.get_system_prompt.cache_clear()
     prompt_loader.get_task_prompt.cache_clear()
+    prompt_loader.get_judge_prompt.cache_clear()
     yield
     prompt_loader.get_system_prompt.cache_clear()
     prompt_loader.get_task_prompt.cache_clear()
+    prompt_loader.get_judge_prompt.cache_clear()
 
 
 @pytest.fixture
@@ -90,6 +92,20 @@ def test_put_saves_and_applies_immediately(client):
     assert prompt_loader.get_system_prompt() == "연구용 프롬프트"
     # 다른 타입에는 영향이 없다.
     assert prompt_loader.get_task_prompt() == prompt_loader.get_file_prompt("task")
+
+
+def test_put_judge_prompt_applies_immediately(client):
+    res = client.put("/prompts/judge", json={"content": "판단기 연구용"})
+
+    assert res.status_code == 200
+    assert res.json()["source"] == "db"
+    assert prompt_loader.get_judge_prompt() == "판단기 연구용"
+    # 다른 타입에는 영향이 없다.
+    assert prompt_loader.get_system_prompt() == prompt_loader.get_file_prompt("system")
+
+    reset = client.delete("/prompts/judge")
+    assert reset.json()["source"] == "file"
+    assert prompt_loader.get_judge_prompt() == prompt_loader.get_file_prompt("judge")
 
 
 def test_delete_resets_to_file_and_history_keeps_all(client):

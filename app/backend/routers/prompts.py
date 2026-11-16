@@ -26,7 +26,7 @@ from app.db.session import get_session
 
 MAX_PROMPT_BYTES = 50 * 1024  # 50KB safety cap
 
-PromptType = Literal["system", "task"]
+PromptType = Literal["system", "task", "judge"]
 
 
 def _require_test_runtime() -> None:
@@ -54,7 +54,10 @@ def _iso(dt: datetime) -> str:
 
 
 def _file_updated_at(prompt_type: str) -> Optional[str]:
-    path = prompt_loader.TASK_PROMPT_PATH if prompt_type == "task" else prompt_loader.PROMPT_PATH
+    path = {
+        "task": prompt_loader.TASK_PROMPT_PATH,
+        "judge": prompt_loader.JUDGE_PROMPT_PATH,
+    }.get(prompt_type, prompt_loader.PROMPT_PATH)
     try:
         return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
     except FileNotFoundError:
@@ -98,10 +101,11 @@ def _validate_content(content: str) -> str:
 def _save_revision(db: Session, prompt_type: str, content: Optional[str]) -> None:
     db.add(PromptRevision(prompt_type=prompt_type, content=content))
     db.commit()
-    if prompt_type == "system":
-        prompt_loader.get_system_prompt.cache_clear()
-    else:
-        prompt_loader.get_task_prompt.cache_clear()
+    {
+        "system": prompt_loader.get_system_prompt,
+        "task": prompt_loader.get_task_prompt,
+        "judge": prompt_loader.get_judge_prompt,
+    }[prompt_type].cache_clear()
 
 
 @router.get("/{prompt_type}")
