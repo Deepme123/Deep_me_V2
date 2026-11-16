@@ -703,10 +703,10 @@ GitHub push/PR merge 이벤트를 받아 Render 배포를 트리거하고 Discor
 
 | 엔드포인트 | 설명 |
 |------------|------|
-| `GET /prompts/{system\|task}` | 현재 적용 중인 프롬프트 |
-| `PUT /prompts/{system\|task}` | 프롬프트 저장 (body `{ "content": "..." }`, 앞뒤 공백 제거, 최대 50KB, 20/min) |
-| `DELETE /prompts/{system\|task}` | 파일 기본값(`resources/*.txt`)으로 초기화 (이력에 남음, 20/min) |
-| `GET /prompts/{system\|task}/history?limit=50` | 저장 이력 최신순 (`limit` 1~200) |
+| `GET /prompts/{system\|task\|judge}` | 현재 적용 중인 프롬프트 |
+| `PUT /prompts/{system\|task\|judge}` | 프롬프트 저장 (body `{ "content": "..." }`, 앞뒤 공백 제거, 최대 50KB, 20/min) |
+| `DELETE /prompts/{system\|task\|judge}` | 파일 기본값(`resources/*.txt`)으로 초기화 (이력에 남음, 20/min) |
+| `GET /prompts/{system\|task\|judge}/history?limit=50` | 저장 이력 최신순 (`limit` 1~200) |
 
 **Response (GET/PUT/DELETE):**
 ```json
