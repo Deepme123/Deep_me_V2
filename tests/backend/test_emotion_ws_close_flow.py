@@ -416,3 +416,110 @@ def test_cancel_close_ack_keeps_session_open_for_followup_messages(ws_harness):
         step.step_type == emotion_ws.CANCEL_CLOSE_STEP_TYPE
         for step in store.steps
     )
+
+
+# ---- 판단기(진행 메모) 연동 ----
+
+def _enable_judge(monkeypatch, result):
+    from app.backend.services.judge_service import JudgeResult  # noqa: F401
+
+    monkeypatch.setattr(emotion_ws.CFG, "JUDGE_ENABLED", True)
+    monkeypatch.setattr(emotion_ws, "get_judge_prompt", lambda: "judge-prompt")
+    monkeypatch.setattr(emotion_ws, "run_judge", lambda *_a, **_k: result)
+
+
+def _capture_stream(monkeypatch, output="응답"):
+    seen = {}
+
+    def fake_stream(**kwargs):
+        seen["conversation"] = kwargs["conversation"]
+        yield output
+
+    monkeypatch.setattr(emotion_ws, "stream_noa_response", fake_stream)
+    return seen
+
+
+def test_judge_memo_is_attached_to_last_user_message_only_for_llm(ws_harness, monkeypatch):
+    from app.backend.services.judge_service import JudgeResult
+
+    store, client = ws_harness
+    store.current_steps = [3]
+    _enable_judge(monkeypatch, JudgeResult(read="반어", thread="언제부터인지"))
+    seen = _capture_stream(monkeypatch)
+
+    with _open_ws(client) as ws:
+        _send_message_and_collect(
+            ws, "아 진짜 좋네", ["message_start", "message_delta", "message_end", "message"]
+        )
+
+    last_role, last_text = seen["conversation"][-1]
+    assert last_role == "user"
+    assert last_text.startswith("아 진짜 좋네\n\n[진행 메모: 읽기: 반어 / 더 들어가 볼 것: 언제부터인지")
+    # 메모는 DB에 저장되지 않는다.
+    assert [s.user_input for s in store.steps if s.step_type == "user"] == ["아 진짜 좋네"]
+
+
+def test_judge_failure_falls_back_to_no_memo(ws_harness, monkeypatch):
+    ws_harness[0].current_steps = [3]
+    _enable_judge(monkeypatch, None)
+    seen = _capture_stream(monkeypatch)
+
+    with _open_ws(ws_harness[1]) as ws:
+        _send_message_and_collect(
+            ws, "안녕", ["message_start", "message_delta", "message_end", "message"]
+        )
+
+    assert seen["conversation"][-1] == ("user", "안녕")
+
+
+def test_judge_exception_does_not_break_chat(ws_harness, monkeypatch):
+    ws_harness[0].current_steps = [3]
+    _enable_judge(monkeypatch, None)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("judge down")
+
+    monkeypatch.setattr(emotion_ws, "run_judge", boom)
+    seen = _capture_stream(monkeypatch)
+
+    with _open_ws(ws_harness[1]) as ws:
+        events = _send_message_and_collect(
+            ws, "안녕", ["message_start", "message_delta", "message_end", "message"]
+        )
+
+    assert events[3]["message"] == "응답"
+    assert seen["conversation"][-1] == ("user", "안녕")
+
+
+def test_close_token_at_early_turn_is_suppressed_without_judge_approval(ws_harness, monkeypatch):
+    from app.backend.services.judge_service import JudgeResult
+
+    store, client = ws_harness
+    store.current_steps = [3]
+    _enable_judge(monkeypatch, JudgeResult(thread="x"))
+    _capture_stream(monkeypatch, store.with_reserved_close_token("끝"))
+
+    with _open_ws(client) as ws:
+        _send_message_and_collect(
+            ws, "안녕", ["message_start", "message_delta", "message_end", "message"]
+        )
+
+    assert store.session.ended_at is None
+
+
+def test_close_token_at_early_turn_closes_when_judge_confirmed_end(ws_harness, monkeypatch):
+    from app.backend.services.judge_service import JudgeResult
+
+    store, client = ws_harness
+    store.current_steps = [3]
+    _enable_judge(monkeypatch, JudgeResult(end_ok="예"))
+    seen = _capture_stream(monkeypatch, store.with_reserved_close_token("오늘은 여기까지"))
+
+    with _open_ws(client) as ws:
+        _send_message_and_collect(
+            ws, "응 그래 고마워", ["message_start", "message_delta", "message_end", "message"]
+        )
+        _receive_non_step_event(ws)  # close 관련 후속 이벤트
+
+    assert seen["conversation"][-1][1].endswith("[진행 메모: 대화 종료]")
+    assert store.session.ended_at is not None

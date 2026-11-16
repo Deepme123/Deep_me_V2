@@ -21,6 +21,13 @@ from app.backend.schemas.emotion import (
     TaskRecommendRequest,
     TaskRecommendResponse,
 )
+from app.backend.services.judge_service import (
+    JUDGE_MAX_MESSAGES,
+    JUDGE_TIMEOUT_SEC,
+    attach_memo,
+    build_progress_memo,
+    run_judge,
+)
 from app.backend.services.llm_service import get_backend_llm_info, stream_noa_response
 from app.backend.services.ws_protocol import (
     MSG_CANCEL_CLOSE,
@@ -71,7 +78,7 @@ from app.backend.services.ws_utils import (
     safe_str,
 )
 from app.backend.services.web_test_user import resolve_emotion_user_id
-from app.backend.core.prompt_loader import get_system_prompt, get_task_prompt
+from app.backend.core.prompt_loader import get_judge_prompt, get_system_prompt, get_task_prompt
 from app.backend.services.convo_policy import is_activity_turn  # test patch point
 from app.backend.services.close_policy import (
     CANCEL_CLOSE_STEP_TYPE,
@@ -102,10 +109,11 @@ class WSConfig:
     ANALYSIS_CARD_TIMEOUT: float = float(os.getenv("ANALYSIS_CARD_TIMEOUT", "75"))
     WS_HISTORY_TURNS: int = max(5, min(10, int(os.getenv("WS_HISTORY_TURNS", "8"))))
     WS_MAX_USER_TEXT_LEN: int = int(os.getenv("WS_MAX_USER_TEXT_LEN", str(8 * 1024)))  # bytes/ASCII-ish
-    # [[CONFIRM_CLOSE]] 토큰은 STEP 12(마무리)에서만 나와야 함.
-    # user_order가 이 값 미만이면 토큰이 감지돼도 세션 종료를 억제한다.
-    # 12단계 대화 기준 최소 user_order ≈ 23 이므로 16을 기본값으로 사용.
+    # [[CONFIRM_CLOSE]] 토큰은 판단기가 마무리 동의(end_ok)를 확인한 메모가 있을 때만 의도된 종료다.
+    # 그 외에 user_order가 이 값 미만에서 토큰이 감지되면 LLM 오발생으로 보고 종료를 억제한다.
     MIN_CLOSE_ORDER: int = int(os.getenv("MIN_CLOSE_ORDER", "16"))
+    # 판단기(진행 메모) 사용 여부. 끄면 노아가 메모 없이 응답한다.
+    JUDGE_ENABLED: bool = os.getenv("JUDGE_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
     # 세션 오픈 직후 서버가 먼저 인사 메시지를 보내기 전 대기하는 시간(초).
     # 곧바로 뜨는 느낌보다 자연스러운 텀을 주기 위함.
     GREETING_DELAY_MIN_SEC: float = float(os.getenv("GREETING_DELAY_MIN_SEC", "1.0"))
@@ -139,6 +147,8 @@ class _EmotionWSHandler:
         self.shutdown = asyncio.Event()
         self.recommend_fuse_tripped = False
         self.activity_fired = False
+        # 판단기가 지금까지 확인한 카드 항목(연결 단위 메모리, 재접속 시 판단기가 대화에서 다시 채운다)
+        self.judge_covered: set[str] = set()
         self.auth_user_id = None
         self.outbound: OutboundWSChannel | None = None
         self.send_task: asyncio.Task | None = None
@@ -213,6 +223,34 @@ class _EmotionWSHandler:
             logger=logger,
         )
 
+    # ── 판단기 ─────────────────────────────────────────────────────────
+
+    async def _build_progress_memo(
+        self, judge_convo: list[tuple[str, str]], user_order: int
+    ) -> tuple[str, bool]:
+        """(진행 메모, 마무리 지시 여부). 어떤 실패도 ("", False)로 폴백한다."""
+        if not CFG.JUDGE_ENABLED:
+            return "", False
+        try:
+            judge_prompt = get_judge_prompt()
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    run_judge, judge_prompt, judge_convo, frozenset(self.judge_covered)
+                ),
+                timeout=JUDGE_TIMEOUT_SEC + 2,
+            )
+        except Exception as e:
+            logger.warning("WS judge skipped | %s", safe_str(e))
+            return "", False
+        if result is None:
+            return "", False
+        self.judge_covered.update(result.covered)
+        if result.risk:
+            logger.warning("WS judge risk flagged | session_id=%s", self.session_id)
+        # 이모지는 3턴에 한 번만 권한다.
+        memo = build_progress_memo(result, add_emoji=(user_order // 2) % 3 == 0)
+        return memo, result.wants_close
+
     # ── 사용자 메시지(MSG_MESSAGE) 처리 ────────────────────────────────
 
     async def handle_message(self, msg: dict) -> bool:
@@ -241,12 +279,14 @@ class _EmotionWSHandler:
                     user_text,
                     ws_history_turns=CFG.WS_HISTORY_TURNS,
                     already_fired=self.activity_fired,
+                    judge_history_messages=JUDGE_MAX_MESSAGES if CFG.JUDGE_ENABLED else 0,
                 )
             )
             want_activity = bool(prep.get("want_activity"))
             user_order = int(prep.get("user_order") or 0)
             assistant_order = int(prep.get("assistant_order") or 0)
             convo = prep.get("conversation") or []
+            judge_convo = prep.get("judge_conversation") or convo
         except TurnLimitReached:
             await self.guard_send({"type": "limit", "message": "max turns reached"})
             return False
@@ -262,6 +302,10 @@ class _EmotionWSHandler:
             logger.exception("WS prompt load failed")
             await self.guard_send({"type": "error", "message": f"prompt_failed: {safe_str(e)}"})
             return False
+
+        # 노아 응답 전에 판단기가 대화 전체를 보고 진행 메모를 만든다(실패 시 메모 없이 진행).
+        memo, close_ordered = await self._build_progress_memo(judge_convo, user_order)
+        convo = attach_memo(convo, memo)
 
         assistant_chunks: list[str] = []
         close_filter = StreamingConfirmCloseFilter()
@@ -321,7 +365,7 @@ class _EmotionWSHandler:
 
         # [[CONFIRM_CLOSE]]는 STEP 12(마무리)에서만 유효.
         # 너무 이른 단계에서 감지되면 LLM 오발생으로 판단해 세션 종료를 억제한다.
-        if end_by_token and user_order < CFG.MIN_CLOSE_ORDER:
+        if end_by_token and user_order < CFG.MIN_CLOSE_ORDER and not close_ordered:
             logger.warning(
                 "WS [[CONFIRM_CLOSE]] suppressed at early turn | user_order=%s min=%s",
                 user_order,

@@ -9,6 +9,8 @@ import os
 # 다른 어떤 테스트 파일보다도 먼저 로드되므로, 여기서 가장 먼저 기본값을
 # 정해줘야 어느 파일이 rate_limit을 먼저 import하든 안전하다.
 os.environ.setdefault("RATELIMIT_ENABLED", "false")
+# 테스트에서 판단기가 실제 LLM을 부르지 않도록 기본 비활성화(판단기 테스트는 개별로 켠다).
+os.environ.setdefault("JUDGE_ENABLED", "false")
 
 import sys
 from pathlib import Path
