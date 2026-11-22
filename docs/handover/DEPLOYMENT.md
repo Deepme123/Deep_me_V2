@@ -95,11 +95,16 @@ ANALYSIS_CARD_TIMEOUT=75           # 분석카드/욕구카드 생성 타임아�
 WS_HISTORY_TURNS=8                 # LLM 컨텍스트 윈도우 (대화 턴 수, 5~10 사이로 clamp됨)
 WS_MAX_USER_TEXT_LEN=8192          # 최대 입력 크기 (bytes)
 MIN_CLOSE_ORDER=16                 # [[CONFIRM_CLOSE]] 마커를 유효하게 인정하는 최소 user_order
+JUDGE_ENABLED=true                 # 판단기(진행 메모) 사용 여부
+JUDGE_MODEL=                       # 판단기 전용 모델(비우면 LLM_MODEL). 가벼운 모델 권장
+JUDGE_TIMEOUT_SEC=8                # 판단기 호출 타임아웃(초). 초과 시 메모 없이 진행
+JUDGE_MAX_TOKENS=1000              # 판단기 출력 토큰 상한
+JUDGE_MAX_MESSAGES=80              # 판단기가 보는 최근 발화 수 상한
 GREETING_DELAY_MIN_SEC=1.0         # 연결 직후 서버가 인사 메시지를 보내기 전 최소 대기(초)
 GREETING_DELAY_MAX_SEC=2.0         # 위 최대 대기(초)
 ACTIVITY_STEP_TYPE=activity_suggest   # 액티비티 제안 마커 스텝의 step_type 값
 CANCEL_CLOSE_STEP_TYPE=              # cancel_close 마커 스텝의 step_type 값 (close_policy.py 기본값 사용)
-EMOTION_NO_AUTH_WEB_TEST=false     # true면 토큰 없이도 웹 테스트용 익명 유저로 처리 허용 (APP_ENV가 development/local일 때만 실제로 동작함, 아래 참조)
+EMOTION_NO_AUTH_WEB_TEST=false     # true면 토큰 없이도 웹 테스트용 익명 유저로 처리 허용 (APP_ENV가 development/local일 때만 실제로 동작함. Render 테스트 서비스도 예외 없음. 아래 APP_ENV 참조)
 APP_ENV=production                 # development/local일 때만 EMOTION_NO_AUTH_WEB_TEST 우회가 활성화됨. 배포 환경에서는 절대 development/local로 두지 말 것
 WEB_TEST_USER_EMAIL=webtest@local  # 위 옵션 켰을 때 사용할 익명 유저 이메일
 WEB_TEST_USER_NAME=Web Test User
@@ -112,8 +117,9 @@ RATELIMIT_ENABLED=true             # false면 전체 레이트리밋 비활성 (
 ### 2.5 CORS
 
 ```env
-CORS_ALLOW_ORIGINS=https://deep-me-v1.onrender.com,http://localhost:3000,http://localhost:5173
+CORS_ALLOW_ORIGINS=https://deep-me-v1.onrender.com,http://localhost:3000,http://localhost:5173,https://bentleypark.github.io
 ```
+`https://bentleypark.github.io`는 감정대화 웹테스트 페이지(GitHub Pages)입니다. 이 값을 환경변수로 직접 지정하면 코드 기본값은 무시되므로 이 출처도 함께 넣어야 합니다.
 
 운영 도메인이 변경되면 이 값을 업데이트해야 합니다.
 

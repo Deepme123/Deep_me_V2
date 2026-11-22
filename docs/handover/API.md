@@ -85,6 +85,9 @@ Google Access 토큰으로 로그인합니다 (userinfo 엔드포인트 조회, 
 결정론적인 웹 테스트용 익명 유저(`WEB_TEST_USER_EMAIL`)로 폴백합니다
 (`web_test_user.resolve_emotion_user_id`) — 기본값은 `false`이므로 토큰이
 없으면 `401`입니다.
+이 폴백은 `APP_ENV`가 `development`/`local`일 때만 동작합니다. Render 테스트
+서비스에서도 동작하지 않습니다(감정대화 웹테스트 페이지는 Google 로그인으로 토큰을 받습니다).
+웹소켓(`/ws/emotion`)도 같은 함수를 사용합니다.
 
 ### `GET /emotion/sessions/active`
 
@@ -688,7 +691,42 @@ GitHub push/PR merge 이벤트를 받아 Render 배포를 트리거하고 Discor
 
 ---
 
-## 9. 공통 에러 응답
+## 9. 프롬프트 연구 API (`/prompts`, 테스트 런타임 전용)
+
+감정대화 시스템 프롬프트(`system`)와 태스크 추천 프롬프트(`task`)를 조회·수정합니다
+(`app/backend/routers/prompts.py`). **인증이 없으므로** 테스트 런타임
+(Render 테스트 서비스 `Deep_me_test_server`/`srv-d9j0musm0tmc73a7ntv0` 또는
+`APP_ENV=development/local`, `app/backend/core/runtime_env.py`)에서만
+동작하고, 그 외(운영 서버 포함)에서는 모든 경로가 `404`입니다. 저장한 프롬프트는
+`promptrevision` 테이블에 이력으로 쌓이고 저장 즉시 다음 대화부터 적용되며,
+재배포 후에도 유지됩니다. 운영 서버는 저장값을 읽지 않고 항상 파일 프롬프트를 씁니다.
+
+| 엔드포인트 | 설명 |
+|------------|------|
+| `GET /prompts/{system\|task\|judge}` | 현재 적용 중인 프롬프트 |
+| `PUT /prompts/{system\|task\|judge}` | 프롬프트 저장 (body `{ "content": "..." }`, 앞뒤 공백 제거, 최대 50KB, 20/min) |
+| `DELETE /prompts/{system\|task\|judge}` | 파일 기본값(`resources/*.txt`)으로 초기화 (이력에 남음, 20/min) |
+| `GET /prompts/{system\|task\|judge}/history?limit=50` | 저장 이력 최신순 (`limit` 1~200) |
+
+**Response (GET/PUT/DELETE):**
+```json
+{
+  "type": "system",
+  "content": "...",
+  "sha256": "hex",
+  "updated_at": "2026-10-18T00:00:00+00:00",
+  "source": "db"
+}
+```
+`source`는 `db`(저장된 프롬프트) 또는 `file`(파일 기본값)입니다.
+
+**Response (history):** `[{ "revision_id": 3, "content": "..." | null, "sha256": "hex" | null, "created_at": "...", "is_reset": false }]`
+
+**에러:** `400 content_empty`, `400 content_too_large`, `422`(알 수 없는 프롬프트 타입)
+
+---
+
+## 10. 공통 에러 응답
 
 ```json
 { "detail": "에러 메시지" }

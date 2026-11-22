@@ -4,12 +4,8 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlmodel import Session, select
 
+from app.backend.core.runtime_env import is_local_runtime
 from app.backend.models.user import User
-
-# 웹테스트 무인증 우회는 로컬/개발 환경에서만 허용한다.
-# APP_ENV를 지정하지 않은 배포 환경(Render 등)은 기본값이 이 화이트리스트에 없으므로
-# EMOTION_NO_AUTH_WEB_TEST가 실수로 true로 남아 있어도 우회가 발동하지 않는다.
-_WEB_TEST_ALLOWED_ENVS = {"development", "local"}
 
 
 def ensure_web_test_user(db: Session) -> UUID:
@@ -40,9 +36,11 @@ def resolve_emotion_user_id(db: Session, current_user: str | UUID | None) -> UUI
         except Exception:
             raise HTTPException(status_code=401, detail="invalid_token")
 
+    # 무인증 우회는 로컬/개발에서만 연다. Render 테스트 서비스도 열지 않는다 —
+    # 감정대화 웹테스트 페이지가 Google 로그인으로 토큰을 받아 접속하므로 필요 없고,
+    # 열어 두면 누구나 공용 익명 유저로 테스트 DB를 읽고 쓸 수 있다.
     allow_web_test = os.getenv("EMOTION_NO_AUTH_WEB_TEST", "false").lower() == "true"
-    app_env = os.getenv("APP_ENV", "production").lower()
-    if allow_web_test and app_env in _WEB_TEST_ALLOWED_ENVS:
+    if allow_web_test and is_local_runtime():
         return ensure_web_test_user(db)
 
     raise HTTPException(status_code=401, detail="Authentication required")

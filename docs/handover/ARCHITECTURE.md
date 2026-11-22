@@ -93,7 +93,8 @@ app/backend/
 │   ├── account_deletion.py     # 회원 탈퇴 유예 삭제 로직 (delete_account/sweep_due_account_deletions)
 │   └── web_test_user.py        # 토큰 없을 때 웹 테스트용 익명/폴백 유저 처리
 └── resources/
-    ├── system_prompt.txt        # 감정 대화 시스템 프롬프트
+    ├── system_prompt.txt        # 감정 대화 시스템 프롬프트(노아). 사용자 메시지 끝 [진행 메모]를 따른다
+    ├── judge_prompt.txt         # 판단기 프롬프트. 대화 전체를 보고 JSON을 내며, 서버가 [진행 메모]로 변환
     ├── task_prompt.txt          # 태스크(액티비티) 제안 프롬프트
     └── greeting_messages.txt    # 세션 오픈 시 서버가 먼저 보내는 인사 문구 목록
 ```
@@ -240,7 +241,15 @@ Client                              Server
    턴의 응답 직후 태스크 추천이 자동 실행되어 `task_recommend_ok`가 옵니다 —
    `MSG_TASK_RECOMMEND`를 클라이언트가 명시적으로 보내지 않아도 됩니다.
 6. `[[CONFIRM_CLOSE]]` 마커는 `user_order`가 `MIN_CLOSE_ORDER`(기본 16) 미만인
-   이른 턴에서 감지되면 LLM 오발생으로 간주해 무시됩니다.
+   이른 턴에서 감지되면 LLM 오발생으로 간주해 무시됩니다(판단기가 마무리 동의를
+   확인한 턴은 예외).
+7. **판단기**: 매 사용자 메시지마다 노아 응답 전에 `judge_service.run_judge`가
+   대화 전체(최대 `JUDGE_MAX_MESSAGES`)를 보고 JSON을 만들고,
+   `build_progress_memo`가 이를 `[진행 메모: ...]`(읽기/더 들어가 볼 것/짚어 줄 것/
+   이모지/대화 종료)로 바꿔 마지막 사용자 메시지 끝에 붙입니다(DB 미저장).
+   실패·타임아웃은 메모 없이 진행합니다. `risk`는 로그만 남기고 메모를 비웁니다
+   (안전 안내는 노아 프롬프트가 담당). 판단기 출력 중 offer/accept/ask/wrap 등은
+   아직 서버가 사용하지 않습니다.
 
 **자동 종료 조건**: 모델 응답 텍스트 마지막에 `[[CONFIRM_CLOSE]]` 문자열이
 포함되면 서버가 이를 제거하고 세션을 자동으로 종료·분석합니다

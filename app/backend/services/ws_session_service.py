@@ -47,6 +47,7 @@ def prepare_message_context(
     *,
     ws_history_turns: int,
     already_fired: bool | None = None,
+    judge_history_messages: int = 0,
 ) -> dict:
     max_entries = ws_history_turns * 2
     # (session_id, step_order) 복합 인덱스를 역순으로 타서 LIMIT 적용 후 뒤집음.
@@ -74,12 +75,27 @@ def prepare_message_context(
     user_order = last_order + 1
     assistant_order = user_order + 1
     conversation = transcript_rows_to_conversation(rows) + [("user", user_text)]
+
+    # 판단기는 노아보다 긴 이력(대화 전체)을 본다. 노아용 이력보다 길 때만 추가 조회한다.
+    judge_conversation = conversation
+    if judge_history_messages > max_entries:
+        judge_rows: list[EmotionStep] = list(
+            db.exec(
+                select(EmotionStep)
+                .where(EmotionStep.session_id == session_id)
+                .order_by(EmotionStep.step_order.desc())
+                .limit(judge_history_messages)
+            )
+        )
+        judge_rows.reverse()
+        judge_conversation = transcript_rows_to_conversation(judge_rows) + [("user", user_text)]
     return {
         "transcript_rows": rows,
         "want_activity": want_activity,
         "user_order": user_order,
         "assistant_order": assistant_order,
         "conversation": conversation,
+        "judge_conversation": judge_conversation,
     }
 
 
