@@ -27,6 +27,8 @@ class LLMRequestOptions:
     temperature: float | None = None
     max_tokens: int | None = None
     timeout_sec: float | None = None
+    # reasoning 모델 전용("minimal"/"low"/"medium"/"high"). None이면 LLM_REASONING_EFFORT 환경변수.
+    reasoning_effort: str | None = None
 
 
 @dataclass(frozen=True)

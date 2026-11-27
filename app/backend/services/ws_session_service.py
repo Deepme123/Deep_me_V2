@@ -195,3 +195,20 @@ def append_step_marker(db: Session, session_id: UUID, step_type: str) -> None:
     )
     db.add(marker)
     db.commit()
+
+
+def load_flow_state(db: Session, session_id: UUID) -> dict | None:
+    """세션에 저장된 데모 1.2 흐름 상태(raw JSON). 없으면 None."""
+    session = db.get(EmotionSession, session_id)
+    raw = getattr(session, "flow_state", None) if session else None
+    return raw if isinstance(raw, dict) else None
+
+
+def save_flow_state(db: Session, session_id: UUID, state: dict) -> None:
+    session = db.get(EmotionSession, session_id)
+    if not session:
+        return
+    # JSON 컬럼은 같은 dict 객체 내부 변경을 감지하지 못하므로 새 dict로 교체한다.
+    session.flow_state = dict(state)
+    db.add(session)
+    db.commit()

@@ -24,10 +24,16 @@ from app.backend.schemas.emotion import (
 from app.backend.services.judge_service import (
     JUDGE_MAX_MESSAGES,
     JUDGE_TIMEOUT_SEC,
+    FlowDecision,
     attach_memo,
-    build_progress_memo,
+    build_flow_memo,
+    count_user_messages,
+    in_guided_flow,
+    normalize_flow_state,
+    remaining_items,
     run_judge,
 )
+from app.backend.services.reply_polish import ReplyPolisher
 from app.backend.services.llm_service import get_backend_llm_info, stream_noa_response
 from app.backend.services.ws_protocol import (
     MSG_CANCEL_CLOSE,
@@ -57,6 +63,8 @@ from app.backend.services.ws_session_service import (
     close_session_record as session_close_session_record,
     commit_full_turn as session_commit_full_turn,
     commit_opening_message as session_commit_opening_message,
+    load_flow_state as session_load_flow_state,
+    save_flow_state as session_save_flow_state,
     create_emotion_session as session_create_emotion_session,
     prepare_message_context as session_prepare_message_context,
     with_db as session_with_db,
@@ -114,6 +122,8 @@ class WSConfig:
     MIN_CLOSE_ORDER: int = int(os.getenv("MIN_CLOSE_ORDER", "16"))
     # 판단기(진행 메모) 사용 여부. 끄면 노아가 메모 없이 응답한다.
     JUDGE_ENABLED: bool = os.getenv("JUDGE_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
+    # 매 턴 흐름 단계와 진행 메모를 info 로그로 남긴다(데모 1.2 검증용).
+    FLOW_MEMO_LOG: bool = os.getenv("FLOW_MEMO_LOG", "false").strip().lower() in ("1", "true", "yes", "on")
     # 세션 오픈 직후 서버가 먼저 인사 메시지를 보내기 전 대기하는 시간(초).
     # 곧바로 뜨는 느낌보다 자연스러운 텀을 주기 위함.
     GREETING_DELAY_MIN_SEC: float = float(os.getenv("GREETING_DELAY_MIN_SEC", "1.0"))
@@ -147,8 +157,6 @@ class _EmotionWSHandler:
         self.shutdown = asyncio.Event()
         self.recommend_fuse_tripped = False
         self.activity_fired = False
-        # 판단기가 지금까지 확인한 카드 항목(연결 단위 메모리, 재접속 시 판단기가 대화에서 다시 채운다)
-        self.judge_covered: set[str] = set()
         self.auth_user_id = None
         self.outbound: OutboundWSChannel | None = None
         self.send_task: asyncio.Task | None = None
@@ -225,31 +233,61 @@ class _EmotionWSHandler:
 
     # ── 판단기 ─────────────────────────────────────────────────────────
 
+    async def _load_flow_state(self) -> dict:
+        """세션의 데모 1.2 흐름 상태. 실패하면 기본 상태(자유 대화)로 진행한다."""
+        try:
+            raw = await session_with_db(session_load_flow_state, self.session_id)
+        except Exception as e:
+            logger.warning("WS flow state load failed | %s", safe_str(e))
+            raw = None
+        return normalize_flow_state(raw)
+
+    async def _save_flow_state(self, state: dict) -> None:
+        try:
+            await session_with_db(session_save_flow_state, self.session_id, state)
+        except Exception as e:
+            logger.warning("WS flow state save failed | %s", safe_str(e))
+
     async def _build_progress_memo(
-        self, judge_convo: list[tuple[str, str]], user_order: int
-    ) -> tuple[str, bool]:
-        """(진행 메모, 마무리 지시 여부). 어떤 실패도 ("", False)로 폴백한다."""
+        self, judge_convo: list[tuple[str, str]], user_order: int, flow_state: dict
+    ) -> FlowDecision:
+        """판단기 → 흐름 상태 갱신 → 진행 메모. 어떤 실패도 메모 없음(상태 유지)으로 폴백한다."""
         if not CFG.JUDGE_ENABLED:
-            return "", False
+            return FlowDecision("", flow_state)
         try:
             judge_prompt = get_judge_prompt()
             result = await asyncio.wait_for(
                 asyncio.to_thread(
-                    run_judge, judge_prompt, judge_convo, frozenset(self.judge_covered)
+                    run_judge,
+                    judge_prompt,
+                    judge_convo,
+                    frozenset(flow_state.get("covered") or ()),
+                    frozenset(flow_state.get("asked") or ()),
+                    tuple(remaining_items(flow_state)),
                 ),
                 timeout=JUDGE_TIMEOUT_SEC + 2,
             )
         except Exception as e:
             logger.warning("WS judge skipped | %s", safe_str(e))
-            return "", False
-        if result is None:
-            return "", False
-        self.judge_covered.update(result.covered)
-        if result.risk:
+            return FlowDecision("", flow_state)
+        if result is not None and result.risk:
             logger.warning("WS judge risk flagged | session_id=%s", self.session_id)
         # 이모지는 3턴에 한 번만 권한다.
-        memo = build_progress_memo(result, add_emoji=(user_order // 2) % 3 == 0)
-        return memo, result.wants_close
+        decision = build_flow_memo(
+            flow_state,
+            result,
+            count_user_messages(judge_convo),
+            add_emoji=(user_order // 2) % 3 == 0,
+        )
+        if CFG.FLOW_MEMO_LOG:
+            logger.info(
+                "WS flow | session_id=%s stage=%s flow=%s memo=%s",
+                self.session_id,
+                decision.stage,
+                decision.state.get("flow"),
+                decision.memo,
+            )
+        return decision
 
     # ── 사용자 메시지(MSG_MESSAGE) 처리 ────────────────────────────────
 
@@ -295,6 +333,11 @@ class _EmotionWSHandler:
             await self.guard_send({"type": "error", "message": f"db_failed: {safe_str(e)}"})
             return False
 
+        flow_state = await self._load_flow_state()
+        # 정리를 제안했거나 정리 중일 땐 액티비티(미션) 제안이 끼어들지 않게 한다.
+        if want_activity and in_guided_flow(flow_state):
+            want_activity = False
+
         try:
             system_prompt = get_system_prompt()
             task_prompt = get_task_prompt() if want_activity else None
@@ -304,8 +347,11 @@ class _EmotionWSHandler:
             return False
 
         # 노아 응답 전에 판단기가 대화 전체를 보고 진행 메모를 만든다(실패 시 메모 없이 진행).
-        memo, close_ordered = await self._build_progress_memo(judge_convo, user_order)
-        convo = attach_memo(convo, memo)
+        decision = await self._build_progress_memo(judge_convo, user_order, flow_state)
+        close_ordered = decision.close_ordered
+        convo = attach_memo(convo, decision.memo)
+        # 노아 답 다듬기: 메모가 이모지를 권하지 않은 턴엔 이모지를 빼고, 권한 턴엔 하나만 남긴다.
+        polisher = ReplyPolisher(max_emoji=1 if "이모지 하나" in decision.memo else 0)
 
         assistant_chunks: list[str] = []
         close_filter = StreamingConfirmCloseFilter()
@@ -313,7 +359,7 @@ class _EmotionWSHandler:
         _BATCH_CHARS = 60
 
         async def _flush_batch(buf: str) -> None:
-            safe = self.leak_guard.sanitize_out(buf, self.sys_fp)
+            safe = polisher.feed(self.leak_guard.sanitize_out(buf, self.sys_fp))
             if not safe:
                 return
             assistant_chunks.append(safe)
@@ -372,6 +418,9 @@ class _EmotionWSHandler:
                 CFG.MIN_CLOSE_ORDER,
             )
             end_by_token = False
+        # 끝인사 턴은 노아가 토큰을 빠뜨려도 답을 보낸 뒤 서버가 종료한다.
+        if decision.force_close:
+            end_by_token = True
 
         assistant_text = "".join(assistant_chunks).strip()
         if not assistant_text:
@@ -395,6 +444,8 @@ class _EmotionWSHandler:
             logger.exception("WS assistant-step commit failed")
             await self.guard_send({"type": "error", "message": "server_error:assistant_step_commit"})
             return False
+
+        await self._save_flow_state(decision.state)
 
         if want_activity:
             self.activity_fired = True

@@ -90,7 +90,7 @@ def test_head_migration_includes_analysiscard():
             "user",
             "user_need_selection",
         ]
-        assert _alembic_version(tmp_db) == "0021_add_prompt_revision"
+        assert _alembic_version(tmp_db) == "0022_emotionsession_flow_state"
     finally:
         if tmp_db.exists():
             tmp_db.unlink()
@@ -145,7 +145,7 @@ def test_greeting_message_stat_migration_keeps_existing_table():
         finally:
             conn.close()
         assert rows == [(3, 7)]
-        assert _alembic_version(tmp_db) == "0021_add_prompt_revision"
+        assert _alembic_version(tmp_db) == "0022_emotionsession_flow_state"
     finally:
         if tmp_db.exists():
             tmp_db.unlink()
