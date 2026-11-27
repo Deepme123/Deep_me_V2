@@ -13,7 +13,7 @@ import copy
 import json
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Optional
 
 from app.core.llm import LLMMessage, LLMRequestOptions
@@ -303,12 +303,45 @@ def _merge_items(existing: list[str], new: Iterable[str]) -> list[str]:
     return [c for c in CARD_ITEMS if c in merged]
 
 
+# 노아 프롬프트에 없는 조각이라 문구만으로 뜻이 통하게 쓴다.
+CONTEXT_LABEL = "기억할 앞 이야기(다시 말하지 않기)"
+
+
+def _add_context(memo: str, context: str) -> str:
+    """판단기의 context를 진행 메모 맨 앞에 넣는다(메모가 없으면 새로 만든다)."""
+    parts = [f"{CONTEXT_LABEL}: {context}"]
+    if memo:
+        parts.append(memo.removeprefix("[진행 메모: ").removesuffix("]"))
+    return _wrap_memo(parts)
+
+
 def build_flow_memo(
     state: Any,
     result: Optional[JudgeResult],
     user_count: int,
     *,
     add_emoji: bool = False,
+    include_context: bool = False,
+) -> FlowDecision:
+    """상태 + 판단 결과 → (진행 메모, 새 상태). 순수 함수(DB·LLM 없음).
+
+    include_context: 노아가 받는 이력이 잘려 앞부분을 못 볼 때 True. 판단기의 context를
+    메모에 넣는다. 대화를 끝내는 턴과 risk에는 넣지 않는다.
+    """
+    decision = _decide_flow(state, result, user_count, add_emoji=add_emoji)
+    if not include_context or result is None or result.risk or decision.close_ordered:
+        return decision
+    if not result.context:
+        return decision
+    return replace(decision, memo=_add_context(decision.memo, result.context))
+
+
+def _decide_flow(
+    state: Any,
+    result: Optional[JudgeResult],
+    user_count: int,
+    *,
+    add_emoji: bool,
 ) -> FlowDecision:
     """상태 + 판단 결과 → (진행 메모, 새 상태). 순수 함수(DB·LLM 없음).
 

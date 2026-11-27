@@ -608,3 +608,30 @@ def test_unrequested_emoji_is_removed_from_reply(ws_harness, monkeypatch):
         )
 
     assert events[3]["message"] == "그랬구나 언제부터야?"
+
+
+@pytest.mark.parametrize("history_len, expected", [(0, False), (4, True)])
+def test_judge_context_added_only_when_noa_history_is_truncated(
+    ws_harness, monkeypatch, history_len, expected
+):
+    from app.backend.services.judge_service import CONTEXT_LABEL, JudgeResult
+
+    store, client = ws_harness
+    store.current_steps = [3]
+    _enable_judge(monkeypatch, JudgeResult(context="앞 사실", thread="t"))
+    seen = _capture_stream(monkeypatch)
+    original = emotion_ws.session_prepare_message_context
+
+    def with_longer_judge_history(*args, **kwargs):
+        prep = original(*args, **kwargs)
+        prep["judge_conversation"] = [("user", "예전 말")] * history_len + prep["conversation"]
+        return prep
+
+    monkeypatch.setattr(emotion_ws, "session_prepare_message_context", with_longer_judge_history)
+
+    with _open_ws(client) as ws:
+        _send_message_and_collect(
+            ws, "안녕", ["message_start", "message_delta", "message_end", "message"]
+        )
+
+    assert (CONTEXT_LABEL in seen["conversation"][-1][1]) is expected

@@ -249,7 +249,12 @@ class _EmotionWSHandler:
             logger.warning("WS flow state save failed | %s", safe_str(e))
 
     async def _build_progress_memo(
-        self, judge_convo: list[tuple[str, str]], user_order: int, flow_state: dict
+        self,
+        judge_convo: list[tuple[str, str]],
+        user_order: int,
+        flow_state: dict,
+        *,
+        include_context: bool = False,
     ) -> FlowDecision:
         """판단기 → 흐름 상태 갱신 → 진행 메모. 어떤 실패도 메모 없음(상태 유지)으로 폴백한다."""
         if not CFG.JUDGE_ENABLED:
@@ -278,6 +283,7 @@ class _EmotionWSHandler:
             result,
             count_user_messages(judge_convo),
             add_emoji=(user_order // 2) % 3 == 0,
+            include_context=include_context,
         )
         if CFG.FLOW_MEMO_LOG:
             logger.info(
@@ -347,7 +353,13 @@ class _EmotionWSHandler:
             return False
 
         # 노아 응답 전에 판단기가 대화 전체를 보고 진행 메모를 만든다(실패 시 메모 없이 진행).
-        decision = await self._build_progress_memo(judge_convo, user_order, flow_state)
+        decision = await self._build_progress_memo(
+            judge_convo,
+            user_order,
+            flow_state,
+            # 판단기 이력이 노아 이력보다 길면 노아는 앞부분을 못 본다.
+            include_context=len(judge_convo) > len(convo),
+        )
         close_ordered = decision.close_ordered
         convo = attach_memo(convo, decision.memo)
         # 노아 답 다듬기: 메모가 이모지를 권하지 않은 턴엔 이모지를 빼고, 권한 턴엔 하나만 남긴다.

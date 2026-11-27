@@ -206,3 +206,19 @@ def test_normalize_flow_state_repairs_garbage():
     assert normalize_flow_state(None) == default_flow_state()
     st = normalize_flow_state({"flow": "??", "covered": ["감정", "x"], "wrap": ["없음"], "offers": True})
     assert st["flow"] == "자유" and st["covered"] == ["감정"] and st["wrap"] is None and st["offers"] == 0
+
+
+def test_flow_memo_context_only_when_requested():
+    r = JudgeResult(context="팀장이 일 던짐", thread="t")
+    assert "팀장" not in js.build_flow_memo(None, r, 1).memo
+    memo = js.build_flow_memo(None, r, 1, include_context=True).memo
+    assert memo == f"[진행 메모: {js.CONTEXT_LABEL}: 팀장이 일 던짐 / 더 들어가 볼 것: t]"
+    only = js.build_flow_memo(None, JudgeResult(context="c"), 1, include_context=True)
+    assert only.memo == f"[진행 메모: {js.CONTEXT_LABEL}: c]"
+
+
+def test_flow_memo_context_skipped_on_risk_and_close():
+    risk = JudgeResult(context="c", risk=True)
+    assert js.build_flow_memo(None, risk, 1, include_context=True).memo == ""
+    end = JudgeResult(context="c", end_ok="예")
+    assert js.build_flow_memo(None, end, 1, include_context=True).memo == "[진행 메모: 대화 종료]"
