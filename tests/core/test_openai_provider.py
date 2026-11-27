@@ -285,3 +285,47 @@ def test_responses_input_uses_output_text_for_assistant_history():
     assert payload[0]["content"] == [{"type": "input_text", "text": "System"}]
     assert payload[1]["content"] == [{"type": "output_text", "text": "Earlier reply"}]
     assert payload[2]["content"] == [{"type": "input_text", "text": "Latest user message"}]
+
+
+def _delta_event(text):
+    return SimpleNamespace(type="response.output_text.delta", delta=text)
+
+
+def test_gpt6_is_reasoning_model_and_sends_effort_without_temperature(monkeypatch):
+    from app.core.llm import LLMRequestOptions
+
+    monkeypatch.delenv("LLM_REASONING_EFFORT", raising=False)
+    responses = FakeResponsesAPI(stream_result=FakeStreamContext([_delta_event("ok")]))
+    client = FakeClient(responses=responses, chat_result=[])
+    provider = OpenAIProvider(settings=_build_settings("gpt-6-luna"), client=client)
+
+    out = "".join(
+        provider.stream_text(
+            messages=[LLMMessage(role="user", content="hi")],
+            options=LLMRequestOptions(temperature=0.7, reasoning_effort="low"),
+        )
+    )
+
+    assert out == "ok"
+    call = responses.stream_calls[0]
+    assert call["model"] == "gpt-6-luna"
+    assert "temperature" not in call
+    assert call["reasoning"] == {"effort": "low"}
+
+
+def test_reasoning_effort_defaults_from_env(monkeypatch):
+    monkeypatch.setenv("LLM_REASONING_EFFORT", "low")
+    responses = FakeResponsesAPI(stream_result=FakeStreamContext([_delta_event("ok")]))
+    provider = OpenAIProvider(
+        settings=_build_settings("gpt-6-luna"), client=FakeClient(responses=responses, chat_result=[])
+    )
+    "".join(provider.stream_text(messages=[LLMMessage(role="user", content="hi")]))
+    assert responses.stream_calls[0]["reasoning"] == {"effort": "low"}
+
+
+def test_extra_reasoning_prefixes_from_env(monkeypatch):
+    monkeypatch.setenv("LLM_REASONING_MODEL_PREFIXES", "luna-")
+    provider = OpenAIProvider(settings=_build_settings("x"), client=object())
+    assert provider._is_reasoning_model("luna-1")
+    assert provider._is_reasoning_model("gpt-6-luna")
+    assert not provider._is_reasoning_model("gpt-4o-mini")

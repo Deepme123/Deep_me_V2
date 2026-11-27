@@ -29,6 +29,22 @@ class _ResolvedOptions:
     temperature: float
     max_tokens: int
     timeout_sec: float
+    reasoning_effort: str | None = None
+
+
+# temperature를 받지 않고 Responses API를 쓰는 reasoning 모델 접두사.
+# LLM_REASONING_MODEL_PREFIXES(쉼표 구분)로 추가할 수 있다.
+_DEFAULT_REASONING_PREFIXES = ("gpt-5", "gpt-6", "o3", "o4")
+
+
+def _reasoning_prefixes() -> tuple[str, ...]:
+    extra = os.getenv("LLM_REASONING_MODEL_PREFIXES") or ""
+    added = tuple(p.strip().lower() for p in extra.split(",") if p.strip())
+    return _DEFAULT_REASONING_PREFIXES + added
+
+
+def _default_reasoning_effort() -> str | None:
+    return (os.getenv("LLM_REASONING_EFFORT") or "").strip().lower() or None
 
 
 class OpenAIProvider(LLMProvider):
@@ -172,6 +188,8 @@ class OpenAIProvider(LLMProvider):
             params["max_output_tokens"] = options.max_tokens
         if not self._is_reasoning_model(model):
             params["temperature"] = options.temperature
+        elif options.reasoning_effort:
+            params["reasoning"] = {"effort": options.reasoning_effort}
 
         try:
             return client.responses.create(**params)
@@ -199,6 +217,7 @@ class OpenAIProvider(LLMProvider):
                 temperature=self._settings.temperature,
                 max_tokens=self._settings.max_tokens,
                 timeout_sec=self._settings.timeout_sec,
+                reasoning_effort=_default_reasoning_effort(),
             )
 
         return _ResolvedOptions(
@@ -215,6 +234,9 @@ class OpenAIProvider(LLMProvider):
                 self._settings.timeout_sec
                 if options.timeout_sec is None
                 else float(options.timeout_sec)
+            ),
+            reasoning_effort=(
+                (options.reasoning_effort or "").strip().lower() or _default_reasoning_effort()
             ),
         )
 
@@ -261,6 +283,8 @@ class OpenAIProvider(LLMProvider):
             params["max_output_tokens"] = options.max_tokens
         if not self._is_reasoning_model(model):
             params["temperature"] = options.temperature
+        elif options.reasoning_effort:
+            params["reasoning"] = {"effort": options.reasoning_effort}
 
         with client.responses.stream(**params) as stream:
             emitted = False
@@ -448,4 +472,4 @@ class OpenAIProvider(LLMProvider):
 
     def _is_reasoning_model(self, model: str) -> bool:
         normalized = (model or "").lower()
-        return normalized.startswith("gpt-5") or normalized.startswith("o4") or normalized.startswith("o3")
+        return normalized.startswith(_reasoning_prefixes())

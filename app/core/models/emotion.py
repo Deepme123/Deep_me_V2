@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel, Field, Relationship
-from sqlalchemy import Column, ForeignKey, Index, UniqueConstraint
-from typing import Optional, List
+from sqlalchemy import JSON, Column, ForeignKey, Index, UniqueConstraint
+from typing import Any, Optional, List
 from uuid import UUID, uuid4
 from datetime import datetime
 
@@ -17,6 +17,8 @@ class EmotionSession(SQLModel, table=True):
     topic: Optional[str] = None
     trigger_summary: Optional[str] = None
     insight_summary: Optional[str] = None
+    # 데모 1.2 대화 흐름 상태(judge_service.default_flow_state 형태). 매 턴 저장/복원.
+    flow_state: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSON, nullable=True))
 
     # passive_deletes=True가 없으면 세션 삭제 시 SQLAlchemy가 DB의
     # ON DELETE CASCADE에 맡기지 않고 자식 EmotionStep.session_id를 NULL로

@@ -32,6 +32,7 @@ class MemoryStore:
     steps: list[object] = field(default_factory=list)
     llm_outputs: list[str] = field(default_factory=list)
     current_steps: list[int] = field(default_factory=list)
+    flow_state: dict | None = None
 
     def next_llm_output(self) -> str:
         if not self.llm_outputs:
@@ -219,6 +220,12 @@ def ws_harness(monkeypatch):
     monkeypatch.setattr(emotion_ws, "stream_noa_response", fake_stream_noa_response)
     monkeypatch.setattr(emotion_ws, "greeting_pick_greeting_message", fake_pick_greeting_message)
     monkeypatch.setattr(emotion_ws, "session_commit_opening_message", fake_commit_opening_message)
+    monkeypatch.setattr(emotion_ws, "session_load_flow_state", lambda _db, _sid: store.flow_state)
+
+    def fake_save_flow_state(_db, _sid, state):
+        store.flow_state = dict(state)
+
+    monkeypatch.setattr(emotion_ws, "session_save_flow_state", fake_save_flow_state)
     monkeypatch.setattr(emotion_ws.CFG, "GREETING_DELAY_MIN_SEC", 0.0)
     monkeypatch.setattr(emotion_ws.CFG, "GREETING_DELAY_MAX_SEC", 0.0)
 
@@ -523,3 +530,81 @@ def test_close_token_at_early_turn_closes_when_judge_confirmed_end(ws_harness, m
 
     assert seen["conversation"][-1][1].endswith("[진행 메모: 대화 종료]")
     assert store.session.ended_at is not None
+
+
+# ---- 데모 1.2 흐름(상태 저장/복원, 끝인사 종료) ----
+
+def test_flow_state_is_saved_and_reloaded_between_turns(ws_harness, monkeypatch):
+    from app.backend.services.flow_phrases import OFFER
+    from app.backend.services.judge_service import JudgeResult
+
+    store, client = ws_harness
+    store.current_steps = [3, 3]
+    store.flow_state = {"flow": "자유"}
+    # 이미 사용자 말 3개가 오간 대화 → 이번이 4번째 말
+    for i in range(3):
+        store.steps.append(SimpleNamespace(step_order=2 * i + 2, step_type="user", user_input=f"u{i}", gpt_response=""))
+        store.steps.append(SimpleNamespace(step_order=2 * i + 3, step_type="assistant", user_input="", gpt_response=f"a{i}"))
+    results = iter([
+        JudgeResult(offer=True),
+        JudgeResult(accept="예", covered=("상황",), ask_item="감정", ask="그때 어땠어"),
+    ])
+    _enable_judge(monkeypatch, None)
+    monkeypatch.setattr(emotion_ws, "run_judge", lambda *_a, **_k: next(results))
+    seen_memos = []
+
+    def fake_stream(**kwargs):
+        seen_memos.append(kwargs["conversation"][-1][1])
+        yield "응답"
+
+    monkeypatch.setattr(emotion_ws, "stream_noa_response", fake_stream)
+
+    expected = ["message_start", "message_delta", "message_end", "message"]
+    with _open_ws(client) as ws:
+        _send_message_and_collect(ws, "계속 속상해", expected)
+        assert store.flow_state["flow"] == "제안함"
+        _send_message_and_collect(ws, "응 해볼래", expected)
+
+    assert f"이번에 할 것: {OFFER}" in seen_memos[0]
+    assert seen_memos[1].endswith("[진행 메모: 물어볼 것: 그때 어땠어]")
+    assert store.flow_state["flow"] == "단계"
+    assert store.flow_state["asked"] == ["감정"]
+    assert store.flow_state["covered"] == ["상황"]
+
+
+def test_goodbye_stage_closes_session_even_without_token(ws_harness, monkeypatch):
+    from app.backend.services.flow_phrases import WRAP_ORDER
+    from app.backend.services.judge_service import JudgeResult
+
+    store, client = ws_harness
+    store.current_steps = [3]
+    store.flow_state = {"flow": "단계", "deep_at": 1, "wrap": list(WRAP_ORDER), "wrap_idx": 4}
+    _enable_judge(monkeypatch, JudgeResult(end_ok="예"))
+    seen = _capture_stream(monkeypatch, "오늘 얘기해 줘서 고마워")
+
+    with _open_ws(client) as ws:
+        _send_message_and_collect(
+            ws, "응 고마워", ["message_start", "message_delta", "message_end", "message"]
+        )
+        _receive_non_step_event(ws)
+
+    assert seen["conversation"][-1][1].endswith("/ 대화 종료]")
+    assert store.session.ended_at is not None
+    assert store.flow_state["flow"] == "종료"
+
+
+def test_unrequested_emoji_is_removed_from_reply(ws_harness, monkeypatch):
+    from app.backend.services.judge_service import JudgeResult
+
+    store, client = ws_harness
+    store.current_steps = [3]
+    _enable_judge(monkeypatch, JudgeResult(thread="t"))
+    _capture_stream(monkeypatch, "그랬구나 🌊 언제부터야?")
+
+    with _open_ws(client) as ws:
+        # 오프닝 인사(step 1) 다음 첫 말 → user_order=2 → (2//2)%3 != 0 → 이모지 권하지 않음
+        events = _send_message_and_collect(
+            ws, "요즘 좀 그래", ["message_start", "message_delta", "message_end", "message"]
+        )
+
+    assert events[3]["message"] == "그랬구나 언제부터야?"

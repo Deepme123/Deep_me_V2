@@ -100,3 +100,109 @@ def test_run_judge_parses_provider_output(monkeypatch):
     assert seen["system"] == "judge-prompt"
     assert seen["options"].model == "small-model"
     assert seen["options"].temperature == 0.0
+
+
+# ---- 데모 1.2 흐름(상태 머신) ----
+
+from app.backend.services.flow_phrases import OFFER, WRAP_GOAL, WRAP_ORDER  # noqa: E402
+from app.backend.services.judge_service import (  # noqa: E402
+    build_flow_memo,
+    default_flow_state,
+    normalize_flow_state,
+    remaining_items,
+)
+
+
+def test_build_judge_input_marks_asked_and_remaining():
+    text = build_judge_input(
+        [("user", "속상해")], covered={"상황"}, asked={"감정"}, remaining=["감정", "생각"]
+    )
+    assert "감정(물어봤지만 답 없음)" in text
+    assert "[남은 항목]\n감정, 생각" in text
+    assert "[남은 항목]" not in build_judge_input([("user", "x")])
+
+
+def test_offer_only_from_fourth_user_message_and_only_once():
+    st = default_flow_state()
+    d = build_flow_memo(st, JudgeResult(offer=True, thread="t"), 3)
+    assert OFFER not in d.memo and d.state["flow"] == "자유"
+    d = build_flow_memo(st, JudgeResult(offer=True), 4)
+    assert f"이번에 할 것: {OFFER}" in d.memo and d.state["flow"] == "제안함"
+    assert d.state["offers"] == 1
+
+
+def test_declined_offer_returns_to_free_and_never_reoffers():
+    st = {**default_flow_state(), "flow": "제안함", "offers": 1}
+    d = build_flow_memo(st, JudgeResult(accept="아니오", thread="t"), 5)
+    assert d.state["flow"] == "자유" and d.state["declined"] is True
+    d = build_flow_memo(d.state, JudgeResult(offer=True), 6)
+    assert OFFER not in d.memo
+
+
+def test_accept_enters_deep_and_asks_remaining_item():
+    st = {**default_flow_state(), "flow": "제안함", "offers": 1}
+    d = build_flow_memo(
+        st, JudgeResult(accept="예", covered=("상황",), ask_item="감정", ask="그때 어땠어"), 5
+    )
+    assert d.state["flow"] == "단계" and d.state["deep_at"] == 5
+    assert d.memo == "[진행 메모: 물어볼 것: 그때 어땠어]"
+    assert d.state["asked"] == ["감정"]
+    assert remaining_items(d.state) == ["생각", "기준", "대처행동"]
+
+
+def test_ask_for_item_not_remaining_is_ignored():
+    st = {**default_flow_state(), "flow": "단계", "deep_at": 5, "covered": ["상황"]}
+    d = build_flow_memo(st, JudgeResult(ask_item="상황", ask="q", thread="t"), 6)
+    assert "물어볼 것" not in d.memo and "더 들어가 볼 것: t" in d.memo
+
+
+def _run_wrap(state, start_count):
+    stages, d = [], None
+    for i, _ in enumerate(WRAP_ORDER):
+        d = build_flow_memo(state, JudgeResult(), start_count + i)
+        stages.append(d.stage)
+        state = d.state
+    return stages, d
+
+
+def test_all_required_items_touched_starts_wrap_in_order_and_closes():
+    st = {
+        **default_flow_state(),
+        "flow": "단계",
+        "deep_at": 5,
+        "covered": ["상황", "감정", "생각"],
+        "asked": ["기준"],
+    }
+    first = build_flow_memo(st, JudgeResult(covered=("대처행동",)), 8)
+    assert first.memo == f"[진행 메모: 이번에 할 것: {WRAP_GOAL['핵심']}]"
+    stages, last = _run_wrap(st | {"covered": st["covered"] + ["대처행동"]}, 8)
+    assert stages == [f"마무리:{w}" for w in WRAP_ORDER]
+    assert last.memo.endswith("/ 대화 종료]")
+    assert last.force_close and last.close_ordered
+    assert last.state["flow"] == "종료"
+
+
+def test_deep_times_out_after_nine_turns():
+    st = {**default_flow_state(), "flow": "단계", "deep_at": 5}
+    assert build_flow_memo(st, JudgeResult(), 13).stage == "정리"
+    assert build_flow_memo(st, JudgeResult(), 14).stage == "마무리:핵심"
+
+
+def test_declining_wrap_before_goodbye_returns_to_free():
+    st = {**default_flow_state(), "flow": "단계", "wrap": list(WRAP_ORDER), "wrap_idx": 4}
+    d = build_flow_memo(st, JudgeResult(end_ok="아니오", thread="t"), 15)
+    assert not d.force_close and d.state["flow"] == "자유" and d.state["wrap"] is None
+    assert "대화 종료" not in d.memo
+
+
+def test_risk_or_judge_failure_keeps_state_and_no_memo():
+    st = {**default_flow_state(), "flow": "단계", "deep_at": 5}
+    for r in (None, JudgeResult(risk=True, ask_item="감정", ask="q", covered=("감정",))):
+        d = build_flow_memo(st, r, 6)
+        assert d.memo == "" and d.state == normalize_flow_state(st)
+
+
+def test_normalize_flow_state_repairs_garbage():
+    assert normalize_flow_state(None) == default_flow_state()
+    st = normalize_flow_state({"flow": "??", "covered": ["감정", "x"], "wrap": ["없음"], "offers": True})
+    assert st["flow"] == "자유" and st["covered"] == ["감정"] and st["wrap"] is None and st["offers"] == 0
